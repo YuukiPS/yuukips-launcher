@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Game } from '../types';
+import { Game, GameEngine } from '../types';
 import { Play, Settings, Download, Clock, Folder } from 'lucide-react';
 import { GameSettingsModal } from './GameSettingsModal';
+import { EngineSelectionModal } from './EngineSelectionModal';
 import { invoke } from '@tauri-apps/api/core';
 
 interface GameDetailsProps {
@@ -11,6 +12,7 @@ interface GameDetailsProps {
 
 export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) => {
   const [showSettings, setShowSettings] = useState(false);
+  const [showEngineSelection, setShowEngineSelection] = useState(false);
   const [isLaunching, setIsLaunching] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
 
@@ -30,24 +32,53 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
   };
 
   const handlePlay = async () => {
-    if (!isInstalled) {
-      alert(`${game.title} is not installed. Please install the game first.`);
-      return;
-    }
+    // Check if game has engines (API games) or is a legacy game
+    if (game.engine && game.engine.length > 0) {
+      // Show engine selection modal for API games
+      setShowEngineSelection(true);
+    } else {
+      // Legacy behavior for fallback games
+      if (!isInstalled) {
+        alert(`${game.title} is not installed. Please install the game first.`);
+        return;
+      }
 
+      setIsLaunching(true);
+      try {
+        const result = await invoke('launch_game', {
+          gameId: game.id,
+          gameTitle: game.title
+        });
+        console.log('Game launch result:', result);
+        // Update last played time
+        const updatedGame = { ...game, lastPlayed: 'Just now' };
+        onGameUpdate(updatedGame);
+      } catch (error) {
+        console.error('Error launching game:', error);
+        alert(`Failed to launch ${game.title}: ${error}`);
+      } finally {
+        setIsLaunching(false);
+      }
+    }
+  };
+
+  const handleEngineLaunch = async (engine: GameEngine, version: string) => {
     setIsLaunching(true);
     try {
-      const result = await invoke('launch_game', {
+      const result = await invoke('launch_game_with_engine', {
         gameId: game.id,
-        gameTitle: game.title
+        gameTitle: game.title,
+        engineId: engine.id,
+        engineName: engine.name,
+        version: version
       });
       console.log('Game launch result:', result);
       // Update last played time
-      const updatedGame = { ...game, lastPlayed: 'Just now' };
+      const updatedGame = { ...game, lastPlayed: 'Just now', version: version };
       onGameUpdate(updatedGame);
     } catch (error) {
       console.error('Error launching game:', error);
-      alert(`Failed to launch ${game.title}: ${error}`);
+      alert(`Failed to launch ${game.title} with ${engine.name}: ${error}`);
     } finally {
       setIsLaunching(false);
     }
@@ -67,7 +98,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
     setShowSettings(true);
   };
 
-  const handleVersionChange = (gameId: string, newVersion: string) => {
+  const handleVersionChange = (gameId: number, newVersion: string) => {
     const updatedGame = { ...game, version: newVersion };
     onGameUpdate(updatedGame);
   };
@@ -130,13 +161,13 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
             <div className="flex items-center space-x-4">
               <button
                 onClick={handlePlay}
-                disabled={game.status !== 'available' || !isInstalled || isLaunching}
+                disabled={(game.status !== 'available' && game.status !== undefined) || (!isInstalled && !game.engine) || isLaunching}
                 className="flex items-center space-x-3 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed text-black font-bold px-8 py-4 rounded-xl transition-all duration-200 hover:shadow-lg hover:shadow-yellow-500/25 text-lg"
               >
                 <Play className={`w-6 h-6 ${isLaunching ? 'animate-spin' : ''}`} />
                 <span>
                   {isLaunching ? 'Launching...' : 
-                   !isInstalled ? 'Not Installed' : 
+                   (!isInstalled && !game.engine) ? 'Not Installed' : 
                    'Start Game'}
                 </span>
               </button>
@@ -180,6 +211,13 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
         onVersionChange={handleVersionChange}
+      />
+      
+      <EngineSelectionModal
+        game={game}
+        isOpen={showEngineSelection}
+        onClose={() => setShowEngineSelection(false)}
+        onLaunch={handleEngineLaunch}
       />
     </>
   );

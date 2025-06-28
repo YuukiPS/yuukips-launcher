@@ -3,8 +3,8 @@ import { Game } from '../types';
 
 interface SidebarProps {
   games: Game[];
-  selectedGameId: string;
-  onGameSelect: (gameId: string) => void;
+  selectedGameId: string | number;
+  onGameSelect: (gameId: string | number) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ games, selectedGameId, onGameSelect }) => {
@@ -23,7 +23,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ games, selectedGameId, onGameS
               }`}
             >
               <img
-                src={game.imageUrl}
+                src={game.icon}
                 alt={game.title}
                 className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
               />

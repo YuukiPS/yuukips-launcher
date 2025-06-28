@@ -6,7 +6,7 @@ interface GameSettingsModalProps {
   game: Game;
   isOpen: boolean;
   onClose: () => void;
-  onVersionChange: (gameId: string, newVersion: string) => void;
+  onVersionChange: (gameId: number, newVersion: string) => void;
 }
 
 export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({ 
@@ -107,7 +107,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                 <div className="bg-gray-800/50 rounded-lg p-4">
                   <div className="flex items-center space-x-4 mb-4">
                     <img
-                      src={game.imageUrl}
+                      src={game.image || game.thumbnail || game.icon}
                       alt={game.title}
                       className="w-16 h-16 rounded-lg object-cover"
                     />

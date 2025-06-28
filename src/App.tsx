@@ -1,20 +1,39 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { GameDetails } from './components/GameDetails';
 import { NewsPanel } from './components/NewsPanel';
-import { games as initialGames } from './data/games';
 import { newsItems } from './data/news';
 import { socialLinks } from './data/socialLinks';
 import { Game } from './types';
-import { Megaphone, MessageCircle, Twitter, Youtube, Tv } from 'lucide-react';
+import { GameApiService } from './services/gameApi';
+import { Megaphone, MessageCircle, Twitter, Youtube, Tv, Loader } from 'lucide-react';
 
 function App() {
-  const [games, setGames] = useState(initialGames);
-  const [selectedGameId, setSelectedGameId] = useState(games[0].id);
+  const [games, setGames] = useState<Game[]>([]);
+  const [selectedGameId, setSelectedGameId] = useState<string | number>('');
   const [showNews, setShowNews] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   const selectedGame = games.find(game => game.id === selectedGameId) || games[0];
+
+  useEffect(() => {
+    loadGames();
+  }, []);
+
+  const loadGames = async () => {
+    setIsLoading(true);
+    
+    try {
+      const apiGames = await GameApiService.fetchGames();
+      setGames(apiGames);
+    } catch (err) {
+      console.error('Failed to load games from API:', err);
+      setGames([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleGameUpdate = (updatedGame: Game) => {
     setGames(prevGames => 
@@ -58,9 +77,26 @@ function App() {
     alert(`This is a web demo. In the desktop version, this would open ${platform}.`);
   };
 
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="h-screen bg-gray-900 flex flex-col overflow-hidden">
+        <Header />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <Loader className="w-12 h-12 text-purple-500 animate-spin mx-auto mb-4" />
+            <p className="text-white text-lg">Loading games...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen bg-gray-900 flex flex-col overflow-hidden">
       <Header />
+      
+
       
       <div className="flex-1 flex overflow-hidden relative">
         <Sidebar 
