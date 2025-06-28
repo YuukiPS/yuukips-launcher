@@ -1,0 +1,112 @@
+import React, { useState } from 'react';
+import { Header } from './components/Header';
+import { Sidebar } from './components/Sidebar';
+import { GameDetails } from './components/GameDetails';
+import { NewsPanel } from './components/NewsPanel';
+import { games as initialGames } from './data/games';
+import { newsItems } from './data/news';
+import { socialLinks } from './data/socialLinks';
+import { Game } from './types';
+import { Megaphone, MessageCircle, Twitter, Youtube, Tv } from 'lucide-react';
+
+function App() {
+  const [games, setGames] = useState(initialGames);
+  const [selectedGameId, setSelectedGameId] = useState(games[0].id);
+  const [showNews, setShowNews] = useState(false);
+
+  const selectedGame = games.find(game => game.id === selectedGameId) || games[0];
+
+  const handleGameUpdate = (updatedGame: Game) => {
+    setGames(prevGames => 
+      prevGames.map(game => 
+        game.id === updatedGame.id ? updatedGame : game
+      )
+    );
+  };
+
+  const getSocialIcon = (iconName: string) => {
+    switch (iconName) {
+      case 'MessageCircle':
+        return <MessageCircle className="w-5 h-5" />;
+      case 'Twitter':
+        return <Twitter className="w-5 h-5" />;
+      case 'Youtube':
+        return <Youtube className="w-5 h-5" />;
+      case 'Tv':
+        return <Tv className="w-5 h-5" />;
+      default:
+        return <MessageCircle className="w-5 h-5" />;
+    }
+  };
+
+  const getSocialColor = (platform: string) => {
+    switch (platform.toLowerCase()) {
+      case 'discord':
+        return 'bg-indigo-600 hover:bg-indigo-700 hover:shadow-indigo-500/25';
+      case 'twitter':
+        return 'bg-blue-500 hover:bg-blue-600 hover:shadow-blue-500/25';
+      case 'youtube':
+        return 'bg-red-600 hover:bg-red-700 hover:shadow-red-500/25';
+      case 'twitch':
+        return 'bg-purple-600 hover:bg-purple-700 hover:shadow-purple-500/25';
+      default:
+        return 'bg-gray-600 hover:bg-gray-700 hover:shadow-gray-500/25';
+    }
+  };
+
+  const handleSocialClick = (url: string, platform: string) => {
+    alert(`This is a web demo. In the desktop version, this would open ${platform}.`);
+  };
+
+  return (
+    <div className="h-screen bg-gray-900 flex flex-col overflow-hidden">
+      <Header />
+      
+      <div className="flex-1 flex overflow-hidden relative">
+        <Sidebar 
+          games={games}
+          selectedGameId={selectedGameId}
+          onGameSelect={setSelectedGameId}
+        />
+        
+        <GameDetails 
+          game={selectedGame} 
+          onGameUpdate={handleGameUpdate}
+        />
+
+        {/* Floating Social Media Icons */}
+        <div className="absolute top-6 right-6 flex space-x-3 z-40">
+          {socialLinks.map((link) => (
+            <button
+              key={link.platform}
+              onClick={() => handleSocialClick(link.url, link.platform)}
+              className={`p-3 text-white rounded-full shadow-lg transition-all duration-200 hover:scale-110 ${getSocialColor(link.platform)}`}
+              title={link.platform}
+            >
+              {getSocialIcon(link.icon)}
+            </button>
+          ))}
+        </div>
+
+        {/* Floating News Button */}
+        <div className="absolute bottom-6 right-6 z-40">
+          <button
+            onClick={() => setShowNews(!showNews)}
+            className="p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg hover:shadow-blue-500/25 transition-all duration-200 hover:scale-110"
+            title="Latest News"
+          >
+            <Megaphone className="w-6 h-6" />
+          </button>
+        </div>
+
+        <NewsPanel 
+          news={newsItems}
+          isOpen={showNews}
+          onClose={() => setShowNews(false)}
+        />
+      </div>
+    </div>
+  );
+}
+
+export default App;
