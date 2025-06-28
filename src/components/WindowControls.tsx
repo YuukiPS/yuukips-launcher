@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Minus, Square, X, Maximize2 } from 'lucide-react';
 
 // We'll get the window instance inside the component to avoid import issues
@@ -24,11 +25,10 @@ export const WindowControls: React.FC = () => {
     
     if (isTauriEnv) {
       // Setup window event listeners for Tauri
-      import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
-        const appWindow = getCurrentWindow();
-        
-        // Listen for window resize events
-        const setupListeners = async () => {
+      const setupListeners = async () => {
+        try {
+          const appWindow = getCurrentWindow();
+          
           const unlisten = await appWindow.onResized(() => {
             appWindow.isMaximized().then(setIsMaximized);
           });
@@ -37,21 +37,17 @@ export const WindowControls: React.FC = () => {
           appWindow.isMaximized().then(setIsMaximized);
           
           return unlisten;
-        };
-        
-        setupListeners().then(unlisten => {
-          // Store cleanup function
-          return () => unlisten();
-        });
-      }).catch(error => {
-        console.log('Failed to setup Tauri window listeners:', error);
-      });
+        } catch (error) {
+          console.log('Failed to setup Tauri window listeners:', error);
+        }
+      };
+      
+      setupListeners();
     }
   }, []);
 
   const handleMinimize = async () => {
     try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
       const appWindow = getCurrentWindow();
       await appWindow.minimize();
     } catch (error) {
@@ -61,7 +57,6 @@ export const WindowControls: React.FC = () => {
 
   const handleMaximize = async () => {
     try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
       const appWindow = getCurrentWindow();
       if (isMaximized) {
         await appWindow.unmaximize();
@@ -76,7 +71,6 @@ export const WindowControls: React.FC = () => {
 
   const handleClose = async () => {
     try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
       const appWindow = getCurrentWindow();
       await appWindow.close();
     } catch (error) {

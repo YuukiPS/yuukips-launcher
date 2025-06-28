@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
-import { X, Folder, RotateCcw, Trash2, HardDrive, Calendar, Clock } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Folder, RotateCcw, Trash2, HardDrive, Calendar, Clock, Check } from 'lucide-react';
 import { Game } from '../types';
 import { GameApiService } from '../services/gameApi';
+import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 
 interface GameSettingsModalProps {
   game: Game;
@@ -18,9 +20,35 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState('basic');
   const [selectedVersion, setSelectedVersion] = useState(game.version);
+  const [versionDirectories, setVersionDirectories] = useState<Record<string, string>>({});
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // Get available versions dynamically from game engine data
   const availableVersions = GameApiService.getAvailableVersionsForPlatform(game, 1);
+
+  // Load saved directories from localStorage on component mount
+  useEffect(() => {
+    const savedDirectories = localStorage.getItem(`game-${game.id}-directories`);
+    if (savedDirectories) {
+      try {
+        setVersionDirectories(JSON.parse(savedDirectories));
+      } catch (error) {
+        console.error('Failed to parse saved directories:', error);
+      }
+    }
+  }, [game.id]);
+
+  // Save directories to localStorage whenever they change
+  const saveDirectories = (newDirectories: Record<string, string>) => {
+    setVersionDirectories(newDirectories);
+    localStorage.setItem(`game-${game.id}-directories`, JSON.stringify(newDirectories));
+  };
+
+  // Show notification
+  const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 3000);
+  };
 
   const handleVersionChange = (version: string) => {
     setSelectedVersion(version);
@@ -28,21 +56,70 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   };
 
   const handleUninstall = () => {
-    alert('This is a web demo. In the desktop version, this would uninstall the game.');
+    if (confirm(`Are you sure you want to uninstall ${game.title}?`)) {
+      // Implementation for actual game uninstallation would go here
+      showNotification(`${game.title} TODO`);
+    }
   };
 
-  const handleOpenDirectory = () => {
-    alert('This is a web demo. In the desktop version, this would open the game directory.');
+  const handleOpenDirectory = async () => {
+    const currentDir = getCurrentDirectory();
+    if (currentDir) {
+      try {
+        await invoke('open_directory', { path: currentDir });
+      } catch (error) {
+        console.error('Failed to open directory:', error);
+        showNotification('Failed to open directory', 'error');
+      }
+    } else {
+      showNotification(`No directory set for ${selectedVersion}. Please set a directory first.`, 'error');
+    }
   };
 
-  const handleRelocate = () => {
-    alert('This is a web demo. In the desktop version, this would open a folder selection dialog.');
+  const handleRelocate = async () => {
+    try {
+      const selectedPath = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: versionDirectories[selectedVersion] || undefined,
+        title: `Select directory for ${selectedVersion}`
+      });
+      
+      if (selectedPath && typeof selectedPath === 'string') {
+        const updatedDirectories = {
+          ...versionDirectories,
+          [selectedVersion]: selectedPath
+        };
+        saveDirectories(updatedDirectories);
+        showNotification(`Directory for ${selectedVersion} updated successfully!`);
+      }
+    } catch (error) {
+      console.error('Failed to open directory dialog:', error);
+      showNotification('Failed to open directory selection dialog', 'error');
+    }
+  };
+
+  // Get current directory for selected version
+  const getCurrentDirectory = () => {
+    return versionDirectories[selectedVersion] || '';
   };
 
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      {/* Notification */}
+      {notification && (
+        <div className={`fixed top-4 right-4 z-60 px-4 py-3 rounded-lg shadow-lg flex items-center space-x-2 ${
+          notification.type === 'success' 
+            ? 'bg-green-600 text-white' 
+            : 'bg-red-600 text-white'
+        }`}>
+          {notification.type === 'success' && <Check className="w-4 h-4" />}
+          <span>{notification.message}</span>
+        </div>
+      )}
+      
       <div className="bg-gray-900 rounded-xl border border-gray-700 shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-700">
@@ -153,9 +230,22 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                           className="text-purple-600 focus:ring-purple-500"
                         />
                         <span className="text-white font-medium">{version}</span>
-                        {version === game.version && (
-                          <span className="text-green-400 text-sm">(Current)</span>
-                        )}
+                        <div className="flex items-center space-x-2 ml-auto">
+                          {version === game.version && (
+                            <span className="text-green-400 text-sm">(Current)</span>
+                          )}
+                          {versionDirectories[version] ? (
+                            <div className="flex items-center space-x-1">
+                              <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                              <span className="text-green-400 text-xs">Configured</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center space-x-1">
+                              <div className="w-2 h-2 bg-yellow-400 rounded-full"></div>
+                              <span className="text-yellow-400 text-xs">Not Set</span>
+                            </div>
+                          )}
+                        </div>
                       </label>
                     ))}
                   </div>
@@ -175,20 +265,30 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                   </div>
                   
                   <div className="bg-gray-700/50 rounded p-3 mb-3">
-                    <p className="text-gray-300 font-mono text-sm">F:/Game/GI/{game.title} game</p>
+                    <p className="text-gray-300 font-mono text-sm">
+                      {getCurrentDirectory() || 'No directory set for this version'}
+                    </p>
+                    {!getCurrentDirectory() && (
+                      <p className="text-yellow-400 text-xs mt-1">
+                        ⚠️ Directory not configured for {selectedVersion}
+                      </p>
+                    )}
                   </div>
 
                   <div>
                     <h5 className="text-white font-medium mb-2">Relocate Game</h5>
                     <p className="text-gray-400 text-sm mb-3">
-                      To locate again, please select the folder where "{game.title}.exe" is located.
+                      {getCurrentDirectory() 
+                        ? `Update the directory path for ${selectedVersion}. Select the folder where "${game.title}.exe" is located.`
+                        : `Set the directory path for ${selectedVersion}. Select the folder where "${game.title}.exe" is located.`
+                      }
                     </p>
                     <button
                       onClick={handleRelocate}
                       className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
                     >
                       <RotateCcw className="w-4 h-4" />
-                      <span>Locate Again</span>
+                      <span>{getCurrentDirectory() ? 'Relocate' : 'Set Directory'}</span>
                     </button>
                   </div>
                 </div>

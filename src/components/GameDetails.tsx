@@ -23,7 +23,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
 
   const checkGameInstallation = async () => {
     try {
-      const installed = await invoke('check_game_installed', { gameId: game.id });
+      const installed = await invoke('check_game_installed', { gameId: game.id.toString() });
       setIsInstalled(installed as boolean);
     } catch (error) {
       console.error('Error checking game installation:', error);
