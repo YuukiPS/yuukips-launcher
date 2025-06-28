@@ -103,10 +103,6 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
     onGameUpdate(updatedGame);
   };
 
-
-
-
-
   return (
     <>
       <div className="flex-1 relative overflow-hidden">

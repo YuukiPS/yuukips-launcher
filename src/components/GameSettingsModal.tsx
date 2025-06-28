@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Folder, RotateCcw, Trash2, HardDrive, Calendar, Clock } from 'lucide-react';
 import { Game } from '../types';
+import { GameApiService } from '../services/gameApi';
 
 interface GameSettingsModalProps {
   game: Game;
@@ -18,14 +19,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const [activeTab, setActiveTab] = useState('basic');
   const [selectedVersion, setSelectedVersion] = useState(game.version);
 
-  // Mock available versions for demo
-  const availableVersions = [
-    'v4.2.0',
-    'v4.1.5',
-    'v4.1.0',
-    'v4.0.8',
-    'v3.9.2'
-  ];
+  // Get available versions dynamically from game engine data
+  const availableVersions = GameApiService.getAvailableVersionsForPlatform(game, 1);
 
   const handleVersionChange = (version: string) => {
     setSelectedVersion(version);

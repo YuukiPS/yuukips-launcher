@@ -14,8 +14,11 @@ export class GameApiService {
       
       const games: Game[] = await response.json();
       
+      // Filter games to only include those that support Platform 1 (PC)
+      const pcSupportedGames = games.filter(game => this.gameSupportsPC(game));
+      
       // Transform API data to include legacy fields for compatibility
-      return games.map(game => ({
+      return pcSupportedGames.map(game => ({
         ...game,
   
         backgroundUrl: game.image,
@@ -51,6 +54,14 @@ export class GameApiService {
     return game.engine.filter(engine => {
       const platforms = engine.versionSupport[version];
       return platforms && platforms.includes(platformType);
+    });
+  }
+  
+  static gameSupportsPC(game: Game): boolean {
+    return game.engine.some(engine => {
+      return Object.values(engine.versionSupport).some(platforms => 
+        platforms.includes(1) // Platform 1 = PC
+      );
     });
   }
 }

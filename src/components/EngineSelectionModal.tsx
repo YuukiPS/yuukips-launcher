@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Play, ExternalLink } from 'lucide-react';
+import { X, Play, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
 import { Game, GameEngine } from '../types';
 import { GameApiService } from '../services/gameApi';
 
@@ -20,6 +20,7 @@ export const EngineSelectionModal: React.FC<EngineSelectionModalProps> = ({
   const [selectedEngine, setSelectedEngine] = useState<GameEngine | null>(null);
   const [availableVersions, setAvailableVersions] = useState<string[]>([]);
   const [availableEngines, setAvailableEngines] = useState<GameEngine[]>([]);
+  const [showFeatures, setShowFeatures] = useState<{[key: string]: boolean}>({});
 
   useEffect(() => {
     if (isOpen && game) {
@@ -133,18 +134,33 @@ export const EngineSelectionModal: React.FC<EngineSelectionModalProps> = ({
                     </button>
                   </div>
                   
-                  {/* Engine Features */}
+                  {/* Engine Features - Toggle visibility */}
                   {engine.features && engine.features.length > 0 && selectedEngine?.id === engine.id && (
                     <div className="mt-3 pt-3 border-t border-gray-600">
-                      <h4 className="text-white text-sm font-medium mb-2">Features:</h4>
-                      <ul className="text-gray-400 text-xs space-y-1">
-                        {engine.features.map((feature, index) => (
-                          <li key={index} className="flex items-start space-x-2">
-                            <span className="text-purple-400 mt-1">•</span>
-                            <span>{feature}</span>
-                          </li>
-                        ))}
-                      </ul>
+                      <button
+                        onClick={() => setShowFeatures(prev => ({
+                          ...prev,
+                          [engine.id]: !prev[engine.id]
+                        }))}
+                        className="flex items-center space-x-2 text-white text-sm font-medium mb-2 hover:text-purple-400 transition-colors"
+                      >
+                        <span>Features:</span>
+                        {showFeatures[engine.id] ? (
+                          <ChevronUp className="w-4 h-4" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4" />
+                        )}
+                      </button>
+                      {showFeatures[engine.id] && (
+                        <ul className="text-gray-400 text-xs space-y-1">
+                          {engine.features.map((feature, index) => (
+                            <li key={index} className="flex items-start space-x-2">
+                              <span className="text-purple-400 mt-1">•</span>
+                              <span>{feature}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                   )}
                 </div>
