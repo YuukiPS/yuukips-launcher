@@ -29,3 +29,10 @@ export interface SocialLink {
   url: string;
   icon: string;
 }
+
+export enum TypeGame {
+	None = 0,
+	GenshinImpact = 1,
+	StarRail = 2,
+	BlueArchive = 3
+}

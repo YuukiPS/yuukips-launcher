@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Game } from '../types';
-import { Play, Settings, Download, Star, Clock, User, Gamepad2, HardDrive, Folder } from 'lucide-react';
+import { Play, Settings, Download, Clock, Folder } from 'lucide-react';
 import { GameSettingsModal } from './GameSettingsModal';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -72,31 +72,9 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
     onGameUpdate(updatedGame);
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'available':
-        return 'text-green-400';
-      case 'updating':
-        return 'text-yellow-400';
-      case 'installing':
-        return 'text-blue-400';
-      default:
-        return 'text-gray-400';
-    }
-  };
 
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'available':
-        return 'Ready to Play';
-      case 'updating':
-        return 'Updating...';
-      case 'installing':
-        return 'Installing...';
-      default:
-        return 'Unknown Status';
-    }
-  };
+
+
 
   return (
     <>
@@ -115,71 +93,20 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
           {/* Game Info */}
           <div className="flex-1 p-8">
             <div className="max-w-2xl">
-              {/* Version Badge */}
-              <div className="inline-flex items-center space-x-2 mb-4">
-                <span className="px-3 py-1 bg-gray-800/80 backdrop-blur-sm rounded-full text-sm text-gray-300">
-                  VERSION {game.version}
-                </span>
-                <span className={`px-3 py-1 bg-gray-800/80 backdrop-blur-sm rounded-full text-sm ${getStatusColor(game.status)}`}>
-                  {getStatusText(game.status)}
-                </span>
-              </div>
+
 
               {/* Title */}
               <h1 className="text-5xl font-bold text-white mb-2">
                 {game.title}
               </h1>
-              <h2 className="text-xl text-purple-400 font-medium mb-6">
-                {game.subtitle}
-              </h2>
+
 
               {/* Description */}
               <p className="text-gray-300 text-lg leading-relaxed mb-8 max-w-xl">
                 {game.description}
               </p>
 
-              {/* Game Stats */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 bg-gray-800/50 rounded-lg">
-                    <User className="w-5 h-5 text-purple-400" />
-                  </div>
-                  <div>
-                    <p className="text-gray-400 text-sm">Developer</p>
-                    <p className="text-white font-medium">{game.developer}</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 bg-gray-800/50 rounded-lg">
-                    <Gamepad2 className="w-5 h-5 text-blue-400" />
-                  </div>
-                  <div>
-                    <p className="text-gray-400 text-sm">Genre</p>
-                    <p className="text-white font-medium">{game.genre}</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 bg-gray-800/50 rounded-lg">
-                    <Star className="w-5 h-5 text-yellow-400 fill-current" />
-                  </div>
-                  <div>
-                    <p className="text-gray-400 text-sm">Rating</p>
-                    <p className="text-white font-medium">{game.rating}/5.0</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center space-x-3">
-                  <div className="p-2 bg-gray-800/50 rounded-lg">
-                    <HardDrive className="w-5 h-5 text-green-400" />
-                  </div>
-                  <div>
-                    <p className="text-gray-400 text-sm">Size</p>
-                    <p className="text-white font-medium">{game.size}</p>
-                  </div>
-                </div>
-              </div>
+
 
               {/* Play Time Info */}
               {game.playTime && (
