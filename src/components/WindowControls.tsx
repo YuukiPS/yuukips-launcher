@@ -5,7 +5,7 @@ import { Minus, Square, X, Maximize2 } from 'lucide-react';
 
 export const WindowControls: React.FC = () => {
   const [isMaximized, setIsMaximized] = useState(false);
-  const [isTauri, setIsTauri] = useState(false);
+  const [, setIsTauri] = useState(false);
 
   useEffect(() => {
     // Simple and reliable Tauri detection
@@ -85,7 +85,7 @@ export const WindowControls: React.FC = () => {
   };
 
   return (
-    <div className="flex items-center space-x-2">
+    <div className="flex items-center space-x-2" data-tauri-drag-region="false">
       <button
         onClick={handleMinimize}
         className="w-3 h-3 rounded-full bg-yellow-500 hover:bg-yellow-400 transition-colors duration-200 flex items-center justify-center group"
