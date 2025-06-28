@@ -23,8 +23,8 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
 
   const checkGameInstallation = async () => {
     try {
-      const installed = await invoke('check_game_installed', { gameId: game.id.toString() });
-      setIsInstalled(installed as boolean);
+      // const installed = await invoke('check_game_installed', { gameId: game.id.toString() });
+      setIsInstalled(true); // TODO
     } catch (error) {
       console.error('Error checking game installation:', error);
       setIsInstalled(false);
@@ -65,12 +65,31 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
   const handleEngineLaunch = async (engine: GameEngine, version: string) => {
     setIsLaunching(true);
     try {
+      // Get the game folder path from localStorage
+      const savedDirectories = localStorage.getItem(`game-${game.id}-directories`);
+      let gameFolderPath = '';
+      
+      if (savedDirectories) {
+        try {
+          const directories = JSON.parse(savedDirectories);
+          gameFolderPath = directories[version] || '';
+        } catch (error) {
+          console.error('Failed to parse saved directories:', error);
+        }
+      }
+      
+      if (!gameFolderPath) {
+        alert(`Game folder path not configured for ${game.title} version ${version}. Please set it in game settings.`);
+        return;
+      }
+      
       const result = await invoke('launch_game_with_engine', {
         gameId: game.id,
         gameTitle: game.title,
         engineId: engine.id,
         engineName: engine.name,
-        version: version
+        version: version,
+        gameFolderPath: gameFolderPath
       });
       console.log('Game launch result:', result);
       // Update last played time
@@ -121,19 +140,15 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
           <div className="flex-1 p-8">
             <div className="max-w-2xl">
 
-
               {/* Title */}
               <h1 className="text-5xl font-bold text-white mb-2">
                 {game.title}
               </h1>
 
-
               {/* Description */}
               <p className="text-gray-300 text-lg leading-relaxed mb-8 max-w-xl">
                 {game.description}
               </p>
-
-
 
               {/* Play Time Info */}
               {game.playTime && (
@@ -162,9 +177,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
               >
                 <Play className={`w-6 h-6 ${isLaunching ? 'animate-spin' : ''}`} />
                 <span>
-                  {isLaunching ? 'Launching...' : 
-                   (!isInstalled && !game.engine) ? 'Not Installed' : 
-                   'Start Game'}
+                  {isLaunching ? 'Launching...' : 'Start Game'}
                 </span>
               </button>
               

@@ -28,8 +28,15 @@ export const EngineSelectionModal: React.FC<EngineSelectionModalProps> = ({
       const versions = GameApiService.getAvailableVersionsForPlatform(game, 1);
       setAvailableVersions(versions);
       
-      // Select first version by default
-      if (versions.length > 0) {
+      // Try to load saved preferences
+      const savedPreferences = JSON.parse(localStorage.getItem('gamePreferences') || '{}');
+      const gamePreference = savedPreferences[game.id];
+      
+      if (gamePreference && versions.includes(gamePreference.selectedVersion)) {
+        // Use saved version if it's still available
+        setSelectedVersion(gamePreference.selectedVersion);
+      } else if (versions.length > 0) {
+        // Select first version by default
         setSelectedVersion(versions[0]);
       }
     }
@@ -41,8 +48,24 @@ export const EngineSelectionModal: React.FC<EngineSelectionModalProps> = ({
       const engines = GameApiService.getEnginesForVersion(game, selectedVersion, 1);
       setAvailableEngines(engines);
       
-      // Select first engine by default
-      if (engines.length > 0) {
+      // Try to restore saved engine preference
+      const savedPreferences = JSON.parse(localStorage.getItem('gamePreferences') || '{}');
+      const gamePreference = savedPreferences[game.id];
+      
+      if (gamePreference && 
+          gamePreference.selectedVersion === selectedVersion && 
+          gamePreference.selectedEngine) {
+        // Find the saved engine in available engines
+        const savedEngine = engines.find(engine => engine.id === gamePreference.selectedEngine.id);
+        if (savedEngine) {
+          setSelectedEngine(savedEngine);
+        } else if (engines.length > 0) {
+          setSelectedEngine(engines[0]);
+        } else {
+          setSelectedEngine(null);
+        }
+      } else if (engines.length > 0) {
+        // Select first engine by default
         setSelectedEngine(engines[0]);
       } else {
         setSelectedEngine(null);
@@ -52,6 +75,25 @@ export const EngineSelectionModal: React.FC<EngineSelectionModalProps> = ({
 
   const handleLaunch = () => {
     if (selectedEngine && selectedVersion) {
+      // Save the selected version and engine to localStorage
+      const gamePreferences = {
+        gameId: game.id,
+        selectedVersion,
+        selectedEngine: {
+          id: selectedEngine.id,
+          name: selectedEngine.name,
+          version: selectedEngine.version
+        },
+        lastSelected: Date.now()
+      };
+      
+      // Get existing preferences or create new object
+      const existingPreferences = JSON.parse(localStorage.getItem('gamePreferences') || '{}');
+      existingPreferences[game.id] = gamePreferences;
+      
+      // Save to localStorage
+      localStorage.setItem('gamePreferences', JSON.stringify(existingPreferences));
+      
       onLaunch(selectedEngine, selectedVersion);
       onClose();
     }

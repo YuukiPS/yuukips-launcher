@@ -19,7 +19,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   onVersionChange 
 }) => {
   const [activeTab, setActiveTab] = useState('basic');
-  const [selectedVersion, setSelectedVersion] = useState(game.version);
+  const [selectedVersion, setSelectedVersion] = useState("0.0.0");
   const [versionDirectories, setVersionDirectories] = useState<Record<string, string>>({});
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
@@ -231,9 +231,6 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                         />
                         <span className="text-white font-medium">{version}</span>
                         <div className="flex items-center space-x-2 ml-auto">
-                          {version === game.version && (
-                            <span className="text-green-400 text-sm">(Current)</span>
-                          )}
                           {versionDirectories[version] ? (
                             <div className="flex items-center space-x-1">
                               <div className="w-2 h-2 bg-green-400 rounded-full"></div>

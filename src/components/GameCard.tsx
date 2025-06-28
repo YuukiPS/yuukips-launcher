@@ -29,10 +29,7 @@ export const GameCard: React.FC<GameCardProps> = ({ game }) => {
         </div>
 
         <div className="flex items-center justify-between text-xs text-gray-400 mb-4">
-          {game.version && <span>Version {game.version}</span>}
-          {game.lastUpdate && !game.version && (
-            <span>Updated {new Date(game.lastUpdate * 1000).toLocaleDateString()}</span>
-          )}
+          <span>Updated {new Date(game.lastUpdate * 1000).toLocaleDateString()}</span>
           {game.lastPlayed && (
             <div className="flex items-center space-x-1">
               <Calendar className="w-3 h-3" />

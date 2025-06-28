@@ -22,7 +22,7 @@ export interface Game {
   icon: string;
   engine: GameEngine[];
   subtitle?: string;
-  version?: string;
+  //version?: string;
   backgroundUrl?: string;
   status?: 'available' | 'updating' | 'installing';
   lastPlayed?: string;
