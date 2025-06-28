@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Game } from '../types';
-import { Play, Settings, Download, Star, Clock, User, Gamepad2, HardDrive } from 'lucide-react';
+import { Play, Settings, Download, Star, Clock, User, Gamepad2, HardDrive, Folder } from 'lucide-react';
 import { GameSettingsModal } from './GameSettingsModal';
+import { invoke } from '@tauri-apps/api/core';
 
 interface GameDetailsProps {
   game: Game;
@@ -10,9 +11,56 @@ interface GameDetailsProps {
 
 export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) => {
   const [showSettings, setShowSettings] = useState(false);
+  const [isLaunching, setIsLaunching] = useState(false);
+  const [isInstalled, setIsInstalled] = useState(false);
 
-  const handlePlay = () => {
-    alert(`This is a web demo. In the desktop version, this would launch ${game.title}.`);
+  useEffect(() => {
+    // Check if game is installed when component mounts or game changes
+    checkGameInstallation();
+  }, [game.id]);
+
+  const checkGameInstallation = async () => {
+    try {
+      const installed = await invoke('check_game_installed', { gameId: game.id });
+      setIsInstalled(installed as boolean);
+    } catch (error) {
+      console.error('Error checking game installation:', error);
+      setIsInstalled(false);
+    }
+  };
+
+  const handlePlay = async () => {
+    if (!isInstalled) {
+      alert(`${game.title} is not installed. Please install the game first.`);
+      return;
+    }
+
+    setIsLaunching(true);
+    try {
+      const result = await invoke('launch_game', {
+        gameId: game.id,
+        gameTitle: game.title
+      });
+      console.log('Game launch result:', result);
+      // Update last played time
+      const updatedGame = { ...game, lastPlayed: 'Just now' };
+      onGameUpdate(updatedGame);
+    } catch (error) {
+      console.error('Error launching game:', error);
+      alert(`Failed to launch ${game.title}: ${error}`);
+    } finally {
+      setIsLaunching(false);
+    }
+  };
+
+  const handleShowFolder = async () => {
+    try {
+      const result = await invoke('show_game_folder', { gameId: game.id });
+      console.log('Folder open result:', result);
+    } catch (error) {
+      console.error('Error opening game folder:', error);
+      alert(`Failed to open game folder: ${error}`);
+    }
   };
 
   const handleSettings = () => {
@@ -155,11 +203,15 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
             <div className="flex items-center space-x-4">
               <button
                 onClick={handlePlay}
-                disabled={game.status !== 'available'}
+                disabled={game.status !== 'available' || !isInstalled || isLaunching}
                 className="flex items-center space-x-3 bg-gradient-to-r from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed text-black font-bold px-8 py-4 rounded-xl transition-all duration-200 hover:shadow-lg hover:shadow-yellow-500/25 text-lg"
               >
-                <Play className="w-6 h-6" />
-                <span>Start Game</span>
+                <Play className={`w-6 h-6 ${isLaunching ? 'animate-spin' : ''}`} />
+                <span>
+                  {isLaunching ? 'Launching...' : 
+                   !isInstalled ? 'Not Installed' : 
+                   'Start Game'}
+                </span>
               </button>
               
               <button
@@ -170,10 +222,25 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
                 <span>Game Settings</span>
               </button>
 
+              <button
+                onClick={handleShowFolder}
+                className="flex items-center space-x-2 bg-blue-800/80 hover:bg-blue-700/80 text-white px-6 py-4 rounded-xl transition-all duration-200 backdrop-blur-sm border border-blue-600/50 hover:border-blue-500/50"
+              >
+                <Folder className="w-5 h-5" />
+                <span>Open Folder</span>
+              </button>
+
               {game.status === 'updating' && (
                 <div className="flex items-center space-x-2 text-yellow-400">
                   <Download className="w-5 h-5 animate-bounce" />
                   <span>Updating...</span>
+                </div>
+              )}
+
+              {!isInstalled && (
+                <div className="flex items-center space-x-2 text-red-400">
+                  <Download className="w-5 h-5" />
+                  <span>Game not installed</span>
                 </div>
               )}
             </div>
