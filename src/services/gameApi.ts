@@ -1,6 +1,60 @@
 import { Game } from '../types';
+import { invoke } from '@tauri-apps/api/core';
 
 const API_BASE_URL = 'https://ps.yuuki.me/json';
+
+// Proxy management functions
+export const startProxy = async (): Promise<string> => {
+  try {
+    return await invoke('start_proxy') as string;
+  } catch (error) {
+    throw new Error(`Failed to start proxy: ${error}`);
+  }
+};
+
+export const stopProxy = async (): Promise<string> => {
+  try {
+    return await invoke('stop_proxy') as string;
+  } catch (error) {
+    throw new Error(`Failed to stop proxy: ${error}`);
+  }
+};
+
+export const installSSLCertificate = async (): Promise<string> => {
+  try {
+    return await invoke('install_ssl_certificate') as string;
+  } catch (error) {
+    throw new Error(`Failed to install SSL certificate: ${error}`);
+  }
+};
+
+export const checkSSLCertificateInstalled = async (): Promise<boolean> => {
+  try {
+    return await invoke('check_ssl_certificate_installed') as boolean;
+  } catch (error) {
+    console.error('Failed to check SSL certificate status:', error);
+    return false;
+  }
+};
+
+// Enhanced proxy management with SSL certificate checking
+export const startProxyWithSSLCheck = async (): Promise<{ success: boolean; message: string; needsSSL: boolean }> => {
+  try {
+    // Start the proxy first
+    const proxyResult = await startProxy();
+    
+    // Check if SSL certificate is installed
+    const sslInstalled = await checkSSLCertificateInstalled();
+    
+    return {
+      success: true,
+      message: proxyResult,
+      needsSSL: !sslInstalled
+    };
+  } catch (error) {
+    throw new Error(`Failed to start proxy with SSL check: ${error}`);
+  }
+};
 
 export class GameApiService {
   static async fetchGames(): Promise<Game[]> {

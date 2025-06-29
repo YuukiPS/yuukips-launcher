@@ -3,7 +3,9 @@ import { Game, GameEngine } from '../types';
 import { Play, Settings, Download, Clock, Folder } from 'lucide-react';
 import { GameSettingsModal } from './GameSettingsModal';
 import { EngineSelectionModal } from './EngineSelectionModal';
+import { SSLCertificateModal } from './SSLCertificateModal';
 import { invoke } from '@tauri-apps/api/core';
+import { startProxyWithSSLCheck } from '../services/gameApi';
 
 interface GameDetailsProps {
   game: Game;
@@ -13,8 +15,10 @@ interface GameDetailsProps {
 export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) => {
   const [showSettings, setShowSettings] = useState(false);
   const [showEngineSelection, setShowEngineSelection] = useState(false);
+  const [showSSLModal, setShowSSLModal] = useState(false);
   const [isLaunching, setIsLaunching] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
+  const [pendingLaunch, setPendingLaunch] = useState<{ engine?: GameEngine; version?: string } | null>(null);
 
   useEffect(() => {
     // Check if game is installed when component mounts or game changes
@@ -65,6 +69,28 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
   const handleEngineLaunch = async (engine: GameEngine, version: string) => {
     setIsLaunching(true);
     try {
+      // Check proxy and SSL status before launching
+      const proxyStatus = await startProxyWithSSLCheck();
+      
+      if (proxyStatus.needsSSL) {
+        // Store the pending launch details and show SSL modal
+        setPendingLaunch({ engine, version });
+        setShowSSLModal(true);
+        setIsLaunching(false);
+        return;
+      }
+      
+      // Proceed with game launch
+      await launchGameWithEngine(engine, version);
+    } catch (error) {
+      console.error('Error in pre-launch checks:', error);
+      // Continue with launch even if proxy check fails
+      await launchGameWithEngine(engine, version);
+    }
+  };
+
+  const launchGameWithEngine = async (engine: GameEngine, version: string) => {
+    try {
       // Get the game folder path from localStorage
       const savedDirectories = localStorage.getItem(`game-${game.id}-directories`);
       let gameFolderPath = '';
@@ -100,6 +126,36 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
       alert(`Failed to launch ${game.title} with ${engine.name}: ${error}`);
     } finally {
       setIsLaunching(false);
+    }
+  };
+
+  const handleSSLInstallComplete = () => {
+    // Resume the pending launch after SSL installation
+    if (pendingLaunch) {
+      const { engine, version } = pendingLaunch;
+      setPendingLaunch(null);
+      if (engine && version) {
+        setIsLaunching(true);
+        launchGameWithEngine(engine, version);
+      }
+    }
+  };
+
+  const handleSSLModalClose = () => {
+    setShowSSLModal(false);
+    // If user closes modal without installing, still allow launch but warn
+    if (pendingLaunch) {
+      const { engine, version } = pendingLaunch;
+      setPendingLaunch(null);
+      if (engine && version) {
+        const proceed = confirm(
+          'SSL certificate is not installed. HTTPS game traffic may not work properly. Do you want to continue anyway?'
+        );
+        if (proceed) {
+          setIsLaunching(true);
+          launchGameWithEngine(engine, version);
+        }
+      }
     }
   };
 
@@ -227,6 +283,12 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
         isOpen={showEngineSelection}
         onClose={() => setShowEngineSelection(false)}
         onLaunch={handleEngineLaunch}
+      />
+      
+      <SSLCertificateModal
+        isOpen={showSSLModal}
+        onClose={handleSSLModalClose}
+        onInstallComplete={handleSSLInstallComplete}
       />
     </>
   );
