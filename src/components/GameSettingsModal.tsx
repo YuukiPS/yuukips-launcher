@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Folder, RotateCcw, Trash2, HardDrive, Calendar, Clock, Check } from 'lucide-react';
+import { X, Folder, RotateCcw, HardDrive, Calendar, Clock, Check } from 'lucide-react';
 import { Game } from '../types';
 import { GameApiService } from '../services/gameApi';
 import { invoke } from '@tauri-apps/api/core';
@@ -12,19 +12,26 @@ interface GameSettingsModalProps {
   onVersionChange: (gameId: number, newVersion: string) => void;
 }
 
-export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({ 
-  game, 
-  isOpen, 
-  onClose, 
-  onVersionChange 
+export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
+  game,
+  isOpen,
+  onClose,
+  onVersionChange
 }) => {
   const [activeTab, setActiveTab] = useState('basic');
-  const [selectedVersion, setSelectedVersion] = useState("0.0.0");
+  const [selectedVersion, setSelectedVersion] = useState("");
   const [versionDirectories, setVersionDirectories] = useState<Record<string, string>>({});
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // Get available versions dynamically from game engine data
   const availableVersions = GameApiService.getAvailableVersionsForPlatform(game, 1);
+
+  // Initialize selectedVersion with the first available version
+  useEffect(() => {
+    if (availableVersions.length > 0 && !selectedVersion) {
+      setSelectedVersion(availableVersions[0]);
+    }
+  }, [availableVersions, selectedVersion]);
 
   // Load saved directories from localStorage on component mount
   useEffect(() => {
@@ -55,13 +62,6 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
     onVersionChange(game.id, version);
   };
 
-  const handleUninstall = () => {
-    if (confirm(`Are you sure you want to uninstall ${game.title}?`)) {
-      // Implementation for actual game uninstallation would go here
-      showNotification(`${game.title} TODO`);
-    }
-  };
-
   const handleOpenDirectory = async () => {
     const currentDir = getCurrentDirectory();
     if (currentDir) {
@@ -84,7 +84,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
         defaultPath: versionDirectories[selectedVersion] || undefined,
         title: `Select directory for ${selectedVersion}`
       });
-      
+
       if (selectedPath && typeof selectedPath === 'string') {
         const updatedDirectories = {
           ...versionDirectories,
@@ -110,16 +110,15 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       {/* Notification */}
       {notification && (
-        <div className={`fixed top-4 right-4 z-60 px-4 py-3 rounded-lg shadow-lg flex items-center space-x-2 ${
-          notification.type === 'success' 
-            ? 'bg-green-600 text-white' 
+        <div className={`fixed top-4 right-4 z-60 px-4 py-3 rounded-lg shadow-lg flex items-center space-x-2 ${notification.type === 'success'
+            ? 'bg-green-600 text-white'
             : 'bg-red-600 text-white'
-        }`}>
+          }`}>
           {notification.type === 'success' && <Check className="w-4 h-4" />}
           <span>{notification.message}</span>
         </div>
       )}
-      
+
       <div className="bg-gray-900 rounded-xl border border-gray-700 shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-700">
@@ -138,31 +137,28 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
             <nav className="space-y-2">
               <button
                 onClick={() => setActiveTab('basic')}
-                className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
-                  activeTab === 'basic'
+                className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${activeTab === 'basic'
                     ? 'bg-purple-600/30 text-purple-400 border border-purple-500/50'
                     : 'text-gray-300 hover:bg-gray-700/50'
-                }`}
+                  }`}
               >
                 Basic Information
               </button>
               <button
                 onClick={() => setActiveTab('advanced')}
-                className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
-                  activeTab === 'advanced'
+                className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${activeTab === 'advanced'
                     ? 'bg-purple-600/30 text-purple-400 border border-purple-500/50'
                     : 'text-gray-300 hover:bg-gray-700/50'
-                }`}
+                  }`}
               >
                 Advanced Settings
               </button>
               <button
                 onClick={() => setActiveTab('logs')}
-                className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
-                  activeTab === 'logs'
+                className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${activeTab === 'logs'
                     ? 'bg-purple-600/30 text-purple-400 border border-purple-500/50'
                     : 'text-gray-300 hover:bg-gray-700/50'
-                }`}
+                  }`}
               >
                 Log Info
               </button>
@@ -173,44 +169,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
           <div className="flex-1 p-6 overflow-y-auto">
             {activeTab === 'basic' && (
               <div className="space-y-6">
-                <h3 className="text-lg font-semibold text-white mb-4">Basic Information</h3>
-                
-                {/* Game Info */}
-                <div className="bg-gray-800/50 rounded-lg p-4">
-                  <div className="flex items-center space-x-4 mb-4">
-                    <img
-                      src={game.image || game.thumbnail || game.icon}
-                      alt={game.title}
-                      className="w-16 h-16 rounded-lg object-cover"
-                    />
-                    <div className="flex-1">
-                      <h4 className="text-white font-semibold text-lg">{game.title}</h4>
-                      <p className="text-gray-400">{game.subtitle}</p>
-                    </div>
-                    <button
-                      onClick={handleUninstall}
-                      className="flex items-center space-x-2 px-4 py-2 bg-red-600/20 text-red-400 rounded-lg hover:bg-red-600/30 transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      <span>Uninstall Game</span>
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-4 text-sm">
-                    <div>
-                      <p className="text-gray-400">Size</p>
-                      <p className="text-white font-medium">{game.size}</p>
-                    </div>
-                    <div>
-                      <p className="text-gray-400">Installation Time</p>
-                      <p className="text-white font-medium">2024-06-04</p>
-                    </div>
-                    <div>
-                      <p className="text-gray-400">Last Time Played</p>
-                      <p className="text-white font-medium">{game.lastPlayed || 'Never'}</p>
-                    </div>
-                  </div>
-                </div>
+                <h3 className="text-lg font-semibold text-white mb-4">Basic Information: {game.title}</h3>
 
                 {/* Version Selection */}
                 <div className="bg-gray-800/50 rounded-lg p-4">
@@ -260,7 +219,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                       <span>Open Directory</span>
                     </button>
                   </div>
-                  
+
                   <div className="bg-gray-700/50 rounded p-3 mb-3">
                     <p className="text-gray-300 font-mono text-sm">
                       {getCurrentDirectory() || 'No directory set for this version'}
@@ -275,7 +234,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                   <div>
                     <h5 className="text-white font-medium mb-2">Relocate Game</h5>
                     <p className="text-gray-400 text-sm mb-3">
-                      {getCurrentDirectory() 
+                      {getCurrentDirectory()
                         ? `Update the directory path for ${selectedVersion}. Select the folder where "${game.title}.exe" is located.`
                         : `Set the directory path for ${selectedVersion}. Select the folder where "${game.title}.exe" is located.`
                       }
@@ -295,7 +254,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
             {activeTab === 'advanced' && (
               <div className="space-y-6">
                 <h3 className="text-lg font-semibold text-white mb-4">Advanced Settings</h3>
-                
+
                 <div className="bg-gray-800/50 rounded-lg p-4">
                   <h4 className="text-white font-semibold mb-3">Launch Options</h4>
                   <div className="space-y-4">
@@ -341,7 +300,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
             {activeTab === 'logs' && (
               <div className="space-y-6">
                 <h3 className="text-lg font-semibold text-white mb-4">Log Information</h3>
-                
+
                 <div className="bg-gray-800/50 rounded-lg p-4">
                   <h4 className="text-white font-semibold mb-3">Recent Activity</h4>
                   <div className="space-y-3">
