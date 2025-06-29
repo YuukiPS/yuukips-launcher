@@ -1,4 +1,4 @@
-import { Game } from '../types';
+import { Game, GameEngine } from '../types';
 import { invoke } from '@tauri-apps/api/core';
 
 const API_BASE_URL = 'https://ps.yuuki.me/json';
@@ -94,8 +94,8 @@ export class GameApiService {
     const versions: string[] = [];
     
     game.engine.forEach(engine => {
-      Object.entries(engine.versionSupport).forEach(([version, platforms]) => {
-        if (platforms.includes(platformType)) {
+      Object.entries(engine.versionSupport).forEach(([version, platformData]) => {
+        if (platformData[platformType.toString()]) {
           versions.push(version);
         }
       });
@@ -106,16 +106,21 @@ export class GameApiService {
   
   static getEnginesForVersion(game: Game, version: string, platformType: number = 1) {
     return game.engine.filter(engine => {
-      const platforms = engine.versionSupport[version];
-      return platforms && platforms.includes(platformType);
+      const platformData = engine.versionSupport[version];
+      return platformData && platformData[platformType.toString()];
     });
   }
   
   static gameSupportsPC(game: Game): boolean {
     return game.engine.some(engine => {
-      return Object.values(engine.versionSupport).some(platforms => 
-        platforms.includes(1) // Platform 1 = PC
+      return Object.values(engine.versionSupport).some(platformData => 
+        platformData['1'] // Platform 1 = PC
       );
     });
+  }
+  
+  static getAvailableChannelsForEngineVersion(engine: GameEngine, version: string, platformType: number = 1): number[] {
+    const platformData = engine.versionSupport[version];
+    return platformData?.[platformType.toString()] || [];
   }
 }

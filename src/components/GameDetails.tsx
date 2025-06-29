@@ -18,7 +18,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
   const [showSSLModal, setShowSSLModal] = useState(false);
   const [isLaunching, setIsLaunching] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
-  const [pendingLaunch, setPendingLaunch] = useState<{ engine?: GameEngine; version?: string } | null>(null);
+  const [pendingLaunch, setPendingLaunch] = useState<{ engine?: GameEngine; version?: string; channel?: number } | null>(null);
 
   useEffect(() => {
     // Check if game is installed when component mounts or game changes
@@ -66,7 +66,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
     }
   };
 
-  const handleEngineLaunch = async (engine: GameEngine, version: string) => {
+  const handleEngineLaunch = async (engine: GameEngine, version: string, channel: number) => {
     setIsLaunching(true);
     try {
       // Check proxy and SSL status before launching
@@ -74,38 +74,45 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
       
       if (proxyStatus.needsSSL) {
         // Store the pending launch details and show SSL modal
-        setPendingLaunch({ engine, version });
+        setPendingLaunch({ engine, version, channel });
         setShowSSLModal(true);
         setIsLaunching(false);
         return;
       }
       
       // Proceed with game launch
-      await launchGameWithEngine(engine, version);
+      await launchGameWithEngine(engine, version, channel);
     } catch (error) {
       console.error('Error in pre-launch checks:', error);
       // Continue with launch even if proxy check fails
-      await launchGameWithEngine(engine, version);
+      await launchGameWithEngine(engine, version, channel);
     }
   };
 
-  const launchGameWithEngine = async (engine: GameEngine, version: string) => {
+  const launchGameWithEngine = async (engine: GameEngine, version: string, channel: number) => {
     try {
       // Get the game folder path from localStorage
-      const savedDirectories = localStorage.getItem(`game-${game.id}-directories`);
+      const savedDirectories = localStorage.getItem(`game-${game.id}-directories-v2`);
       let gameFolderPath = '';
       
       if (savedDirectories) {
         try {
           const directories = JSON.parse(savedDirectories);
-          gameFolderPath = directories[version] || '';
+          // Handle both old format (version -> path) and new format (version -> channel -> path)
+          if (typeof directories[version] === 'string') {
+            // Old format: migrate to new format
+            gameFolderPath = directories[version] || '';
+          } else if (typeof directories[version] === 'object' && directories[version]) {
+            // New format: get path for specific channel
+            gameFolderPath = directories[version][channel] || '';
+          }
         } catch (error) {
           console.error('Failed to parse saved directories:', error);
         }
       }
       
       if (!gameFolderPath) {
-        alert(`Game folder path not configured for ${game.title} version ${version}. Please set it in game settings.`);
+        alert(`Game folder path not configured for ${game.title} version ${version} (Channel ${channel}). Please set it in game settings.`);
         return;
       }
       
@@ -132,11 +139,11 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
   const handleSSLInstallComplete = () => {
     // Resume the pending launch after SSL installation
     if (pendingLaunch) {
-      const { engine, version } = pendingLaunch;
+      const { engine, version, channel } = pendingLaunch;
       setPendingLaunch(null);
-      if (engine && version) {
+      if (engine && version && channel) {
         setIsLaunching(true);
-        launchGameWithEngine(engine, version);
+        launchGameWithEngine(engine, version, channel);
       }
     }
   };
@@ -145,15 +152,15 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
     setShowSSLModal(false);
     // If user closes modal without installing, still allow launch but warn
     if (pendingLaunch) {
-      const { engine, version } = pendingLaunch;
+      const { engine, version, channel } = pendingLaunch;
       setPendingLaunch(null);
-      if (engine && version) {
+      if (engine && version && channel) {
         const proceed = confirm(
           'SSL certificate is not installed. HTTPS game traffic may not work properly. Do you want to continue anyway?'
         );
         if (proceed) {
           setIsLaunching(true);
-          launchGameWithEngine(engine, version);
+          launchGameWithEngine(engine, version, channel);
         }
       }
     }

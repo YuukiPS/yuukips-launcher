@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { X, Play, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
-import { Game, GameEngine } from '../types';
+import { Game, GameEngine, channelType } from '../types';
 import { GameApiService } from '../services/gameApi';
 
 interface EngineSelectionModalProps {
   game: Game;
   isOpen: boolean;
   onClose: () => void;
-  onLaunch: (engine: GameEngine, version: string) => void;
+  onLaunch: (engine: GameEngine, version: string, channel: number) => void;
 }
 
 export const EngineSelectionModal: React.FC<EngineSelectionModalProps> = ({
@@ -18,8 +18,10 @@ export const EngineSelectionModal: React.FC<EngineSelectionModalProps> = ({
 }) => {
   const [selectedVersion, setSelectedVersion] = useState<string>('');
   const [selectedEngine, setSelectedEngine] = useState<GameEngine | null>(null);
+  const [selectedChannel, setSelectedChannel] = useState<number>(1);
   const [availableVersions, setAvailableVersions] = useState<string[]>([]);
   const [availableEngines, setAvailableEngines] = useState<GameEngine[]>([]);
+  const [availableChannels, setAvailableChannels] = useState<number[]>([]);
   const [showFeatures, setShowFeatures] = useState<{[key: string]: boolean}>({});
 
   useEffect(() => {
@@ -73,9 +75,32 @@ export const EngineSelectionModal: React.FC<EngineSelectionModalProps> = ({
     }
   }, [selectedVersion, game]);
 
-  const handleLaunch = () => {
+  useEffect(() => {
     if (selectedEngine && selectedVersion) {
-      // Save the selected version and engine to localStorage
+      // Get available channels for selected engine and version
+      const channels = GameApiService.getAvailableChannelsForEngineVersion(selectedEngine, selectedVersion, 1);
+      setAvailableChannels(channels);
+      
+      // Try to restore saved channel preference
+      const savedPreferences = JSON.parse(localStorage.getItem('gamePreferences') || '{}');
+      const gamePreference = savedPreferences[game.id];
+      
+      if (gamePreference && 
+          gamePreference.selectedVersion === selectedVersion && 
+          gamePreference.selectedEngine?.id === selectedEngine.id &&
+          gamePreference.selectedChannel &&
+          channels.includes(gamePreference.selectedChannel)) {
+        setSelectedChannel(gamePreference.selectedChannel);
+      } else if (channels.length > 0) {
+        // Select first channel by default
+        setSelectedChannel(channels[0]);
+      }
+    }
+  }, [selectedEngine, selectedVersion, game]);
+
+  const handleLaunch = () => {
+    if (selectedEngine && selectedVersion && selectedChannel) {
+      // Save the selected version, engine, and channel to localStorage
       const gamePreferences = {
         gameId: game.id,
         selectedVersion,
@@ -84,6 +109,7 @@ export const EngineSelectionModal: React.FC<EngineSelectionModalProps> = ({
           name: selectedEngine.name,
           version: selectedEngine.version
         },
+        selectedChannel,
         lastSelected: Date.now()
       };
       
@@ -94,13 +120,28 @@ export const EngineSelectionModal: React.FC<EngineSelectionModalProps> = ({
       // Save to localStorage
       localStorage.setItem('gamePreferences', JSON.stringify(existingPreferences));
       
-      onLaunch(selectedEngine, selectedVersion);
+      onLaunch(selectedEngine, selectedVersion, selectedChannel);
       onClose();
     }
   };
 
   const handleEngineInfoClick = (link: string) => {
     window.open(link, '_blank');
+  };
+
+  const getChannelName = (channelId: number): string => {
+    switch (channelId) {
+      case channelType.None:
+        return 'None';
+      case channelType.OS:
+        return 'Global';
+      case channelType.CN:
+        return 'China';
+      case channelType.JP:
+        return 'Japan';
+      default:
+        return `Channel ${channelId}`;
+    }
   };
 
   if (!isOpen) return null;
@@ -211,6 +252,28 @@ export const EngineSelectionModal: React.FC<EngineSelectionModalProps> = ({
           </div>
         )}
 
+        {/* Channel Selection */}
+        {availableChannels.length > 0 && (
+          <div className="mb-6">
+            <label className="block text-white font-medium mb-3">Select Channel:</label>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+              {availableChannels.map((channel) => (
+                <button
+                  key={channel}
+                  onClick={() => setSelectedChannel(channel)}
+                  className={`p-3 rounded-lg border transition-all ${
+                    selectedChannel === channel
+                      ? 'border-green-500 bg-green-500/20 text-green-400'
+                      : 'border-gray-600 bg-gray-700 text-gray-300 hover:border-gray-500'
+                  }`}
+                >
+                  {getChannelName(channel)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Action Buttons */}
         <div className="flex items-center justify-end space-x-4">
           <button
@@ -221,7 +284,7 @@ export const EngineSelectionModal: React.FC<EngineSelectionModalProps> = ({
           </button>
           <button
             onClick={handleLaunch}
-            disabled={!selectedEngine || !selectedVersion}
+            disabled={!selectedEngine || !selectedVersion || !selectedChannel}
             className="flex items-center space-x-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed text-white px-6 py-2 rounded-lg font-medium transition-all duration-200"
           >
             <Play className="w-4 h-4" />

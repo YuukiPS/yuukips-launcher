@@ -10,6 +10,7 @@ Respon:
         "title": "Genshin Impact",
         "description": "Experience Genshin Impact like never before with our high-quality private server. Unlock all characters, weapons, and explore Teyvat with custom features and enhanced gameplay.",
         "keyword": "Genshin Impact, Private Server, Emulator, Teyvat, Quests, Characters, Weapons, Artifacts",
+        "version": "5.7.0",
         "lastUpdate": 1751117160,
         "image": "https://book-api.yuuki.me/image/blog/110000000_1751024349123_small.webp",
         "thumbnail": "https://book-api.yuuki.me/image/blog/110000000_1751024349123_thumbnail.webp",
@@ -22,23 +23,44 @@ Respon:
                 "description": "A high-performance Genshin Impact private server emulator.",
                 "version": "?.?.?",
                 "versionSupport": {
-                    "4.0.0": [
-                        1,
-                        2,
-                        3
-                    ],
-                    "4.0.1": [
-                        1,
-                        2,
-                        3
-                    ],
-                    "5.6.0": [
-                        1,
-                        2
-                    ],
-                    "5.7.0": [
-                        1
-                    ]
+                    "4.0.0": {
+                        "1": [
+                            2
+                        ],
+                        "2": [
+                            2
+                        ],
+                        "3": [
+                            1
+                        ]
+                    },
+                    "4.0.1": {
+                        "1": [
+                            2
+                        ],
+                        "2": [
+                            2
+                        ],
+                        "3": [
+                            1
+                        ]
+                    },
+                    "5.6.0": {
+                        "1": [
+                            1,
+                            2
+                        ],
+                        "2": [
+                            1,
+                            2
+                        ]
+                    },
+                    "5.7.0": {
+                        "1": [
+                            1,
+                            2
+                        ]
+                    }
                 },
                 "link": "https://github.com/Grasscutters/Grasscutter",
                 "command": 2,
@@ -63,10 +85,14 @@ Respon:
                 "description": "Leaked official version of private server.",
                 "version": "3.2.0",
                 "versionSupport": {
-                    "3.2.0": [
-                        1,
-                        2
-                    ]
+                    "3.2.0": {
+                        "1": [
+                            1
+                        ],
+                        "2": [
+                            1
+                        ]
+                    }
                 },
                 "link": "https://discord.gg/u7fGFjnF",
                 "command": 1,
@@ -92,6 +118,7 @@ Respon:
         "title": "Honkai Star Rail",
         "description": "Journey through the stars with our Honkai Star Rail private server. Experience the complete story with all characters, light cones, and unlimited stellar jade.",
         "keyword": "Honkai Star Rail, Private Server, Emulator, Stellar Jade, Characters, Light Cones, Quests",
+        "version": "3.3.0",
         "lastUpdate": 1749079380,
         "image": "https://book-api.yuuki.me/image/blog/110000000_1751023300485_small.webp",
         "thumbnail": "https://book-api.yuuki.me/image/blog/110000000_1751023300485_thumbnail.webp",
@@ -104,11 +131,20 @@ Respon:
                 "description": "A powerful and flexible Honkai Star Rail private server emulator.",
                 "version": "?.?.?",
                 "versionSupport": {
-                    "3.3.3": [
-                        1,
-                        2,
-                        3
-                    ]
+                    "3.3.0": {
+                        "1": [
+                            1,
+                            2
+                        ],
+                        "2": [
+                            1,
+                            2
+                        ],
+                        "3": [
+                            1,
+                            2
+                        ]
+                    }
                 },
                 "link": "https://github.com/Melledy/LunarCore",
                 "command": 2
@@ -121,6 +157,7 @@ Respon:
         "title": "Blue Archive",
         "description": "Command your students in Blue Archive private server with unlimited resources, all characters unlocked, and exclusive content not available in the official version.",
         "keyword": "Blue Archive, Private Server, Emulator, Students, Characters, Resources, Quests",
+        "version": "1.57",
         "lastUpdate": 1749079380,
         "image": "https://book-api.yuuki.me/image/blog/110000000_1751024665133_small.webp",
         "thumbnail": "https://book-api.yuuki.me/image/blog/110000000_1751024665133_thumbnail.webp",
@@ -133,10 +170,14 @@ Respon:
                 "description": "A robust Blue Archive private server emulator with extensive features.",
                 "version": "?.?.?",
                 "versionSupport": {
-                    "1.57": [
-                        2,
-                        3
-                    ]
+                    "1.57": {
+                        "2": [
+                            3
+                        ],
+                        "3": [
+                            3
+                        ]
+                    }
                 },
                 "link": "https://github.com/gucooing/BaPs",
                 "command": 1
@@ -152,23 +193,6 @@ what you need to know:
 - icon = image icon
 - description = info about game
 - lastUpdate = last update game
-every game has different engine and versionSupport:PlatformType so basically:
-`game -> engine -> versionSupport:PlatformType`
-So every time you click the `Start Game` button it will display a menu to select the available engine and available version and Only display PlatformType 1 data because this is only for pc
-# Proxy Game for private game
-So when we click `Start Game` it will run the proxy, which will direct all the domains in the list to `ps.yuuki.me`
-private static bool HostPrivate(string hostname)
-{
-    if (
-        hostname.EndsWith(".zenlesszonezero.com") |
-        hostname.EndsWith(".honkaiimpact3.com") |
-        hostname.EndsWith(".bhsr.com") |
-        hostname.EndsWith(".starrails.com") |
-        hostname.EndsWith(".yuanshen.com") |
-        hostname.EndsWith(".hoyoverse.com") |
-        hostname.EndsWith(".mihoyo.com"))
-    {
-        return true;
-    }
-    return false;
-} this example c# code but we need to add this code to our launcher
+every game has different engine and versionSupport:PlatformType:channelType so basically:
+`game -> engine -> versionSupport:PlatformType:channelType`
+So every time you click the `Start Game` button it will display a menu to select the available engine,version,channelType and Only display PlatformType 1 data because this is only for pc

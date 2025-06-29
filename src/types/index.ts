@@ -4,7 +4,7 @@ export interface GameEngine {
   short: string;
   description: string;
   version: string;
-  versionSupport: Record<string, number[]>;
+  versionSupport: Record<string, Record<string, number[]>>;
   link: string;
   command: number;
   features?: string[];
@@ -69,4 +69,11 @@ export enum PlatformType {
 	PC = 1,
 	Android = 2,
 	iOS = 3
+}
+
+export enum channelType {
+  None = 0,
+  OS = 1,
+  CN = 2,
+  JP = 3 // Ba/Hi3
 }

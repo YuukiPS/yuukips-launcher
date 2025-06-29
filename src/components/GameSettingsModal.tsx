@@ -20,7 +20,9 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState('basic');
   const [selectedVersion, setSelectedVersion] = useState("");
-  const [versionDirectories, setVersionDirectories] = useState<Record<string, string>>({});
+  const [selectedChannel, setSelectedChannel] = useState<number>(0);
+  const [availableChannels, setAvailableChannels] = useState<number[]>([]);
+  const [versionDirectories, setVersionDirectories] = useState<Record<string, Record<number, string>>>({});
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [proxyAddress, setProxyAddress] = useState('https://ps.yuuki.me');
   const [savedProxyServers, setSavedProxyServers] = useState<string[]>(['https://ps.yuuki.me']);
@@ -37,16 +39,40 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   // Get available versions dynamically from game engine data
   const availableVersions = GameApiService.getAvailableVersionsForPlatform(game, 1);
 
-  // Initialize selectedVersion with the first available version
+  // Reset selectedVersion when game changes or modal opens
   useEffect(() => {
-    if (availableVersions.length > 0 && !selectedVersion) {
+    if (isOpen && availableVersions.length > 0 && !selectedVersion) {
       setSelectedVersion(availableVersions[0]);
+    } else if (!isOpen) {
+      // Reset state when modal closes
+      setSelectedVersion("");
+      setSelectedChannel(0);
     }
-  }, [availableVersions, selectedVersion]);
+  }, [isOpen, game.id, availableVersions, selectedVersion]); // Added selectedVersion back to check if already set
+
+  // Load available channels when version changes
+  useEffect(() => {
+    if (selectedVersion && game.engine && game.engine.length > 0) {
+      // Get the first engine for the selected version to determine available channels
+      const engineForVersion = game.engine.find(() => 
+        GameApiService.getAvailableVersionsForPlatform(game, 1).includes(selectedVersion)
+      );
+      
+      if (engineForVersion) {
+        const channels = GameApiService.getAvailableChannelsForEngineVersion(engineForVersion, selectedVersion, 1);
+        setAvailableChannels(channels);
+        
+        // Set default channel when version changes
+        if (channels.length > 0) {
+          setSelectedChannel(channels[0]);
+        }
+      }
+    }
+  }, [selectedVersion, game]); // Removed selectedChannel to prevent infinite loop
 
   // Load saved directories from localStorage on component mount
   useEffect(() => {
-    const savedDirectories = localStorage.getItem(`game-${game.id}-directories`);
+    const savedDirectories = localStorage.getItem(`game-${game.id}-directories-v2`);
     if (savedDirectories) {
       try {
         setVersionDirectories(JSON.parse(savedDirectories));
@@ -155,9 +181,9 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   };
 
   // Save directories to localStorage whenever they change
-  const saveDirectories = (newDirectories: Record<string, string>) => {
+  const saveDirectories = (newDirectories: Record<string, Record<number, string>>) => {
     setVersionDirectories(newDirectories);
-    localStorage.setItem(`game-${game.id}-directories`, JSON.stringify(newDirectories));
+    localStorage.setItem(`game-${game.id}-directories-v2`, JSON.stringify(newDirectories));
   };
 
   // Save proxy domains to localStorage whenever they change
@@ -334,7 +360,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
         showNotification('Failed to open directory', 'error');
       }
     } else {
-      showNotification(`No directory set for ${selectedVersion}. Please set a directory first.`, 'error');
+      showNotification(`No directory set for ${selectedVersion} (Channel ${getChannelName(selectedChannel)}). Please set a directory first.`, 'error');
     }
   };
 
@@ -343,17 +369,20 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
       const selectedPath = await open({
         directory: true,
         multiple: false,
-        defaultPath: versionDirectories[selectedVersion] || undefined,
-        title: `Select directory for ${selectedVersion}`
+        defaultPath: getCurrentDirectory() || undefined,
+        title: `Select directory for ${selectedVersion} (Channel ${getChannelName(selectedChannel)})`
       });
 
       if (selectedPath && typeof selectedPath === 'string') {
         const updatedDirectories = {
           ...versionDirectories,
-          [selectedVersion]: selectedPath
+          [selectedVersion]: {
+            ...versionDirectories[selectedVersion],
+            [selectedChannel]: selectedPath
+          }
         };
         saveDirectories(updatedDirectories);
-        showNotification(`Directory for ${selectedVersion} updated successfully!`);
+        showNotification(`Directory for ${selectedVersion} (Channel ${getChannelName(selectedChannel)}) updated successfully!`);
       }
     } catch (error) {
       console.error('Failed to open directory dialog:', error);
@@ -408,9 +437,25 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
     }
   };
 
-  // Get current directory for selected version
+  // Get current directory for selected version and channel
   const getCurrentDirectory = () => {
-    return versionDirectories[selectedVersion] || '';
+    return getDirectoryForVersionChannel(selectedVersion, selectedChannel);
+  };
+
+  // Helper function to get directory for any version/channel combination
+  const getDirectoryForVersionChannel = (version: string, channel: number): string => {
+    return versionDirectories[version]?.[channel] || '';
+  };
+
+  // Helper function to get channel name
+  const getChannelName = (channelId: number): string => {
+    switch (channelId) {
+      case 0: return 'None';
+      case 1: return 'Global';
+      case 2: return 'China';
+      case 3: return 'Japan';
+      default: return `Channel ${channelId}`;
+    }
   };
 
   if (!isOpen) return null;
@@ -508,7 +553,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                         />
                         <span className="text-white font-medium">{version}</span>
                         <div className="flex items-center space-x-2 ml-auto">
-                          {versionDirectories[version] ? (
+                          {versionDirectories[version] && Object.keys(versionDirectories[version] || {}).length > 0 ? (
                             <div className="flex items-center space-x-1">
                               <div className="w-2 h-2 bg-green-400 rounded-full"></div>
                               <span className="text-green-400 text-xs">Configured</span>
@@ -524,6 +569,44 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                     ))}
                   </div>
                 </div>
+
+                {/* Channel Selection */}
+                {selectedVersion && availableChannels.length > 0 && (
+                  <div className="bg-gray-800/50 rounded-lg p-4">
+                    <h4 className="text-white font-semibold mb-3">Select Channel</h4>
+                    <div className="space-y-2">
+                      {availableChannels.map((channel) => (
+                        <label
+                          key={channel}
+                          className="flex items-center space-x-3 p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700/70 cursor-pointer transition-colors"
+                        >
+                          <input
+                            type="radio"
+                            name="channel"
+                            value={channel}
+                            checked={selectedChannel === channel}
+                            onChange={() => setSelectedChannel(channel)}
+                            className="text-purple-600 focus:ring-purple-500"
+                          />
+                          <span className="text-white font-medium">{getChannelName(channel)}</span>
+                          <div className="flex items-center space-x-2 ml-auto">
+                            {getDirectoryForVersionChannel(selectedVersion, channel) ? (
+                              <div className="flex items-center space-x-1">
+                                <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                                <span className="text-green-400 text-xs">Configured</span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center space-x-1">
+                                <div className="w-2 h-2 bg-yellow-400 rounded-full"></div>
+                                <span className="text-yellow-400 text-xs">Not Set</span>
+                              </div>
+                            )}
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Game Directory */}
                 <div className="bg-gray-800/50 rounded-lg p-4">
@@ -544,7 +627,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                     </p>
                     {!getCurrentDirectory() && (
                       <p className="text-yellow-400 text-xs mt-1">
-                        ⚠️ Directory not configured for {selectedVersion}
+                        ⚠️ Directory not configured for {selectedVersion} ({getChannelName(selectedChannel)})
                       </p>
                     )}
                   </div>
