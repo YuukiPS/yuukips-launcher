@@ -333,7 +333,7 @@ fn launch_game_with_engine(
             .current_dir(&game_folder_path)
             .spawn()
         {
-            Ok(_) => Ok(format!("Successfully launched {} with {} from folder {}. HTTP/HTTPS proxy is active on 127.0.0.1:8080 with automatic Windows proxy configuration - game traffic redirected to ps.yuuki.me", game_title, engine_name, game_folder_path)),
+            Ok(_) => Ok(format!("Successfully launched {} with {} from folder {}. HTTP/HTTPS proxy is active on 127.0.0.1:??? with automatic Windows proxy configuration - game traffic redirected to ps.yuuki.me", game_title, engine_name, game_folder_path)),
             Err(e) => {
                 // If game launch fails, try to clean up proxy
                 let _ = proxy::stop_proxy();
@@ -432,7 +432,7 @@ fn check_game_installed(_game_id: Number, _version: String, game_folder_path: St
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
-    .invoke_handler(tauri::generate_handler![launch_game, launch_game_with_engine, get_game_folder_path, show_game_folder, check_game_installed, open_directory, start_proxy, stop_proxy, check_proxy_status, force_stop_proxy, check_and_disable_windows_proxy, install_ssl_certificate, install_ca_certificate, check_certificate_status, check_ssl_certificate_installed, check_admin_privileges, proxy::set_proxy_addr, proxy::get_proxy_addr, proxy::get_proxy_logs, proxy::clear_proxy_logs, proxy::get_proxy_domains, proxy::add_proxy_domain, proxy::remove_proxy_domain])
+    .invoke_handler(tauri::generate_handler![launch_game, launch_game_with_engine, get_game_folder_path, show_game_folder, check_game_installed, open_directory, start_proxy, stop_proxy, check_proxy_status, force_stop_proxy, check_and_disable_windows_proxy, install_ssl_certificate, install_ca_certificate, check_certificate_status, check_ssl_certificate_installed, check_admin_privileges, proxy::set_proxy_addr, proxy::get_proxy_addr, proxy::get_proxy_logs, proxy::clear_proxy_logs, proxy::get_proxy_domains, proxy::add_proxy_domain, proxy::remove_proxy_domain, proxy::set_proxy_port, proxy::get_proxy_port, proxy::find_available_port, proxy::start_proxy_with_port])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

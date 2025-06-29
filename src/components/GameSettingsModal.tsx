@@ -31,6 +31,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const [proxyStatusLoading, setProxyStatusLoading] = useState(false);
   const [proxyDomains, setProxyDomains] = useState<string[]>([]);
   const [newDomainInput, setNewDomainInput] = useState('');
+  const [proxyPort, setProxyPort] = useState<number>(8080);
+  const [customPortInput, setCustomPortInput] = useState<string>('');
 
   // Get available versions dynamically from game engine data
   const availableVersions = GameApiService.getAvailableVersionsForPlatform(game, 1);
@@ -105,8 +107,21 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
       fetchProxyLogs();
       checkProxyStatus();
       fetchProxyDomains();
+      loadProxyPort();
     }
   }, [isOpen]);
+
+  // Load current proxy port
+  const loadProxyPort = async () => {
+    try {
+      const currentPort = await invoke('get_proxy_port');
+      if (typeof currentPort === 'number') {
+        setProxyPort(currentPort);
+      }
+    } catch (error) {
+      console.error('Failed to load proxy port:', error);
+    }
+  };
 
   // Fetch proxy domains from backend
   const fetchProxyDomains = async () => {
@@ -196,14 +211,48 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const handleStartProxy = async () => {
     setProxyStatusLoading(true);
     try {
-      await invoke('start_proxy');
+      const result = await invoke('start_proxy_with_port', { port: proxyPort });
       setIsProxyRunning(true);
-      showNotification('Proxy started successfully!');
+      showNotification(typeof result === 'string' ? result : 'Proxy started successfully!');
     } catch (error) {
       console.error('Failed to start proxy:', error);
       showNotification('Failed to start proxy', 'error');
     } finally {
       setProxyStatusLoading(false);
+    }
+  };
+
+  // Find available port
+  const handleFindAvailablePort = async () => {
+    try {
+      const availablePort = await invoke('find_available_port');
+      if (typeof availablePort === 'number') {
+        setProxyPort(availablePort);
+        await invoke('set_proxy_port', { port: availablePort });
+        showNotification(`Found available port: ${availablePort}`);
+      }
+    } catch (error) {
+      console.error('Failed to find available port:', error);
+      showNotification('Failed to find available port', 'error');
+    }
+  };
+
+  // Set custom port
+  const handleSetCustomPort = async () => {
+    const port = parseInt(customPortInput);
+    if (isNaN(port) || port < 1024 || port > 65535) {
+      showNotification('Please enter a valid port number (1024-65535)', 'error');
+      return;
+    }
+
+    try {
+      await invoke('set_proxy_port', { port });
+      setProxyPort(port);
+      setCustomPortInput('');
+      showNotification(`Proxy port set to ${port}`);
+    } catch (error) {
+      console.error('Failed to set proxy port:', error);
+      showNotification(typeof error === 'string' ? error : 'Failed to set proxy port', 'error');
     }
   };
 
@@ -540,7 +589,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                           {isProxyRunning ? 'Running' : 'Stopped'}
                         </span>
                         <span className="text-gray-300 text-sm">
-                          {isProxyRunning ? 'Proxy server is active on port 8080' : 'Proxy server is not running'}
+                          {isProxyRunning ? `Proxy server is active on port ${proxyPort}` : 'Proxy server is not running'}
                         </span>
                       </div>
 
@@ -573,6 +622,70 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                     <p className="text-gray-400 text-sm">
                       The proxy server intercepts and redirects game traffic. Games can continue running even when the proxy is stopped.
                     </p>
+                  </div>
+                </div>
+
+                {/* Proxy Port Configuration */}
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-semibold mb-3">Proxy Port Configuration</h4>
+                  <div className="space-y-4">
+                    {/* Current Port Display */}
+                    <div className="flex items-center space-x-2 p-3 bg-gray-700/50 rounded-lg">
+                      <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
+                      <span className="text-blue-400 text-sm font-medium">Current Port:</span>
+                      <span className="text-white text-sm font-mono">{proxyPort}</span>
+                    </div>
+
+                    {/* Port Actions */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {/* Find Available Port */}
+                      <button
+                        onClick={handleFindAvailablePort}
+                        disabled={isProxyRunning}
+                        className={`flex items-center justify-center space-x-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+                          isProxyRunning
+                            ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                            : 'bg-blue-600 text-white hover:bg-blue-700'
+                        }`}
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                        <span>Find Available Port</span>
+                      </button>
+
+                      {/* Custom Port Input */}
+                      <div className="flex space-x-2">
+                        <input
+                          type="number"
+                          value={customPortInput}
+                          onChange={(e) => setCustomPortInput(e.target.value)}
+                          onKeyPress={(e) => e.key === 'Enter' && handleSetCustomPort()}
+                          disabled={isProxyRunning}
+                          className={`flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-purple-500 focus:outline-none ${
+                            isProxyRunning ? 'opacity-50 cursor-not-allowed' : ''
+                          }`}
+                          placeholder="Custom port (1024-65535)"
+                          min="1024"
+                          max="65535"
+                        />
+                        <button
+                          onClick={handleSetCustomPort}
+                          disabled={isProxyRunning || !customPortInput.trim()}
+                          className={`px-3 py-2 rounded-lg font-medium transition-colors ${
+                            isProxyRunning || !customPortInput.trim()
+                              ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                              : 'bg-purple-600 text-white hover:bg-purple-700'
+                          }`}
+                        >
+                          Set
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+                      <p className="text-yellow-400 text-sm">
+                        ⚠️ Port changes require stopping and restarting the proxy server. Make sure the new port is not in use by other applications.
+                      </p>
+                    </div>
                   </div>
                 </div>
 

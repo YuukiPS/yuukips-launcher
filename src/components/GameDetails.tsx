@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Game, GameEngine } from '../types';
-import { Play, Settings, Download, Clock, Folder } from 'lucide-react';
+import { Play, Settings, Download, Clock } from 'lucide-react';
 import { GameSettingsModal } from './GameSettingsModal';
 import { EngineSelectionModal } from './EngineSelectionModal';
 import { SSLCertificateModal } from './SSLCertificateModal';
@@ -159,15 +159,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
     }
   };
 
-  const handleShowFolder = async () => {
-    try {
-      const result = await invoke('show_game_folder', { gameId: game.id });
-      console.log('Folder open result:', result);
-    } catch (error) {
-      console.error('Error opening game folder:', error);
-      alert(`Failed to open game folder: ${error}`);
-    }
-  };
+
 
   const handleSettings = () => {
     setShowSettings(true);
@@ -245,13 +237,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
                 <span>Game Settings</span>
               </button>
 
-              <button
-                onClick={handleShowFolder}
-                className="flex items-center space-x-2 bg-blue-800/80 hover:bg-blue-700/80 text-white px-6 py-4 rounded-xl transition-all duration-200 backdrop-blur-sm border border-blue-600/50 hover:border-blue-500/50"
-              >
-                <Folder className="w-5 h-5" />
-                <span>Open Folder</span>
-              </button>
+
 
               {game.status === 'updating' && (
                 <div className="flex items-center space-x-2 text-yellow-400">

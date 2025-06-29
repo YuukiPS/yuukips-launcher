@@ -58,6 +58,9 @@ static SERVER: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("https://ps.yuuki.m
 // Global proxy state
 static PROXY_STATE: Lazy<Mutex<Option<ProxyHandle>>> = Lazy::new(|| Mutex::new(None));
 
+// Global proxy port storage
+static PROXY_PORT: Lazy<Mutex<u16>> = Lazy::new(|| Mutex::new(8080));
+
 // Global proxy logs storage
 static PROXY_LOGS: Lazy<Mutex<VecDeque<ProxyLogEntry>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
 
@@ -106,6 +109,50 @@ pub fn set_proxy_addr(addr: String) {
 #[tauri::command]
 pub fn get_proxy_addr() -> String {
     SERVER.lock().unwrap().clone()
+}
+
+#[tauri::command]
+pub fn set_proxy_port(port: u16) -> Result<String, String> {
+    if port < 1024 || port > 65535 {
+        return Err("Port must be between 1024 and 65535".to_string());
+    }
+    
+    *PROXY_PORT.lock().unwrap() = port;
+    Ok(format!("Proxy port set to {}", port))
+}
+
+#[tauri::command]
+pub fn get_proxy_port() -> u16 {
+    *PROXY_PORT.lock().unwrap()
+}
+
+#[tauri::command]
+pub fn find_available_port() -> Result<u16, String> {
+    use std::net::TcpListener;
+    
+    // Try to find an available port starting from 8080
+    for port in 8080..=8999 {
+        if let Ok(_) = TcpListener::bind(format!("127.0.0.1:{}", port)) {
+            return Ok(port);
+        }
+    }
+    
+    // If no port found in the preferred range, try a random port
+    match TcpListener::bind("127.0.0.1:0") {
+        Ok(listener) => {
+            let port = listener.local_addr().unwrap().port();
+            Ok(port)
+        }
+        Err(_) => Err("Could not find any available port".to_string())
+    }
+}
+
+#[tauri::command]
+pub fn start_proxy_with_port(port: u16) -> Result<String, String> {
+    // Set the port first
+    set_proxy_port(port)?;
+    // Then start the proxy
+    start_proxy()
 }
 
 // Helper function to log proxy redirections
@@ -569,7 +616,8 @@ pub fn start_proxy() -> Result<String, String> {
         .to_string_lossy()
         .to_string();
 
-    runtime.spawn(create_proxy_internal(8080, cert_path, shutdown_rx));
+    let proxy_port = *PROXY_PORT.lock().unwrap();
+    runtime.spawn(create_proxy_internal(proxy_port, cert_path, shutdown_rx));
 
     *state = Some(ProxyHandle {
         _runtime: runtime,
@@ -577,9 +625,9 @@ pub fn start_proxy() -> Result<String, String> {
     });
 
     // Re-establish proxy connection after starting
-    connect_to_proxy(8080);
+    connect_to_proxy(proxy_port);
 
-    Ok("Proxy started successfully on port 8080".to_string())
+    Ok(format!("Proxy started successfully on port {}", proxy_port))
 }
 
 pub fn stop_proxy() -> Result<String, String> {
