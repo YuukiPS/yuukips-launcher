@@ -1,448 +1,527 @@
-use std::net::SocketAddr;
-use std::sync::Mutex;
-use tokio::runtime::Runtime;
-use hudsucker::{
-    certificate_authority::RcgenAuthority,
-    hyper::{Body, Request, Response, StatusCode},
-    *,
-};
-use tracing::info;
+/*
+ * Source: https://github.com/Grasscutters/Cultivation/raw/refs/heads/main/src-tauri/src/proxy.rs
+ */
 
-#[cfg(target_os = "windows")]
-use winreg::enums::*;
-#[cfg(target_os = "windows")]
-use winreg::RegKey;
+use once_cell::sync::Lazy;
+use std::{path::PathBuf, str::FromStr, sync::Mutex};
+use tokio::runtime::Runtime;
+
+use hudsucker::{
+  async_trait::async_trait,
+  certificate_authority::RcgenAuthority,
+  hyper::{Body, Request, Response, StatusCode},
+  *,
+};
+use rcgen::{CertificateParams, DistinguishedName, DnType, IsCa, KeyPair, BasicConstraints, KeyUsagePurpose};
+
+use std::fs;
+use std::net::SocketAddr;
+use std::path::Path;
+use std::process::Command;
+
+use rustls_pemfile as pemfile;
+use hudsucker::hyper::Uri;
+
+use std::env;
+
+// Helper function to get data directory
+fn get_data_dir() -> Result<PathBuf, String> {
+    if let Some(home) = env::var_os("USERPROFILE") {
+        Ok(PathBuf::from(home).join("AppData").join("Local"))
+    } else {
+        Err("Could not determine data directory".to_string())
+    }
+}
+
+#[cfg(windows)]
+use registry::{Data, Hive, Security};
+
+#[cfg(target_os = "linux")]
+use std::process::Command;
+#[cfg(target_os = "linux")]
+use std::{fs::File, io::Write, process::Command};
+
+async fn shutdown_signal() {
+  tokio::signal::ctrl_c()
+    .await
+    .expect("Failed to install CTRL+C signal handler");
+}
+
+// Global ver for getting server address.
+static SERVER: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("https://ps.yuuki.me:443".to_string()));
 
 // Global proxy state
-static PROXY_STATE: Mutex<Option<ProxyHandle>> = Mutex::new(None);
+static PROXY_STATE: Lazy<Mutex<Option<ProxyHandle>>> = Lazy::new(|| Mutex::new(None));
 
 struct ProxyHandle {
     _runtime: Runtime,
     shutdown_tx: tokio::sync::oneshot::Sender<()>,
-    original_proxy_settings: Option<WindowsProxySettings>,
 }
 
-#[cfg(target_os = "windows")]
-#[derive(Clone, Debug)]
-struct WindowsProxySettings {
-    proxy_enable: u32,
-    proxy_server: String,
-    proxy_override: String,
-}
-
-#[cfg(not(target_os = "windows"))]
-#[derive(Clone, Debug)]
-struct WindowsProxySettings;
-
-// Configuration for proxy behavior
-struct ProxyConfig {
-    show_log: bool,
-    send_log: bool,
-}
-
-static PROXY_CONFIG: std::sync::OnceLock<ProxyConfig> = std::sync::OnceLock::new();
-
-// Initialize proxy configuration
-fn get_proxy_config() -> &'static ProxyConfig {
-    PROXY_CONFIG.get_or_init(|| ProxyConfig {
-        show_log: true,
-        send_log: true,
-    })
-}
-
-// URL filtering functions
-fn is_useless_log_url(url: &str) -> bool {
-    let useless_patterns = [
-        "hoyoverse.com",
-        "mihoyo.com",
-        "unity.com",
-        "unitychina.cn",
-        "googleapis.com",
-        "google.com",
-        "crashlytics.com",
-        "fabric.io",
-    ];
-    
-    useless_patterns.iter().any(|pattern| url.contains(pattern))
-}
-
-fn is_good_log_url(url: &str) -> bool {
-    let good_patterns = [
-        "api-os-takumi",
-        "api-takumi",
-        "api-account-os",
-        "api-account",
-        "sdk-os-static",
-        "sdk-static",
-        "webstatic-sea",
-        "webstatic",
-        "hk4e-api-os",
-        "hk4e-api",
-        "bh3-api-os",
-        "bh3-api",
-        "sg-public-api",
-        "public-api",
-    ];
-    
-    good_patterns.iter().any(|pattern| url.contains(pattern))
-}
-
-fn should_ignore_url(url: &str) -> bool {
-    let config = get_proxy_config();
-    
-    if !config.show_log && is_useless_log_url(url) {
-        return true;
-    }
-    
-    if !config.send_log && !is_good_log_url(url) {
-        return true;
-    }
-    
-    false
-}
-
-fn is_private_hostname(hostname: &str) -> bool {
-    hostname == "localhost" || 
-    hostname.starts_with("127.") || 
-    hostname.starts_with("192.168.") || 
-    hostname.starts_with("10.") || 
-    hostname.starts_with("172.")
-}
-
-fn should_redirect_hostname(hostname: &str) -> bool {
-    let game_domains = [
-        "hoyoverse.com",
-        "mihoyo.com",
-        "yuanshen.com",
-        "genshinimpact.com",
-        "honkaiimpact3.com",
-        "honkaistarrail.com",
-        "zenlesszonezero.com",
-    ];
-    
-    game_domains.iter().any(|domain| hostname.ends_with(domain))
-}
-
-// Custom handler for hudsucker
 #[derive(Clone)]
-struct GameProxyHandler;
+struct ProxyHandler;
 
-#[async_trait::async_trait]
-impl HttpHandler for GameProxyHandler {
-    async fn handle_request(
-        &mut self,
-        _ctx: &HttpContext,
-        mut req: Request<Body>,
-    ) -> RequestOrResponse {
-        let uri = req.uri();
-        let url_str = uri.to_string();
-        
-        // Check if we should ignore this URL
-        if should_ignore_url(&url_str) {
-            let response = Response::builder()
-                .status(StatusCode::NO_CONTENT)
-                .body(Body::empty())
-                .unwrap();
-            return RequestOrResponse::Response(response);
-        }
-        
-        // Check if we should redirect the hostname
-        if let Some(host) = uri.host() {
-            if should_redirect_hostname(host) && !is_private_hostname(host) {
-                // Redirect to ps.yuuki.me
-                let new_uri = format!("{}://ps.yuuki.me{}", 
-                    uri.scheme_str().unwrap_or("https"),
-                    uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/")
-                );
-                
-                info!("🔄 Redirecting: {} -> {}", url_str, new_uri);
-                
-                // Modify the request URI
-                let new_uri: hudsucker::hyper::Uri = new_uri.parse().unwrap_or_else(|_| uri.clone());
-                *req.uri_mut() = new_uri;
-                
-                // Update the Host header
-                if let Ok(host_header) = "ps.yuuki.me".parse() {
-                    req.headers_mut().insert("host", host_header);
-                }
-            }
-        }
-        
-        RequestOrResponse::Request(req)
+#[tauri::command]
+pub fn set_proxy_addr(addr: String) {
+  if addr.contains(' ') {
+    let addr2 = addr.replace(' ', "");
+    *SERVER.lock().unwrap() = addr2;
+  } else {
+    *SERVER.lock().unwrap() = addr;
+  }
+
+  println!("Set server to {}", SERVER.lock().unwrap());
+}
+
+#[async_trait]
+impl HttpHandler for ProxyHandler {
+  async fn handle_request(
+    &mut self,
+    _ctx: &HttpContext,
+    mut req: Request<Body>,
+  ) -> RequestOrResponse {
+    let uri = req.uri().to_string();
+
+    if uri.contains("hoyoverse.com")
+      || uri.contains("mihoyo.com")
+      || uri.contains("yuanshen.com")
+      || uri.ends_with(".yuanshen.com:12401")
+      || uri.contains("starrails.com")
+      || uri.contains("bhsr.com")
+      || uri.contains("bh3.com")
+      || uri.contains("honkaiimpact3.com")
+      || uri.contains("zenlesszonezero.com")
+    {
+      // Handle CONNECTs
+      if req.method().as_str() == "CONNECT" {
+        let builder = Response::builder()
+          .header("DecryptEndpoint", "Created")
+          .status(StatusCode::OK);
+        let res = builder.body(()).unwrap();
+
+        // Respond to CONNECT
+        *res.body()
+      } else {
+        let uri_path_and_query = req.uri().path_and_query().unwrap().as_str();
+        // Create new URI.
+        let new_uri =
+          Uri::from_str(format!("{}{}", SERVER.lock().unwrap(), uri_path_and_query).as_str())
+            .unwrap();
+        // Set request URI to the new one.
+        *req.uri_mut() = new_uri;
+      }
     }
-    
-    async fn handle_response(
-        &mut self,
-        _ctx: &HttpContext,
-        res: Response<Body>,
-    ) -> Response<Body> {
-        res
+
+    req.into()
+  }
+
+  async fn handle_response(
+    &mut self,
+    _context: &HttpContext,
+    response: Response<Body>,
+  ) -> Response<Body> {
+    response
+  }
+
+  async fn should_intercept(&mut self, _ctx: &HttpContext, _req: &Request<Body>) -> bool {
+    let uri = _req.uri().to_string();
+
+    uri.contains("hoyoverse.com")
+      || uri.contains("mihoyo.com")
+      || uri.contains("yuanshen.com")
+      || uri.contains("starrails.com")
+      || uri.contains("bhsr.com")
+      || uri.contains("bh3.com")
+      || uri.contains("honkaiimpact3.com")
+      || uri.contains("zenlesszonezero.com")
+  }
+}
+
+/**
+ * Starts an HTTP(S) proxy server.
+ */
+pub async fn create_proxy_internal(proxy_port: u16, certificate_path: String, shutdown_rx: tokio::sync::oneshot::Receiver<()>) {
+  let cert_path = PathBuf::from(certificate_path);
+  let pk_path = cert_path.join("private.key");
+  let ca_path = cert_path.join("cert.crt");
+
+  // Get the certificate and private key.
+  let mut private_key_bytes: &[u8] = &match fs::read(&pk_path) {
+    // Try regenerating the CA stuff and read it again. If that doesn't work, quit.
+    Ok(b) => b,
+    Err(e) => {
+      println!("Encountered {}. Regenerating CA cert and retrying...", e);
+      generate_ca_files(&get_data_dir().unwrap().join("yuukips"));
+
+      fs::read(&pk_path).expect("Could not read private key")
     }
+  };
+
+  let mut ca_cert_bytes: &[u8] = &match fs::read(&ca_path) {
+    // Try regenerating the CA stuff and read it again. If that doesn't work, quit.
+    Ok(b) => b,
+    Err(e) => {
+      println!("Encountered {}. Regenerating CA cert and retrying...", e);
+      generate_ca_files(&get_data_dir().unwrap().join("yuukips"));
+
+      fs::read(&ca_path).expect("Could not read certificate")
+    }
+  };
+
+  // Parse the private key and certificate.
+  let private_key_der = pemfile::pkcs8_private_keys(&mut private_key_bytes)
+    .expect("Failed to parse private key")
+    .into_iter()
+    .next()
+    .expect("No private key found");
+  let private_key = rustls::PrivateKey(private_key_der);
+
+  let ca_cert_der = pemfile::certs(&mut ca_cert_bytes)
+    .expect("Failed to parse CA certificate")
+    .into_iter()
+    .next()
+    .expect("No certificate found");
+  let ca_cert = rustls::Certificate(ca_cert_der);
+
+  // Create the certificate authority.
+  let authority = RcgenAuthority::new(private_key, ca_cert, 1_000)
+    .expect("Failed to create Certificate Authority");
+
+  // Create an instance of the proxy.
+  let proxy = ProxyBuilder::new()
+    .with_addr(SocketAddr::from(([0, 0, 0, 0], proxy_port)))
+    .with_rustls_client()
+    .with_ca(authority)
+    .with_http_handler(ProxyHandler)
+    .build();
+
+  // Start the proxy.
+  let shutdown_signal = async {
+    shutdown_rx.await.ok();
+  };
+  
+  proxy.start(shutdown_signal).await.ok();
 }
 
-#[cfg(target_os = "windows")]
-fn get_current_proxy_settings() -> Result<WindowsProxySettings, String> {
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let internet_settings = hkcu
-        .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
-        .map_err(|e| format!("Failed to open registry key: {}", e))?;
-    
-    let proxy_enable: u32 = internet_settings
-        .get_value("ProxyEnable")
-        .unwrap_or(0);
-    
-    let proxy_server: String = internet_settings
-        .get_value("ProxyServer")
-        .unwrap_or_default();
-    
-    let proxy_override: String = internet_settings
-        .get_value("ProxyOverride")
-        .unwrap_or_default();
-    
-    Ok(WindowsProxySettings {
-        proxy_enable,
-        proxy_server,
-        proxy_override,
-    })
+/**
+ * Connects to the local HTTP(S) proxy server.
+ */
+#[cfg(windows)]
+pub fn connect_to_proxy(proxy_port: u16) {
+  // Create 'ProxyServer' string.
+  let server_string: String = format!(
+    "http=127.0.0.1:{};https=127.0.0.1:{}",
+    proxy_port, proxy_port
+  );
+
+  // Fetch the 'Internet Settings' registry key.
+  let settings = Hive::CurrentUser
+    .open(
+      r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+      // Only write should be needed but too many cases of Culti not being able to read/write proxy settings
+      Security::AllAccess,
+    )
+    .unwrap();
+
+  // Set registry values.
+  settings
+    .set_value("ProxyServer", &Data::String(server_string.parse().unwrap()))
+    .unwrap();
+  settings.set_value("ProxyEnable", &Data::U32(1)).unwrap();
+
+  println!("Connected to the proxy.");
 }
 
-#[cfg(target_os = "windows")]
-fn set_windows_proxy(proxy_server: &str, proxy_override: &str) -> Result<(), String> {
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let internet_settings = hkcu
-        .open_subkey_with_flags("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", KEY_SET_VALUE)
-        .map_err(|e| format!("Failed to open registry key for writing: {}", e))?;
-    
-    internet_settings
-        .set_value("ProxyEnable", &1u32)
-        .map_err(|e| format!("Failed to enable proxy: {}", e))?;
-    
-    internet_settings
-        .set_value("ProxyServer", &proxy_server)
-        .map_err(|e| format!("Failed to set proxy server: {}", e))?;
-    
-    internet_settings
-        .set_value("ProxyOverride", &proxy_override)
-        .map_err(|e| format!("Failed to set proxy override: {}", e))?;
-    
-    Ok(())
+#[cfg(target_os = "linux")]
+pub fn connect_to_proxy(proxy_port: u16) {
+  let mut config = Config::get().unwrap();
+  let proxy_addr = format!("127.0.0.1:{}", proxy_port);
+  if !config.game.environment.contains_key("http_proxy") {
+    config
+      .game
+      .environment
+      .insert("http_proxy".to_string(), proxy_addr.clone());
+  }
+  if !config.game.environment.contains_key("https_proxy") {
+    config
+      .game
+      .environment
+      .insert("https_proxy".to_string(), proxy_addr);
+  }
+  Config::update(config);
 }
 
-#[cfg(target_os = "windows")]
-fn restore_windows_proxy(settings: &WindowsProxySettings) -> Result<(), String> {
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let internet_settings = hkcu
-        .open_subkey_with_flags("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings", KEY_SET_VALUE)
-        .map_err(|e| format!("Failed to open registry key for writing: {}", e))?;
-    
-    internet_settings
-        .set_value("ProxyEnable", &settings.proxy_enable)
-        .map_err(|e| format!("Failed to restore proxy enable: {}", e))?;
-    
-    internet_settings
-        .set_value("ProxyServer", &settings.proxy_server)
-        .map_err(|e| format!("Failed to restore proxy server: {}", e))?;
-    
-    internet_settings
-        .set_value("ProxyOverride", &settings.proxy_override)
-        .map_err(|e| format!("Failed to restore proxy override: {}", e))?;
-    
-    Ok(())
+#[cfg(target_os = "macos")]
+pub fn connect_to_proxy(_proxy_port: u16) {
+  println!("No Mac support yet. Someone mail me a Macbook and I will do it B)")
 }
 
-#[cfg(not(target_os = "windows"))]
-fn get_current_proxy_settings() -> Result<WindowsProxySettings, String> {
-    Ok(WindowsProxySettings)
+/**
+ * Disconnects from the local HTTP(S) proxy server.
+ */
+#[cfg(windows)]
+pub fn disconnect_from_proxy() {
+  // Fetch the 'Internet Settings' registry key.
+  let settings = Hive::CurrentUser
+    .open(
+      r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+      Security::AllAccess,
+    )
+    .unwrap();
+
+  // Set registry values.
+  settings.set_value("ProxyEnable", &Data::U32(0)).unwrap();
+
+  println!("Disconnected from proxy.");
 }
 
-#[cfg(not(target_os = "windows"))]
-fn set_windows_proxy(_proxy_server: &str, _proxy_override: &str) -> Result<(), String> {
-    Ok(())
+#[cfg(target_os = "linux")]
+pub fn disconnect_from_proxy() {
+  let mut config = Config::get().unwrap();
+  if config.game.environment.contains_key("http_proxy") {
+    config.game.environment.remove("http_proxy");
+  }
+  if config.game.environment.contains_key("https_proxy") {
+    config.game.environment.remove("https_proxy");
+  }
+  Config::update(config);
 }
 
-#[cfg(not(target_os = "windows"))]
-fn restore_windows_proxy(_settings: &WindowsProxySettings) -> Result<(), String> {
-    Ok(())
+#[cfg(target_os = "macos")]
+pub fn disconnect_from_proxy() {}
+
+/*
+ * Generates a private key and certificate used by the certificate authority.
+ * Additionally installs the certificate and private key in the Root CA store.
+ * Source: https://github.com/zu1k/good-mitm/raw/master/src/ca/gen.rs
+ */
+#[tauri::command]
+pub fn generate_ca_files(path: &Path) {
+  let mut params = CertificateParams::default();
+  let mut details = DistinguishedName::new();
+
+  // Set certificate details.
+  details.push(DnType::CommonName, "YuukiPS");
+  details.push(DnType::OrganizationName, "Yuuki");
+  details.push(DnType::CountryName, "ID");
+  details.push(DnType::LocalityName, "ID");
+
+  // Set details in the parameter.
+  params.distinguished_name = details;
+  // Set other properties.
+  params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+  params.key_usages = vec![
+    KeyUsagePurpose::DigitalSignature,
+    KeyUsagePurpose::KeyCertSign,
+    KeyUsagePurpose::CrlSign,
+  ];
+
+  // Create certificate.
+  let key_pair = KeyPair::generate().unwrap();
+  let cert = params.self_signed(&key_pair).unwrap();
+  let cert_crt = cert.pem();
+  let private_key = key_pair.serialize_pem();
+
+  // Make certificate directory.
+  let cert_dir = path.join("ca");
+  match fs::create_dir_all(&cert_dir) {
+    Ok(_) => {}
+    Err(e) => {
+      println!("{}", e);
+    }
+  };
+
+  // Write the certificate to a file.
+  let cert_path = cert_dir.join("cert.crt");
+  match fs::write(&cert_path, cert_crt) {
+    Ok(_) => println!("Wrote certificate to {}", cert_path.to_str().unwrap()),
+    Err(e) => println!(
+      "Error writing certificate to {}: {}",
+      cert_path.to_str().unwrap(),
+      e
+    ),
+  }
+
+  // Write the private key to a file.
+  let private_key_path = cert_dir.join("private.key");
+  match fs::write(&private_key_path, private_key) {
+    Ok(_) => println!(
+      "Wrote private key to {}",
+      private_key_path.to_str().unwrap()
+    ),
+    Err(e) => println!(
+      "Error writing private key to {}: {}",
+      private_key_path.to_str().unwrap(),
+      e
+    ),
+  }
+
+  // Install certificate into the system's Root CA store.
+  install_ca_files(&cert_path);
 }
+
+/*
+ * Attempts to install the certificate authority's certificate into the Root CA store.
+ */
+#[cfg(windows)]
+pub fn install_ca_files(cert_path: &Path) {
+  Command::new("certutil")
+    .args(["-addstore", "-f", "Root", &cert_path.to_string_lossy()])
+    .output()
+    .expect("Failed to install certificate");
+  println!("Installed certificate.");
+}
+
+#[cfg(target_os = "macos")]
+pub fn install_ca_files(cert_path: &Path) {
+  Command::new("security")
+    .args([
+      "add-trusted-cert",
+      "-d",
+      "-r",
+      "trustRoot",
+      "-k",
+      "/Library/Keychains/System.keychain",
+      cert_path.to_str().unwrap(),
+    ])
+    .output()
+    .expect("Failed to install certificate");
+  println!("Installed certificate.");
+}
+
+#[cfg(target_os = "linux")]
+pub fn install_ca_files(cert_path: &Path) {
+  // Create a script to install the certificate.
+  let script = Path::new("/tmp/yuukips-inject-ca-cert.sh");
+  let mut file = File::create(script).expect("Failed to create script");
+
+  // Write the script.
+  file
+    .write_all(
+      format!(
+        r#"#!/bin/bash
+
+set -e
+
+if [ -d /etc/ca-certificates/trust-source/anchors ]; then
+  # Arch, Manjaro, etc.
+  cp {} /etc/ca-certificates/trust-source/anchors/yuukips-ca.crt
+  trust extract-compat
+elif [ -d /usr/local/share/ca-certificates ]; then
+  # Debian, Ubuntu, etc.
+  cp {} /usr/local/share/ca-certificates/yuukips-ca.crt
+  update-ca-certificates
+elif [ -d /etc/pki/ca-trust/source/anchors ]; then
+  # Fedora, RHEL, etc.
+  cp {} /etc/pki/ca-trust/source/anchors/yuukips-ca.crt
+  update-ca-trust
+fi
+"#,
+        cert_path.to_string_lossy(),
+        cert_path.to_string_lossy(),
+        cert_path.to_string_lossy()
+      )
+      .as_bytes(),
+    )
+    .expect("Failed to write script");
+
+  // Make the script executable.
+  Command::new("chmod")
+    .args(["a+x", script.to_str().unwrap()])
+    .output()
+    .expect("Failed to make script executable");
+
+  // Run the script as root.
+  Command::new("pkexec")
+    .args([script.to_str().unwrap()])
+    .output()
+    .expect("Failed to run script");
+
+  println!("Installed certificate.");
+}
+
+// Additional functions required by lib.rs
 
 pub fn start_proxy() -> Result<String, String> {
-    let mut proxy_state = PROXY_STATE.lock().unwrap();
-    
-    // If proxy is already running, stop it first
-    if proxy_state.is_some() {
-        info!("🔄 Proxy already running, stopping existing proxy...");
-        
-        // Take the existing handle to stop it
-        if let Some(handle) = proxy_state.take() {
-            // Send shutdown signal
-            let _ = handle.shutdown_tx.send(());
-            
-            // Restore original proxy settings
-            if let Some(original_settings) = &handle.original_proxy_settings {
-                let _ = restore_windows_proxy(original_settings);
-            }
-            
-            info!("🛑 Previous proxy stopped, starting new proxy...");
-        }
-    }
-    
-    // Get current proxy settings before modifying them
-    let original_settings = get_current_proxy_settings().ok();
-    
-    // Set Windows proxy settings
-    set_windows_proxy("127.0.0.1:8080", "localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;192.168.*")?;
-    
-    // Create runtime for the proxy server
-    let runtime = Runtime::new().map_err(|e| format!("Failed to create runtime: {}", e))?;
-    
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-    
-    // Start the proxy server
-    runtime.spawn(async move {
-        // Initialize tracing
-        tracing_subscriber::fmt::init();
-        
-        // Create certificate authority with generated key and cert
-        use rcgen::{generate_simple_self_signed, CertifiedKey};
-        use rustls::{Certificate, PrivateKey};
-        
-        let subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
-        let CertifiedKey { cert, key_pair } = generate_simple_self_signed(subject_alt_names)
-            .expect("Failed to generate certificate");
-        
-        let cert_der = cert.der().to_vec();
-        let key_der = key_pair.serialize_der();
-        
-        let ca = RcgenAuthority::new(
-            PrivateKey(key_der),
-            Certificate(cert_der),
-            1024
-        ).expect("Failed to create certificate authority");
-        
-        // Create HTTP client
-        let client = hyper::Client::builder()
-            .build(hyper_rustls::HttpsConnectorBuilder::new()
-                .with_native_roots()
-                .https_or_http()
-                .enable_http1()
-                .build());
-        
-        let proxy = Proxy::builder()
-            .with_addr(SocketAddr::from(([127, 0, 0, 1], 8080)))
-            .with_client(client)
-            .with_ca(ca)
-            .with_http_handler(GameProxyHandler)
-            .build();
-        
-        info!("🚀 MITM Proxy listening on https://127.0.0.1:8080");
-        info!("🎯 Redirecting game domains to ps.yuuki.me");
-        info!("📋 Monitored domains:");
-        info!("   • *.zenlesszonezero.com");
-        info!("   • *.honkaiimpact3.com");
-        info!("   • *.honkaistarrail.com");
-        info!("   • *.genshinimpact.com");
-        info!("   • *.hoyoverse.com");
-        info!("   • *.mihoyo.com");
-        
-        let shutdown_future = async {
-            let _ = shutdown_rx.await;
-        };
-        
-        if let Err(e) = proxy.start(shutdown_future).await {
-            tracing::error!("Proxy error: {}", e);
-        }
-    });
-    
-    *proxy_state = Some(ProxyHandle {
-        _runtime: runtime,
-        shutdown_tx,
-        original_proxy_settings: original_settings,
-    });
-    
-    Ok("MITM Proxy started successfully on 127.0.0.1:8080 with automatic Windows proxy configuration.".to_string())
-}
+     let mut state = PROXY_STATE.lock().map_err(|e| format!("Failed to lock proxy state: {}", e))?;
+     
+     // If proxy is already running, stop it first
+     if let Some(handle) = state.take() {
+         let _ = handle.shutdown_tx.send(());
+         disconnect_from_proxy();
+     }
+     
+     let runtime = Runtime::new().map_err(|e| format!("Failed to create runtime: {}", e))?;
+     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+     
+     let cert_path = get_data_dir().unwrap().join("yuukips").join("ca").to_string_lossy().to_string();
+     
+     runtime.spawn(create_proxy_internal(8080, cert_path, shutdown_rx));
+     
+     *state = Some(ProxyHandle {
+         _runtime: runtime,
+         shutdown_tx,
+     });
+     
+     // Re-establish proxy connection after starting
+     connect_to_proxy(8080);
+     
+     Ok("Proxy started successfully on port 8080".to_string())
+ }
 
 pub fn stop_proxy() -> Result<String, String> {
-    let mut proxy_state = PROXY_STATE.lock().unwrap();
-    
-    if let Some(handle) = proxy_state.take() {
-        // Send shutdown signal
-        let _ = handle.shutdown_tx.send(());
-        
-        // Restore original proxy settings
-        if let Some(original_settings) = &handle.original_proxy_settings {
-            restore_windows_proxy(original_settings)?;
-        }
-        
-        info!("🛑 MITM Proxy stopped");
-        info!("🔄 Windows proxy settings restored");
-        
-        Ok("MITM Proxy stopped successfully. Windows proxy settings restored.".to_string())
-    } else {
-        Err("Proxy is not running".to_string())
-    }
-}
-
-pub fn get_certificate_path() -> Result<String, String> {
-    let cert_path = std::env::temp_dir().join("yuukips_proxy_cert.pem");
-    Ok(cert_path.to_string_lossy().to_string())
-}
+     let mut state = PROXY_STATE.lock().map_err(|e| format!("Failed to lock proxy state: {}", e))?;
+     
+     if let Some(handle) = state.take() {
+         let _ = handle.shutdown_tx.send(());
+         disconnect_from_proxy();
+         Ok("Proxy stopped successfully".to_string())
+     } else {
+         Err("Proxy is not running".to_string())
+     }
+ }
 
 pub fn is_proxy_running() -> bool {
-    let proxy_state = PROXY_STATE.lock().unwrap();
-    proxy_state.is_some()
+    PROXY_STATE.lock().map(|state| state.is_some()).unwrap_or(false)
 }
 
 pub fn force_stop_proxy() -> Result<String, String> {
-    let mut proxy_state = PROXY_STATE.lock().unwrap();
-    
-    if let Some(handle) = proxy_state.take() {
-        // Send shutdown signal
-        let _ = handle.shutdown_tx.send(());
-        
-        // Restore original proxy settings
-        if let Some(original_settings) = &handle.original_proxy_settings {
-            restore_windows_proxy(original_settings)?;
-        }
-        
-        info!("🛑 MITM Proxy force stopped");
-        info!("🔄 Windows proxy settings restored");
-        
-        Ok("MITM Proxy force stopped successfully. Windows proxy settings restored.".to_string())
-    } else {
-        Ok("No proxy was running.".to_string())
-    }
-}
+     let mut state = PROXY_STATE.lock().map_err(|e| format!("Failed to lock proxy state: {}", e))?;
+     
+     if let Some(handle) = state.take() {
+         let _ = handle.shutdown_tx.send(());
+         disconnect_from_proxy();
+         Ok("Proxy force stopped successfully".to_string())
+     } else {
+         Ok("Proxy was not running".to_string())
+     }
+ }
 
-#[cfg(target_os = "windows")]
 pub fn check_and_disable_windows_proxy() -> Result<String, String> {
-    let current_settings = get_current_proxy_settings()?;
-    
-    // Check if Windows proxy is currently enabled
-    if current_settings.proxy_enable == 1 {
-        info!("🔍 Detected enabled Windows proxy settings");
-        info!("   Proxy Server: {}", current_settings.proxy_server);
-        info!("   Proxy Override: {}", current_settings.proxy_override);
-        
-        // Disable Windows proxy by setting ProxyEnable to 0
-        let disabled_settings = WindowsProxySettings {
-            proxy_enable: 0,
-            proxy_server: String::new(),
-            proxy_override: String::new(),
-        };
-        
-        restore_windows_proxy(&disabled_settings)?;
-        
-        info!("🛑 Windows proxy settings disabled");
-        Ok(format!("Windows proxy was enabled and has been disabled. Previous settings: Server={}, Override={}", 
-                  current_settings.proxy_server, current_settings.proxy_override))
-    } else {
-        info!("✅ No Windows proxy settings detected or already disabled");
-        Ok("No Windows proxy settings were enabled.".to_string())
-    }
-}
+     #[cfg(windows)]
+     {
+         disconnect_from_proxy();
+         Ok("Windows proxy settings checked and disabled if necessary".to_string())
+     }
+     #[cfg(not(windows))]
+     {
+         Ok("Proxy check not needed on this platform".to_string())
+     }
+ }
 
-#[cfg(not(target_os = "windows"))]
-pub fn check_and_disable_windows_proxy() -> Result<String, String> {
-    Ok("Windows proxy check not available on this platform.".to_string())
+pub fn install_ca_certificate() -> Result<String, String> {
+     let cert_path = get_data_dir().unwrap().join("yuukips");
+     generate_ca_files(&cert_path);
+     install_ca_files(&cert_path);
+     Ok("CA certificate installed successfully".to_string())
+ }
+
+pub fn get_certificate_path() -> Result<String, String> {
+     let cert_path = get_data_dir().unwrap().join("yuukips").join("cert.crt");
+     Ok(cert_path.to_string_lossy().to_string())
+ }
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+pub fn install_ca_files(_cert_path: &Path) {
+  println!("CA certificate installation is not supported on this platform.");
 }

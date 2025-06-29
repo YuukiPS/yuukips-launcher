@@ -79,27 +79,80 @@ fn check_and_disable_windows_proxy() -> Result<String, String> {
     proxy::check_and_disable_windows_proxy()
 }
 
-// Function to automatically install SSL certificate on Windows
+// Function to automatically install SSL certificate on Windows with multiple methods
 #[cfg(target_os = "windows")]
 fn auto_install_certificate(cert_path: &std::path::Path) -> Result<(), String> {
     use std::process::Command;
     
-    // Try to install certificate automatically using certutil
+    println!("🔧 Installing CA certificate automatically for all domains...");
+    
+    // First, try to remove any existing certificate with the same name
+    let _ = Command::new("certutil")
+        .args(["-delstore", "Root", "YuukiPS MITM Proxy CA"])
+        .output();
+    
+    // Method 1: Try certutil first
     let output = Command::new("certutil")
         .args(["-addstore", "-f", "Root", &cert_path.to_string_lossy()])
         .output()
         .map_err(|e| format!("Failed to execute certutil: {}", e))?;
     
     if output.status.success() {
-        Ok(())
-    } else {
-        let error_msg = String::from_utf8_lossy(&output.stderr);
-        Err(format!("Certificate installation failed: {}", error_msg))
+        println!("✅ CA certificate installed successfully via certutil!");
+        return Ok(());
     }
+    
+    println!("⚠️ Certutil failed, trying PowerShell method...");
+    
+    // Method 2: Try PowerShell as fallback
+    let ps_script = format!(
+        "Import-Certificate -FilePath '{}' -CertStoreLocation Cert:\\LocalMachine\\Root",
+        cert_path.to_string_lossy()
+    );
+    
+    let ps_output = Command::new("powershell")
+        .args(["-Command", &ps_script])
+        .output()
+        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
+    
+    if ps_output.status.success() {
+        println!("✅ CA certificate installed successfully via PowerShell!");
+        return Ok(());
+    }
+    
+    // Method 3: Try elevated PowerShell
+    println!("⚠️ Standard PowerShell failed, trying elevated PowerShell...");
+    let elevated_ps_script = format!(
+        "Start-Process powershell -ArgumentList '-Command Import-Certificate -FilePath \\'{}\\' -CertStoreLocation Cert:\\\\LocalMachine\\\\Root' -Verb RunAs -Wait",
+        cert_path.to_string_lossy()
+    );
+    
+    let elevated_output = Command::new("powershell")
+        .args(["-Command", &elevated_ps_script])
+        .output()
+        .map_err(|e| format!("Failed to execute elevated PowerShell: {}", e))?;
+    
+    if elevated_output.status.success() {
+        println!("✅ CA certificate installed successfully via elevated PowerShell!");
+        return Ok(());
+    }
+    
+    let error_msg = String::from_utf8_lossy(&output.stderr);
+    let ps_error_msg = String::from_utf8_lossy(&ps_output.stderr);
+    Err(format!(
+        "All automatic installation methods failed:\n- Certutil: {}\n- PowerShell: {}",
+        error_msg, ps_error_msg
+    ))
 }
 
 #[command]
 fn install_ssl_certificate() -> Result<String, String> {
+    // Use the new install_ca_certificate function from proxy module
+    proxy::install_ca_certificate()
+}
+
+#[command]
+fn install_ca_certificate() -> Result<String, String> {
     // Get the certificate path from proxy module
     let cert_path_str = proxy::get_certificate_path()?;
     let cert_path = std::path::Path::new(&cert_path_str);
@@ -114,7 +167,7 @@ fn install_ssl_certificate() -> Result<String, String> {
         // Try automatic installation first
         match auto_install_certificate(&cert_path) {
             Ok(_) => {
-                return Ok(format!("SSL Certificate installed automatically!\n\nThe certificate has been added to your system's trusted root certificates.\nHTTPS interception is now enabled for game domains."));
+                return Ok(format!("🎉 SSL Certificate installed automatically for ALL domains!\n\n✅ The certificate has been added to your system's trusted root certificates.\n🌐 HTTPS interception is now enabled for ALL game domains and websites.\n🔒 No more certificate warnings!"));
             }
             Err(auto_error) => {
                 println!("Automatic installation failed: {}", auto_error);
@@ -146,6 +199,35 @@ fn install_ssl_certificate() -> Result<String, String> {
 }
 
 #[command]
+fn check_certificate_status() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        
+        let output = Command::new("certutil")
+            .args(["-store", "Root"])
+            .output()
+            .map_err(|e| format!("Failed to check certificate store: {}", e))?;
+        
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            if output_str.contains("DO_NOT_TRUST_YuukiPS_Root") {
+                Ok("installed".to_string())
+            } else {
+                Ok("not_installed".to_string())
+            }
+        } else {
+            Ok("not_installed".to_string())
+        }
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok("manual_check_required".to_string())
+    }
+}
+
+#[command]
 fn check_ssl_certificate_installed() -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
@@ -160,7 +242,7 @@ fn check_ssl_certificate_installed() -> Result<bool, String> {
         if output.status.success() {
             let output_str = String::from_utf8_lossy(&output.stdout);
             // Look for our certificate subject (YuukiPS Proxy)
-            Ok(output_str.contains("YuukiPS Proxy"))
+            Ok(output_str.contains("YuukiPS"))
         } else {
             Ok(false)
         }
@@ -350,7 +432,7 @@ fn check_game_installed(_game_id: Number, _version: String, game_folder_path: St
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
-    .invoke_handler(tauri::generate_handler![launch_game, launch_game_with_engine, get_game_folder_path, show_game_folder, check_game_installed, open_directory, start_proxy, stop_proxy, check_proxy_status, force_stop_proxy, check_and_disable_windows_proxy, install_ssl_certificate, check_ssl_certificate_installed, check_admin_privileges])
+    .invoke_handler(tauri::generate_handler![launch_game, launch_game_with_engine, get_game_folder_path, show_game_folder, check_game_installed, open_directory, start_proxy, stop_proxy, check_proxy_status, force_stop_proxy, check_and_disable_windows_proxy, install_ssl_certificate, install_ca_certificate, check_certificate_status, check_ssl_certificate_installed, check_admin_privileges])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
