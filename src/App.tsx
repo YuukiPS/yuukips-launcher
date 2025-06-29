@@ -11,11 +11,15 @@ import { Megaphone, MessageCircle, Twitter, Youtube, Tv, Loader } from 'lucide-r
 
 function App() {
   const [games, setGames] = useState<Game[]>([]);
-  const [selectedGameId, setSelectedGameId] = useState<string | number>('');
+  const [selectedGameId, setSelectedGameId] = useState<number | null>(null);
+  
+  const handleGameSelect = (gameId: string | number) => {
+    setSelectedGameId(typeof gameId === 'string' ? parseInt(gameId) : gameId);
+  };
   const [showNews, setShowNews] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  const selectedGame = games.find(game => game.id === selectedGameId) || games[0];
+  const selectedGame = games.find(game => game.id === selectedGameId) || null;
 
   useEffect(() => {
     loadGames();
@@ -27,6 +31,11 @@ function App() {
     try {
       const apiGames = await GameApiService.fetchGames();
       setGames(apiGames);
+      
+      // Set the first game as selected if no game is currently selected
+      if (selectedGameId === null && apiGames.length > 0) {
+        setSelectedGameId(apiGames[0].id);
+      }
     } catch (err) {
       console.error('Failed to load games from API:', err);
       setGames([]);
@@ -100,15 +109,25 @@ function App() {
       
       <div className="flex-1 flex overflow-hidden relative">
         <Sidebar 
-          games={games}
-          selectedGameId={selectedGameId}
-          onGameSelect={setSelectedGameId}
+          games={games} 
+          selectedGameId={selectedGameId} 
+          onGameSelect={handleGameSelect} 
         />
         
-        <GameDetails 
-          game={selectedGame} 
-          onGameUpdate={handleGameUpdate}
-        />
+        {selectedGame ? (
+          <GameDetails 
+            key={selectedGame.id}
+            game={selectedGame} 
+            onGameUpdate={handleGameUpdate}
+          />
+        ) : (
+          <div className="flex-1 flex items-center justify-center bg-gray-800">
+            <div className="text-center">
+              <p className="text-white text-lg mb-2">No game selected</p>
+              <p className="text-gray-400">Please select a game from the sidebar</p>
+            </div>
+          </div>
+        )}
 
         {/* Floating Social Media Icons */}
         <div className="absolute top-6 right-6 flex space-x-3 z-40">

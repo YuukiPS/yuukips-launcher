@@ -18,7 +18,6 @@ export interface TauriCommands {
   check_admin_privileges(): Promise<boolean>;
   install_ssl_certificate(): Promise<string>;
   check_ssl_certificate_installed(): Promise<boolean>;
-  launch_game(gameId: number, gameTitle: string): Promise<string>;
   launch_game_with_engine(
     gameId: number,
     gameTitle: string,

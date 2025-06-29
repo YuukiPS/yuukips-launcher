@@ -3,7 +3,7 @@ import { Game } from '../types';
 
 interface SidebarProps {
   games: Game[];
-  selectedGameId: string | number;
+  selectedGameId: number | null;
   onGameSelect: (gameId: string | number) => void;
 }
 

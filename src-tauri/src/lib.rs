@@ -2,9 +2,17 @@
 use std::process::Command;
 
 use serde_json::Number;
+use serde::{Deserialize, Serialize};
 use tauri::command;
 // Import the proxy module
 mod proxy;
+
+#[derive(Serialize, Deserialize)]
+struct LaunchResult {
+    message: String,
+    #[serde(rename = "processId")]
+    process_id: u32,
+}
 
 // Function to check if running as administrator on Windows
 #[cfg(target_os = "windows")]
@@ -257,30 +265,6 @@ fn check_ssl_certificate_installed() -> Result<bool, String> {
 }
 
 #[command]
-fn launch_game(_game_id: Number, game_title: String) -> Result<String, String> {
-    #[cfg(target_os = "windows")]
-    {
-        // For demonstration, we'll show a Windows notification
-        // In a real launcher, you would launch the actual game executable
-        
-        // Example of launching a Windows application
-        // You would replace this with the actual game executable path
-        match Command::new("cmd")
-            .args(["/C", "echo", &format!("Starting {}", game_title)])
-            .output()
-        {
-            Ok(_) => Ok(format!("Successfully launched {}", game_title)),
-            Err(e) => Err(format!("Failed to launch game: {}", e)),
-        }
-    }
-    
-    #[cfg(not(target_os = "windows"))]
-    {
-        Err("Game launching is only supported on Windows".to_string())
-    }
-}
-
-#[command]
 fn get_game_folder_path(game_id: Number, version: String) -> Result<String, String> {
     // This would typically read from a config file or database
     // For now, we'll return an error indicating the path should be set via frontend
@@ -316,16 +300,17 @@ fn launch_game_with_engine(
         // Determine game executable name based on game ID
         let game_exe_name = match game_id.as_u64() {
             Some(1) => "GenshinImpact.exe",
-            Some(2) => "StarRail.exe",
+            Some(2) => "StarRail.exe", // Common names: StarRail.exe, HonkaiStarRail.exe, or StarRail_Data.exe
+            Some(3) => "BlueArchive.exe",
             _ => return Err(format!("Unsupported game ID: {}", game_id)),
         };
-        
+
         // Construct full path to game executable
         let game_exe_path = std::path::Path::new(&game_folder_path).join(game_exe_name);
         
         // Check if game executable exists
         if !game_exe_path.exists() {
-            return Err(format!("Game executable not found: {}. Please verify the game installation.", game_exe_path.display()));
+            return Err(format!("Game executable not found: {} = {}. Please verify the game installation.", game_exe_path.display(),game_id));
         }
         
         // Launch the game executable
@@ -333,7 +318,17 @@ fn launch_game_with_engine(
             .current_dir(&game_folder_path)
             .spawn()
         {
-            Ok(_) => Ok(format!("Successfully launched {} with {} from folder {}. HTTP/HTTPS proxy is active on 127.0.0.1:??? with automatic Windows proxy configuration - game traffic redirected to ps.yuuki.me", game_title, engine_name, game_folder_path)),
+            Ok(child) => {
+                let process_id = child.id();
+                let result = LaunchResult {
+                    message: format!("Successfully launched {} ({}) with {} from folder {}. HTTP/HTTPS proxy is active on 127.0.0.1:??? with automatic Windows proxy configuration - game traffic redirected to ps.yuuki.me", game_title, game_id, engine_name, game_folder_path),
+                    process_id,
+                };
+                match serde_json::to_string(&result) {
+                    Ok(json) => Ok(json),
+                    Err(e) => Err(format!("Failed to serialize launch result: {}", e)),
+                }
+            },
             Err(e) => {
                 // If game launch fails, try to clean up proxy
                 let _ = proxy::stop_proxy();
@@ -429,10 +424,125 @@ fn check_game_installed(_game_id: Number, _version: String, game_folder_path: St
     }
 }
 
+#[command]
+fn check_game_running(game_id: Number) -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        
+        // Determine game executable names based on game ID
+        let game_exe_names = match game_id.as_u64() {
+            Some(1) => vec!["GenshinImpact.exe"],
+            Some(2) => vec!["StarRail.exe", "HonkaiStarRail.exe", "StarRail_Data.exe", "Game.exe"],
+            Some(3) => vec!["BlueArchive.exe"],
+            _ => return Err(format!("Unsupported game ID: {}", game_id)),
+        };
+        
+        // Check each possible executable name
+        for game_exe_name in game_exe_names {
+            let output = Command::new("tasklist")
+                .args(["/FI", &format!("IMAGENAME eq {}", game_exe_name)])
+                .output()
+                .map_err(|e| format!("Failed to execute tasklist: {}", e))?;
+            
+            if output.status.success() {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                // Check if the game executable is listed in the output
+                if output_str.contains(game_exe_name) {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        // For non-Windows systems, we can't easily check process status
+        Ok(false)
+    }
+}
+
+#[command]
+fn stop_game_process(process_id: u32) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        
+        // Use taskkill to terminate the process by PID
+        let output = Command::new("taskkill")
+            .args(["/PID", &process_id.to_string(), "/F"])
+            .output()
+            .map_err(|e| format!("Failed to execute taskkill: {}", e))?;
+        
+        if output.status.success() {
+            Ok(format!("Successfully terminated process with PID: {}", process_id))
+        } else {
+            let error_msg = String::from_utf8_lossy(&output.stderr);
+            Err(format!("Failed to terminate process: {}", error_msg))
+        }
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Process termination is only supported on Windows".to_string())
+    }
+}
+
+#[command]
+fn stop_game(game_id: Number) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        
+        // Determine game executable names based on game ID
+        let game_exe_names = match game_id.as_u64() {
+            Some(1) => vec!["GenshinImpact.exe"],
+            Some(2) => vec!["StarRail.exe", "HonkaiStarRail.exe", "StarRail_Data.exe", "Game.exe"],
+            Some(3) => vec!["BlueArchive.exe"],
+            _ => return Err(format!("Unsupported game ID: {}", game_id)),
+        };
+        
+        let mut terminated_processes = Vec::new();
+        let mut last_error = None;
+        
+        // Try to terminate each possible executable
+        for game_exe_name in game_exe_names {
+            let output = Command::new("taskkill")
+                .args(["/IM", game_exe_name, "/F"])
+                .output()
+                .map_err(|e| format!("Failed to execute taskkill: {}", e))?;
+            
+            if output.status.success() {
+                terminated_processes.push(game_exe_name.to_string());
+            } else {
+                let error_msg = String::from_utf8_lossy(&output.stderr);
+                // Only store error if it's not a "process not found" error
+                if !error_msg.contains("not found") && !error_msg.contains("not running") {
+                    last_error = Some(format!("Failed to terminate {}: {}", game_exe_name, error_msg));
+                }
+            }
+        }
+        
+        if !terminated_processes.is_empty() {
+            Ok(format!("Successfully terminated: {}", terminated_processes.join(", ")))
+        } else if let Some(error) = last_error {
+            Err(error)
+        } else {
+            Ok("No game processes were running".to_string())
+        }
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Game termination is only supported on Windows".to_string())
+    }
+}
+
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
-    .invoke_handler(tauri::generate_handler![launch_game, launch_game_with_engine, get_game_folder_path, show_game_folder, check_game_installed, open_directory, start_proxy, stop_proxy, check_proxy_status, force_stop_proxy, check_and_disable_windows_proxy, install_ssl_certificate, install_ca_certificate, check_certificate_status, check_ssl_certificate_installed, check_admin_privileges, proxy::set_proxy_addr, proxy::get_proxy_addr, proxy::get_proxy_logs, proxy::clear_proxy_logs, proxy::get_proxy_domains, proxy::add_proxy_domain, proxy::remove_proxy_domain, proxy::set_proxy_port, proxy::get_proxy_port, proxy::find_available_port, proxy::start_proxy_with_port])
+    .invoke_handler(tauri::generate_handler![launch_game_with_engine, get_game_folder_path, show_game_folder, check_game_installed, check_game_running, stop_game_process, stop_game, open_directory, start_proxy, stop_proxy, check_proxy_status, force_stop_proxy, check_and_disable_windows_proxy, install_ssl_certificate, install_ca_certificate, check_certificate_status, check_ssl_certificate_installed, check_admin_privileges, proxy::set_proxy_addr, proxy::get_proxy_addr, proxy::get_proxy_logs, proxy::clear_proxy_logs, proxy::get_proxy_domains, proxy::add_proxy_domain, proxy::remove_proxy_domain, proxy::set_proxy_port, proxy::get_proxy_port, proxy::find_available_port, proxy::start_proxy_with_port])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
