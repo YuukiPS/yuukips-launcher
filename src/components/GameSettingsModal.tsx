@@ -25,7 +25,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const [proxyAddress, setProxyAddress] = useState('https://ps.yuuki.me');
   const [savedProxyServers, setSavedProxyServers] = useState<string[]>(['https://ps.yuuki.me']);
   const [newServerInput, setNewServerInput] = useState('');
-  const [proxyLogs, setProxyLogs] = useState<Array<{timestamp: string, original_url: string, redirected_url: string}>>([]);
+  const [proxyLogs, setProxyLogs] = useState<Array<{ timestamp: string, original_url: string, redirected_url: string }>>([]);
   const [autoRefreshLogs, setAutoRefreshLogs] = useState(false);
   const [isProxyRunning, setIsProxyRunning] = useState(false);
   const [proxyStatusLoading, setProxyStatusLoading] = useState(false);
@@ -84,6 +84,21 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
     }
   }, []);
 
+  // Load saved proxy domains from localStorage
+  useEffect(() => {
+    const savedDomains = localStorage.getItem('saved-proxy-domains');
+    if (savedDomains) {
+      try {
+        const domains = JSON.parse(savedDomains);
+        if (Array.isArray(domains) && domains.length > 0) {
+          setProxyDomains(domains);
+        }
+      } catch (error) {
+        console.error('Failed to parse saved proxy domains:', error);
+      }
+    }
+  }, []);
+
   // Load proxy logs and check proxy status when modal opens
   useEffect(() => {
     if (isOpen) {
@@ -98,7 +113,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
     try {
       const domains = await invoke('get_proxy_domains');
       if (Array.isArray(domains)) {
-        setProxyDomains(domains);
+        saveProxyDomains(domains);
       }
     } catch (error) {
       console.error('Failed to fetch proxy domains:', error);
@@ -128,6 +143,12 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const saveDirectories = (newDirectories: Record<string, string>) => {
     setVersionDirectories(newDirectories);
     localStorage.setItem(`game-${game.id}-directories`, JSON.stringify(newDirectories));
+  };
+
+  // Save proxy domains to localStorage whenever they change
+  const saveProxyDomains = (domains: string[]) => {
+    setProxyDomains(domains);
+    localStorage.setItem('saved-proxy-domains', JSON.stringify(domains));
   };
 
   // Show notification
@@ -209,12 +230,22 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
       return;
     }
 
+    // Basic validation for domain format (allows domain:port)
+    const domainRegex = /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(:[0-9]{1,5})?$/;
+    if (!domainRegex.test(trimmedDomain)) {
+      showNotification('Please enter a valid domain format (e.g., example.com or example.com:8080)', 'error');
+      return;
+    }
+
     try {
       const result = await invoke('add_proxy_domain', { domain: trimmedDomain });
       if (typeof result === 'string') {
         showNotification(result);
         setNewDomainInput('');
-        fetchProxyDomains(); // Refresh the list
+        // Update localStorage and state with the new domain
+        const updatedDomains = [...proxyDomains, trimmedDomain];
+        saveProxyDomains(updatedDomains);
+        fetchProxyDomains(); // Sync with backend
       }
     } catch (error) {
       console.error('Failed to add domain:', error);
@@ -228,7 +259,10 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
       const result = await invoke('remove_proxy_domain', { domain });
       if (typeof result === 'string') {
         showNotification(result);
-        fetchProxyDomains(); // Refresh the list
+        // Update localStorage and state by removing the domain
+        const updatedDomains = proxyDomains.filter(d => d !== domain);
+        saveProxyDomains(updatedDomains);
+        fetchProxyDomains(); // Sync with backend
       }
     } catch (error) {
       console.error('Failed to remove domain:', error);
@@ -315,7 +349,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
       const updatedServers = savedProxyServers.filter(server => server !== serverToRemove);
       saveProxyServers(updatedServers);
       showNotification('Server removed from list');
-      
+
       // If the removed server was the current one, switch to the first available
       if (proxyAddress === serverToRemove && updatedServers.length > 0) {
         handleSelectServer(updatedServers[0]);
@@ -337,8 +371,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
       {/* Notification */}
       {notification && (
         <div className={`fixed top-4 right-4 z-60 px-4 py-3 rounded-lg shadow-lg flex items-center space-x-2 ${notification.type === 'success'
-            ? 'bg-green-600 text-white'
-            : 'bg-red-600 text-white'
+          ? 'bg-green-600 text-white'
+          : 'bg-red-600 text-white'
           }`}>
           {notification.type === 'success' && <Check className="w-4 h-4" />}
           <span>{notification.message}</span>
@@ -364,8 +398,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
               <button
                 onClick={() => setActiveTab('basic')}
                 className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${activeTab === 'basic'
-                    ? 'bg-purple-600/30 text-purple-400 border border-purple-500/50'
-                    : 'text-gray-300 hover:bg-gray-700/50'
+                  ? 'bg-purple-600/30 text-purple-400 border border-purple-500/50'
+                  : 'text-gray-300 hover:bg-gray-700/50'
                   }`}
               >
                 Basic Information
@@ -373,8 +407,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
               <button
                 onClick={() => setActiveTab('proxy')}
                 className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${activeTab === 'proxy'
-                    ? 'bg-purple-600/30 text-purple-400 border border-purple-500/50'
-                    : 'text-gray-300 hover:bg-gray-700/50'
+                  ? 'bg-purple-600/30 text-purple-400 border border-purple-500/50'
+                  : 'text-gray-300 hover:bg-gray-700/50'
                   }`}
               >
                 Proxy Settings
@@ -382,8 +416,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
               <button
                 onClick={() => setActiveTab('advanced')}
                 className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${activeTab === 'advanced'
-                    ? 'bg-purple-600/30 text-purple-400 border border-purple-500/50'
-                    : 'text-gray-300 hover:bg-gray-700/50'
+                  ? 'bg-purple-600/30 text-purple-400 border border-purple-500/50'
+                  : 'text-gray-300 hover:bg-gray-700/50'
                   }`}
               >
                 Advanced Settings
@@ -391,8 +425,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
               <button
                 onClick={() => setActiveTab('logs')}
                 className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${activeTab === 'logs'
-                    ? 'bg-purple-600/30 text-purple-400 border border-purple-500/50'
-                    : 'text-gray-300 hover:bg-gray-700/50'
+                  ? 'bg-purple-600/30 text-purple-400 border border-purple-500/50'
+                  : 'text-gray-300 hover:bg-gray-700/50'
                   }`}
               >
                 Log Info
@@ -499,30 +533,27 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                     {/* Status Display */}
                     <div className="flex items-center justify-between p-3 bg-gray-700/50 rounded-lg">
                       <div className="flex items-center space-x-3">
-                        <div className={`w-3 h-3 rounded-full ${
-                          isProxyRunning ? 'bg-green-400' : 'bg-red-400'
-                        }`}></div>
-                        <span className={`font-medium ${
-                          isProxyRunning ? 'text-green-400' : 'text-red-400'
-                        }`}>
+                        <div className={`w-3 h-3 rounded-full ${isProxyRunning ? 'bg-green-400' : 'bg-red-400'
+                          }`}></div>
+                        <span className={`font-medium ${isProxyRunning ? 'text-green-400' : 'text-red-400'
+                          }`}>
                           {isProxyRunning ? 'Running' : 'Stopped'}
                         </span>
                         <span className="text-gray-300 text-sm">
                           {isProxyRunning ? 'Proxy server is active on port 8080' : 'Proxy server is not running'}
                         </span>
                       </div>
-                      
+
                       {/* Control Button */}
                       <button
                         onClick={isProxyRunning ? handleStopProxy : handleStartProxy}
                         disabled={proxyStatusLoading}
-                        className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-                          proxyStatusLoading
+                        className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-colors ${proxyStatusLoading
                             ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
                             : isProxyRunning
-                            ? 'bg-red-600 text-white hover:bg-red-700'
-                            : 'bg-green-600 text-white hover:bg-green-700'
-                        }`}
+                              ? 'bg-red-600 text-white hover:bg-red-700'
+                              : 'bg-green-600 text-white hover:bg-green-700'
+                          }`}
                       >
                         {proxyStatusLoading ? (
                           <>
@@ -531,15 +562,14 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                           </>
                         ) : (
                           <>
-                            <div className={`w-2 h-2 rounded-full ${
-                              isProxyRunning ? 'bg-white' : 'bg-white'
-                            }`}></div>
+                            <div className={`w-2 h-2 rounded-full ${isProxyRunning ? 'bg-white' : 'bg-white'
+                              }`}></div>
                             <span>{isProxyRunning ? 'Stop Proxy' : 'Start Proxy'}</span>
                           </>
                         )}
                       </button>
                     </div>
-                    
+
                     <p className="text-gray-400 text-sm">
                       The proxy server intercepts and redirects game traffic. Games can continue running even when the proxy is stopped.
                     </p>
@@ -564,11 +594,10 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                         {savedProxyServers.map((server, index) => (
                           <div
                             key={index}
-                            className={`flex items-center justify-between p-2 rounded-lg transition-colors ${
-                              server === proxyAddress
+                            className={`flex items-center justify-between p-2 rounded-lg transition-colors ${server === proxyAddress
                                 ? 'bg-purple-600/30 border border-purple-500/50'
                                 : 'bg-gray-700/50 hover:bg-gray-700/70'
-                            }`}
+                              }`}
                           >
                             <span className="text-white text-sm font-mono flex-1">{server}</span>
                             <div className="flex items-center space-x-2">
@@ -668,7 +697,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                           onChange={(e) => setNewDomainInput(e.target.value)}
                           onKeyPress={(e) => e.key === 'Enter' && handleAddDomain()}
                           className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-purple-500 focus:outline-none"
-                          placeholder="example.com"
+                          placeholder="example.com or example.com:8080"
                         />
                         <button
                           onClick={handleAddDomain}
@@ -679,7 +708,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                         </button>
                       </div>
                       <p className="text-gray-400 text-xs mt-1">
-                        Enter domain names without protocol (e.g., "mihoyo.com" not "https://mihoyo.com")
+                        Enter domain names without protocol. Ports are supported (e.g., "mihoyo.com" or "yuanshen.com:12401")
                       </p>
                     </div>
                   </div>
@@ -715,7 +744,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                       </button>
                     </div>
                   </div>
-                  
+
                   <div className="bg-gray-900/50 rounded-lg p-3 max-h-64 overflow-y-auto">
                     {proxyLogs.length === 0 ? (
                       <div className="text-center text-gray-400 py-4">
@@ -740,13 +769,13 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                       </div>
                     )}
                   </div>
-                  
+
                   <p className="text-gray-400 text-xs mt-2">
                     Shows real-time proxy redirections. Latest entries appear at the top.
                   </p>
                 </div>
-               </div>
-             )}
+              </div>
+            )}
 
             {activeTab === 'advanced' && (
               <div className="space-y-6">
