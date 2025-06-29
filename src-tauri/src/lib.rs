@@ -432,7 +432,7 @@ fn check_game_installed(_game_id: Number, _version: String, game_folder_path: St
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
-    .invoke_handler(tauri::generate_handler![launch_game, launch_game_with_engine, get_game_folder_path, show_game_folder, check_game_installed, open_directory, start_proxy, stop_proxy, check_proxy_status, force_stop_proxy, check_and_disable_windows_proxy, install_ssl_certificate, install_ca_certificate, check_certificate_status, check_ssl_certificate_installed, check_admin_privileges, proxy::set_proxy_addr, proxy::get_proxy_addr, proxy::get_proxy_logs, proxy::clear_proxy_logs])
+    .invoke_handler(tauri::generate_handler![launch_game, launch_game_with_engine, get_game_folder_path, show_game_folder, check_game_installed, open_directory, start_proxy, stop_proxy, check_proxy_status, force_stop_proxy, check_and_disable_windows_proxy, install_ssl_certificate, install_ca_certificate, check_certificate_status, check_ssl_certificate_installed, check_admin_privileges, proxy::set_proxy_addr, proxy::get_proxy_addr, proxy::get_proxy_logs, proxy::clear_proxy_logs, proxy::get_proxy_domains, proxy::add_proxy_domain, proxy::remove_proxy_domain])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

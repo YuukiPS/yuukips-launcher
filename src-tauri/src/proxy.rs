@@ -59,6 +59,20 @@ static PROXY_STATE: Lazy<Mutex<Option<ProxyHandle>>> = Lazy::new(|| Mutex::new(N
 // Global proxy logs storage
 static PROXY_LOGS: Lazy<Mutex<VecDeque<ProxyLogEntry>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
 
+// Global domain list for proxy interception
+static PROXY_DOMAINS: Lazy<Mutex<Vec<String>>> = Lazy::new(|| {
+    Mutex::new(vec![
+        "hoyoverse.com".to_string(),
+        "mihoyo.com".to_string(),
+        "yuanshen.com".to_string(),
+        "starrails.com".to_string(),
+        "bhsr.com".to_string(),
+        "bh3.com".to_string(),
+        "honkaiimpact3.com".to_string(),
+        "zenlesszonezero.com".to_string(),
+    ])
+});
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ProxyLogEntry {
     pub timestamp: String,
@@ -119,6 +133,54 @@ pub fn clear_proxy_logs() {
     PROXY_LOGS.lock().unwrap().clear();
 }
 
+#[tauri::command]
+pub fn get_proxy_domains() -> Vec<String> {
+    PROXY_DOMAINS.lock().unwrap().clone()
+}
+
+#[tauri::command]
+pub fn add_proxy_domain(domain: String) -> Result<String, String> {
+    let mut domains = PROXY_DOMAINS.lock().map_err(|e| format!("Failed to lock domains: {}", e))?;
+    let trimmed_domain = domain.trim().to_lowercase();
+    
+    if trimmed_domain.is_empty() {
+        return Err("Domain cannot be empty".to_string());
+    }
+    
+    if domains.contains(&trimmed_domain) {
+        return Err("Domain already exists in the list".to_string());
+    }
+    
+    domains.push(trimmed_domain.clone());
+    Ok(format!("Domain '{}' added successfully", trimmed_domain))
+}
+
+#[tauri::command]
+pub fn remove_proxy_domain(domain: String) -> Result<String, String> {
+    let mut domains = PROXY_DOMAINS.lock().map_err(|e| format!("Failed to lock domains: {}", e))?;
+    let trimmed_domain = domain.trim().to_lowercase();
+    
+    if let Some(pos) = domains.iter().position(|d| d == &trimmed_domain) {
+        domains.remove(pos);
+        Ok(format!("Domain '{}' removed successfully", trimmed_domain))
+    } else {
+        Err("Domain not found in the list".to_string())
+    }
+}
+
+// Helper function to check if URI should be intercepted based on domain list
+fn should_intercept_uri(uri: &str) -> bool {
+    if let Ok(domains) = PROXY_DOMAINS.lock() {
+        for domain in domains.iter() {
+            if uri.contains(domain) {
+                return true;
+            }
+        }
+    }
+    // Special case for yuanshen.com with port
+    uri.ends_with(".yuanshen.com:12401")
+}
+
 #[async_trait]
 impl HttpHandler for ProxyHandler {
   async fn handle_request(
@@ -128,16 +190,7 @@ impl HttpHandler for ProxyHandler {
   ) -> RequestOrResponse {
     let uri = req.uri().to_string();
 
-    if uri.contains("hoyoverse.com")
-      || uri.contains("mihoyo.com")
-      || uri.contains("yuanshen.com")
-      || uri.ends_with(".yuanshen.com:12401")
-      || uri.contains("starrails.com")
-      || uri.contains("bhsr.com")
-      || uri.contains("bh3.com")
-      || uri.contains("honkaiimpact3.com")
-      || uri.contains("zenlesszonezero.com")
-    {
+    if should_intercept_uri(&uri) {
       // Handle CONNECTs
       if req.method().as_str() == "CONNECT" {
         let builder = Response::builder()
@@ -176,15 +229,7 @@ impl HttpHandler for ProxyHandler {
 
   async fn should_intercept(&mut self, _ctx: &HttpContext, _req: &Request<Body>) -> bool {
     let uri = _req.uri().to_string();
-
-    uri.contains("hoyoverse.com")
-      || uri.contains("mihoyo.com")
-      || uri.contains("yuanshen.com")
-      || uri.contains("starrails.com")
-      || uri.contains("bhsr.com")
-      || uri.contains("bh3.com")
-      || uri.contains("honkaiimpact3.com")
-      || uri.contains("zenlesszonezero.com")
+    should_intercept_uri(&uri)
   }
 }
 

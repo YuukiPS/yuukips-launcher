@@ -29,6 +29,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const [autoRefreshLogs, setAutoRefreshLogs] = useState(false);
   const [isProxyRunning, setIsProxyRunning] = useState(false);
   const [proxyStatusLoading, setProxyStatusLoading] = useState(false);
+  const [proxyDomains, setProxyDomains] = useState<string[]>([]);
+  const [newDomainInput, setNewDomainInput] = useState('');
 
   // Get available versions dynamically from game engine data
   const availableVersions = GameApiService.getAvailableVersionsForPlatform(game, 1);
@@ -87,8 +89,21 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
     if (isOpen) {
       fetchProxyLogs();
       checkProxyStatus();
+      fetchProxyDomains();
     }
   }, [isOpen]);
+
+  // Fetch proxy domains from backend
+  const fetchProxyDomains = async () => {
+    try {
+      const domains = await invoke('get_proxy_domains');
+      if (Array.isArray(domains)) {
+        setProxyDomains(domains);
+      }
+    } catch (error) {
+      console.error('Failed to fetch proxy domains:', error);
+    }
+  };
 
   // Auto-refresh logs every 2 seconds when enabled
   useEffect(() => {
@@ -183,6 +198,41 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
       showNotification('Failed to stop proxy', 'error');
     } finally {
       setProxyStatusLoading(false);
+    }
+  };
+
+  // Add new domain
+  const handleAddDomain = async () => {
+    const trimmedDomain = newDomainInput.trim();
+    if (!trimmedDomain) {
+      showNotification('Please enter a valid domain', 'error');
+      return;
+    }
+
+    try {
+      const result = await invoke('add_proxy_domain', { domain: trimmedDomain });
+      if (typeof result === 'string') {
+        showNotification(result);
+        setNewDomainInput('');
+        fetchProxyDomains(); // Refresh the list
+      }
+    } catch (error) {
+      console.error('Failed to add domain:', error);
+      showNotification(typeof error === 'string' ? error : 'Failed to add domain', 'error');
+    }
+  };
+
+  // Remove domain
+  const handleRemoveDomain = async (domain: string) => {
+    try {
+      const result = await invoke('remove_proxy_domain', { domain });
+      if (typeof result === 'string') {
+        showNotification(result);
+        fetchProxyDomains(); // Refresh the list
+      }
+    } catch (error) {
+      console.error('Failed to remove domain:', error);
+      showNotification(typeof error === 'string' ? error : 'Failed to remove domain', 'error');
     }
   };
 
@@ -569,6 +619,69 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                     <p className="text-gray-400 text-sm">
                       Manage your proxy servers. Click 'Set' to switch between saved servers or add new ones.
                     </p>
+                  </div>
+                </div>
+
+                {/* Domain Management */}
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-semibold mb-3">Intercepted Domains</h4>
+                  <div className="space-y-4">
+                    <p className="text-gray-400 text-sm">
+                      Manage domains that will be intercepted and redirected by the proxy. These domains will have their traffic routed through your selected proxy server.
+                    </p>
+
+                    {/* Domain List */}
+                    <div>
+                      <label className="block text-gray-300 text-sm mb-2">Current Domains ({proxyDomains.length})</label>
+                      <div className="space-y-2 max-h-40 overflow-y-auto bg-gray-700/30 rounded-lg p-3">
+                        {proxyDomains.length > 0 ? (
+                          proxyDomains.map((domain, index) => (
+                            <div
+                              key={index}
+                              className="flex items-center justify-between p-2 bg-gray-700/50 rounded-lg hover:bg-gray-700/70 transition-colors"
+                            >
+                              <span className="text-white text-sm font-mono flex-1">{domain}</span>
+                              <button
+                                onClick={() => handleRemoveDomain(domain)}
+                                className="p-1 text-red-400 hover:text-red-300 hover:bg-red-400/20 rounded transition-colors"
+                                title={`Remove ${domain}`}
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-gray-400 text-sm text-center py-4">
+                            No domains configured
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Add New Domain */}
+                    <div>
+                      <label className="block text-gray-300 text-sm mb-2">Add New Domain</label>
+                      <div className="flex space-x-2">
+                        <input
+                          type="text"
+                          value={newDomainInput}
+                          onChange={(e) => setNewDomainInput(e.target.value)}
+                          onKeyPress={(e) => e.key === 'Enter' && handleAddDomain()}
+                          className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-purple-500 focus:outline-none"
+                          placeholder="example.com"
+                        />
+                        <button
+                          onClick={handleAddDomain}
+                          className="flex items-center space-x-1 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                          <Plus className="w-4 h-4" />
+                          <span>Add</span>
+                        </button>
+                      </div>
+                      <p className="text-gray-400 text-xs mt-1">
+                        Enter domain names without protocol (e.g., "mihoyo.com" not "https://mihoyo.com")
+                      </p>
+                    </div>
                   </div>
                 </div>
 
