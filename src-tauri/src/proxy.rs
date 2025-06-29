@@ -1,10 +1,12 @@
 use std::net::SocketAddr;
 use std::sync::Mutex;
 use tokio::runtime::Runtime;
-use hyper::{Body, Request, Response, Uri, Client, Server};
-use hyper::service::{make_service_fn, service_fn};
-use std::convert::Infallible;
-
+use hudsucker::{
+    certificate_authority::RcgenAuthority,
+    hyper::{Body, Request, Response, StatusCode},
+    *,
+};
+use tracing::info;
 
 #[cfg(target_os = "windows")]
 use winreg::enums::*;
@@ -121,78 +123,60 @@ fn should_redirect_hostname(hostname: &str) -> bool {
     game_domains.iter().any(|domain| hostname.ends_with(domain))
 }
 
-// Simple HTTP proxy handler
-async fn proxy_handler(req: Request<Body>) -> Result<Response<Body>, Infallible> {
-    let uri = req.uri();
-    let method = req.method();
-    
-    // Handle CONNECT method for HTTPS tunneling
-    if method == hyper::Method::CONNECT {
-        // For simplicity, we'll reject CONNECT requests
-        // In a full implementation, you'd establish a tunnel
-        return Ok(Response::builder()
-            .status(200)
-            .body(Body::from("Connection established"))
-            .unwrap());
-    }
-    
-    let url_str = uri.to_string();
-    
-    // Check if we should ignore this URL
-    if should_ignore_url(&url_str) {
-        return Ok(Response::builder()
-            .status(204)
-            .body(Body::empty())
-            .unwrap());
-    }
-    
-    // Check if we should redirect the hostname
-    if let Some(host) = uri.host() {
-        if should_redirect_hostname(host) && !is_private_hostname(host) {
-            // Redirect to ps.yuuki.me
-            let new_uri = format!("{}://ps.yuuki.me{}", 
-                uri.scheme_str().unwrap_or("http"),
-                uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/")
-            );
-            
-            println!("🔄 Redirecting: {} -> {}", url_str, new_uri);
-            
-            // Create a new request to the redirected URL
-            let new_uri: Uri = new_uri.parse().unwrap_or_else(|_| uri.clone());
-            let mut new_req = Request::builder()
-                .method(method)
-                .uri(new_uri);
-            
-            // Copy headers
-            for (key, value) in req.headers() {
-                if key != "host" {
-                    new_req = new_req.header(key, value);
-                }
-            }
-            
-            let client = Client::new();
-            match client.request(new_req.body(req.into_body()).unwrap()).await {
-                Ok(response) => return Ok(response),
-                Err(_) => {
-                    return Ok(Response::builder()
-                        .status(502)
-                        .body(Body::from("Bad Gateway"))
-                        .unwrap());
+// Custom handler for hudsucker
+#[derive(Clone)]
+struct GameProxyHandler;
+
+#[async_trait::async_trait]
+impl HttpHandler for GameProxyHandler {
+    async fn handle_request(
+        &mut self,
+        _ctx: &HttpContext,
+        mut req: Request<Body>,
+    ) -> RequestOrResponse {
+        let uri = req.uri();
+        let url_str = uri.to_string();
+        
+        // Check if we should ignore this URL
+        if should_ignore_url(&url_str) {
+            let response = Response::builder()
+                .status(StatusCode::NO_CONTENT)
+                .body(Body::empty())
+                .unwrap();
+            return RequestOrResponse::Response(response);
+        }
+        
+        // Check if we should redirect the hostname
+        if let Some(host) = uri.host() {
+            if should_redirect_hostname(host) && !is_private_hostname(host) {
+                // Redirect to ps.yuuki.me
+                let new_uri = format!("{}://ps.yuuki.me{}", 
+                    uri.scheme_str().unwrap_or("https"),
+                    uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/")
+                );
+                
+                info!("🔄 Redirecting: {} -> {}", url_str, new_uri);
+                
+                // Modify the request URI
+                let new_uri: hudsucker::hyper::Uri = new_uri.parse().unwrap_or_else(|_| uri.clone());
+                *req.uri_mut() = new_uri;
+                
+                // Update the Host header
+                if let Ok(host_header) = "ps.yuuki.me".parse() {
+                    req.headers_mut().insert("host", host_header);
                 }
             }
         }
+        
+        RequestOrResponse::Request(req)
     }
     
-    // Forward the request as-is
-    let client = Client::new();
-    match client.request(req).await {
-        Ok(response) => Ok(response),
-        Err(_) => {
-            Ok(Response::builder()
-                .status(502)
-                .body(Body::from("Bad Gateway"))
-                .unwrap())
-        }
+    async fn handle_response(
+        &mut self,
+        _ctx: &HttpContext,
+        res: Response<Body>,
+    ) -> Response<Body> {
+        res
     }
 }
 
@@ -284,8 +268,22 @@ fn restore_windows_proxy(_settings: &WindowsProxySettings) -> Result<(), String>
 pub fn start_proxy() -> Result<String, String> {
     let mut proxy_state = PROXY_STATE.lock().unwrap();
     
+    // If proxy is already running, stop it first
     if proxy_state.is_some() {
-        return Err("Proxy is already running".to_string());
+        info!("🔄 Proxy already running, stopping existing proxy...");
+        
+        // Take the existing handle to stop it
+        if let Some(handle) = proxy_state.take() {
+            // Send shutdown signal
+            let _ = handle.shutdown_tx.send(());
+            
+            // Restore original proxy settings
+            if let Some(original_settings) = &handle.original_proxy_settings {
+                let _ = restore_windows_proxy(original_settings);
+            }
+            
+            info!("🛑 Previous proxy stopped, starting new proxy...");
+        }
     }
     
     // Get current proxy settings before modifying them
@@ -301,29 +299,57 @@ pub fn start_proxy() -> Result<String, String> {
     
     // Start the proxy server
     runtime.spawn(async move {
-        let make_svc = make_service_fn(|_conn| async {
-            Ok::<_, Infallible>(service_fn(proxy_handler))
-        });
+        // Initialize tracing
+        tracing_subscriber::fmt::init();
         
-        let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
-        let server = Server::bind(&addr).serve(make_svc);
+        // Create certificate authority with generated key and cert
+        use rcgen::{generate_simple_self_signed, CertifiedKey};
+        use rustls::{Certificate, PrivateKey};
         
-        println!("🚀 HTTP Proxy listening on http://127.0.0.1:8080");
-        println!("🎯 Redirecting game domains to ps.yuuki.me");
-        println!("📋 Monitored domains:");
-        println!("   • *.zenlesszonezero.com");
-        println!("   • *.honkaiimpact3.com");
-        println!("   • *.honkaistarrail.com");
-        println!("   • *.genshinimpact.com");
-        println!("   • *.hoyoverse.com");
-        println!("   • *.mihoyo.com");
+        let subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
+        let CertifiedKey { cert, key_pair } = generate_simple_self_signed(subject_alt_names)
+            .expect("Failed to generate certificate");
         
-        let graceful = server.with_graceful_shutdown(async {
-            shutdown_rx.await.ok();
-        });
+        let cert_der = cert.der().to_vec();
+        let key_der = key_pair.serialize_der();
         
-        if let Err(e) = graceful.await {
-            eprintln!("Server error: {}", e);
+        let ca = RcgenAuthority::new(
+            PrivateKey(key_der),
+            Certificate(cert_der),
+            1024
+        ).expect("Failed to create certificate authority");
+        
+        // Create HTTP client
+        let client = hyper::Client::builder()
+            .build(hyper_rustls::HttpsConnectorBuilder::new()
+                .with_native_roots()
+                .https_or_http()
+                .enable_http1()
+                .build());
+        
+        let proxy = Proxy::builder()
+            .with_addr(SocketAddr::from(([127, 0, 0, 1], 8080)))
+            .with_client(client)
+            .with_ca(ca)
+            .with_http_handler(GameProxyHandler)
+            .build();
+        
+        info!("🚀 MITM Proxy listening on https://127.0.0.1:8080");
+        info!("🎯 Redirecting game domains to ps.yuuki.me");
+        info!("📋 Monitored domains:");
+        info!("   • *.zenlesszonezero.com");
+        info!("   • *.honkaiimpact3.com");
+        info!("   • *.honkaistarrail.com");
+        info!("   • *.genshinimpact.com");
+        info!("   • *.hoyoverse.com");
+        info!("   • *.mihoyo.com");
+        
+        let shutdown_future = async {
+            let _ = shutdown_rx.await;
+        };
+        
+        if let Err(e) = proxy.start(shutdown_future).await {
+            tracing::error!("Proxy error: {}", e);
         }
     });
     
@@ -333,7 +359,7 @@ pub fn start_proxy() -> Result<String, String> {
         original_proxy_settings: original_settings,
     });
     
-    Ok("HTTP Proxy started successfully on 127.0.0.1:8080 with automatic Windows proxy configuration.".to_string())
+    Ok("MITM Proxy started successfully on 127.0.0.1:8080 with automatic Windows proxy configuration.".to_string())
 }
 
 pub fn stop_proxy() -> Result<String, String> {
@@ -348,10 +374,10 @@ pub fn stop_proxy() -> Result<String, String> {
             restore_windows_proxy(original_settings)?;
         }
         
-        println!("🛑 HTTP Proxy stopped");
-        println!("🔄 Windows proxy settings restored");
+        info!("🛑 MITM Proxy stopped");
+        info!("🔄 Windows proxy settings restored");
         
-        Ok("HTTP Proxy stopped successfully. Windows proxy settings restored.".to_string())
+        Ok("MITM Proxy stopped successfully. Windows proxy settings restored.".to_string())
     } else {
         Err("Proxy is not running".to_string())
     }
@@ -360,4 +386,63 @@ pub fn stop_proxy() -> Result<String, String> {
 pub fn get_certificate_path() -> Result<String, String> {
     let cert_path = std::env::temp_dir().join("yuukips_proxy_cert.pem");
     Ok(cert_path.to_string_lossy().to_string())
+}
+
+pub fn is_proxy_running() -> bool {
+    let proxy_state = PROXY_STATE.lock().unwrap();
+    proxy_state.is_some()
+}
+
+pub fn force_stop_proxy() -> Result<String, String> {
+    let mut proxy_state = PROXY_STATE.lock().unwrap();
+    
+    if let Some(handle) = proxy_state.take() {
+        // Send shutdown signal
+        let _ = handle.shutdown_tx.send(());
+        
+        // Restore original proxy settings
+        if let Some(original_settings) = &handle.original_proxy_settings {
+            restore_windows_proxy(original_settings)?;
+        }
+        
+        info!("🛑 MITM Proxy force stopped");
+        info!("🔄 Windows proxy settings restored");
+        
+        Ok("MITM Proxy force stopped successfully. Windows proxy settings restored.".to_string())
+    } else {
+        Ok("No proxy was running.".to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn check_and_disable_windows_proxy() -> Result<String, String> {
+    let current_settings = get_current_proxy_settings()?;
+    
+    // Check if Windows proxy is currently enabled
+    if current_settings.proxy_enable == 1 {
+        info!("🔍 Detected enabled Windows proxy settings");
+        info!("   Proxy Server: {}", current_settings.proxy_server);
+        info!("   Proxy Override: {}", current_settings.proxy_override);
+        
+        // Disable Windows proxy by setting ProxyEnable to 0
+        let disabled_settings = WindowsProxySettings {
+            proxy_enable: 0,
+            proxy_server: String::new(),
+            proxy_override: String::new(),
+        };
+        
+        restore_windows_proxy(&disabled_settings)?;
+        
+        info!("🛑 Windows proxy settings disabled");
+        Ok(format!("Windows proxy was enabled and has been disabled. Previous settings: Server={}, Override={}", 
+                  current_settings.proxy_server, current_settings.proxy_override))
+    } else {
+        info!("✅ No Windows proxy settings detected or already disabled");
+        Ok("No Windows proxy settings were enabled.".to_string())
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn check_and_disable_windows_proxy() -> Result<String, String> {
+    Ok("Windows proxy check not available on this platform.".to_string())
 }

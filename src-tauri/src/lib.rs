@@ -64,6 +64,21 @@ fn stop_proxy() -> Result<String, String> {
     proxy::stop_proxy()
 }
 
+#[command]
+fn check_proxy_status() -> Result<bool, String> {
+    Ok(proxy::is_proxy_running())
+}
+
+#[command]
+fn force_stop_proxy() -> Result<String, String> {
+    proxy::force_stop_proxy()
+}
+
+#[command]
+fn check_and_disable_windows_proxy() -> Result<String, String> {
+    proxy::check_and_disable_windows_proxy()
+}
+
 // Function to automatically install SSL certificate on Windows
 #[cfg(target_os = "windows")]
 fn auto_install_certificate(cert_path: &std::path::Path) -> Result<(), String> {
@@ -211,9 +226,9 @@ fn launch_game_with_engine(
             return Err(format!("Game folder not found: {}. Please verify the path in game settings.", game_folder_path));
         }
         
-        // Start HTTP proxy before launching the game
+        // Start HTTP proxy before launching the game (will automatically stop existing proxy if running)
         if let Err(e) = proxy::start_proxy() {
-            return Err(format!("Failed to start HTTP proxy: {}. The launcher requires administrator privileges to function properly. Please restart the application as administrator.", e));
+            return Err(format!("Failed to start HTTP proxy: {}", e));
         }
         
         // Determine game executable name based on game ID
@@ -335,7 +350,7 @@ fn check_game_installed(_game_id: Number, _version: String, game_folder_path: St
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
-    .invoke_handler(tauri::generate_handler![launch_game, launch_game_with_engine, get_game_folder_path, show_game_folder, check_game_installed, open_directory, start_proxy, stop_proxy, install_ssl_certificate, check_ssl_certificate_installed, check_admin_privileges])
+    .invoke_handler(tauri::generate_handler![launch_game, launch_game_with_engine, get_game_folder_path, show_game_folder, check_game_installed, open_directory, start_proxy, stop_proxy, check_proxy_status, force_stop_proxy, check_and_disable_windows_proxy, install_ssl_certificate, check_ssl_certificate_installed, check_admin_privileges])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -344,6 +359,18 @@ pub fn run() {
             .build(),
         )?;
       }
+      
+      // Check and disable any Windows proxy settings on application startup
+      println!("🔍 Checking Windows proxy settings on startup...");
+      match proxy::check_and_disable_windows_proxy() {
+        Ok(message) => {
+          println!("✅ {}", message);
+        }
+        Err(e) => {
+          eprintln!("⚠️ Failed to check/disable Windows proxy on startup: {}", e);
+        }
+      }
+      
       Ok(())
     })
     .run(tauri::generate_context!())
