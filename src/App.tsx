@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { GameDetails } from './components/GameDetails';
@@ -21,11 +22,7 @@ function App() {
 
   const selectedGame = games.find(game => game.id === selectedGameId) || null;
 
-  useEffect(() => {
-    loadGames();
-  }, []);
-
-  const loadGames = async () => {
+  const loadGames = useCallback(async () => {
     setIsLoading(true);
     
     try {
@@ -42,7 +39,11 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [selectedGameId]);
+
+  useEffect(() => {
+    loadGames();
+  }, [loadGames]);
 
   const handleGameUpdate = (updatedGame: Game) => {
     setGames(prevGames => 
@@ -82,8 +83,14 @@ function App() {
     }
   };
 
-  const handleSocialClick = (url: string, platform: string) => {
-    alert(`This is a web demo. In the desktop version, this would open ${platform}.`);
+  const handleSocialClick = async (url: string, platform: string) => {
+    try {
+      await openUrl(url);
+    } catch (error) {
+      console.error(`Failed to open ${platform}:`, error);
+      // Fallback for web or if Tauri is not available
+      window.open(url, '_blank');
+    }
   };
 
   // Loading state

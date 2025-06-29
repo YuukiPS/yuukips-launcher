@@ -15,6 +15,7 @@
     "core:window:allow-start-dragging",
     "dialog:allow-open",
     "dialog:allow-save",
-    "dialog:allow-message"
+    "dialog:allow-message",
+    "opener:default"
   ]
 }

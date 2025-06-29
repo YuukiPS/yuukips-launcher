@@ -542,6 +542,7 @@ fn stop_game(game_id: Number) -> Result<String, String> {
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![launch_game_with_engine, get_game_folder_path, show_game_folder, check_game_installed, check_game_running, stop_game_process, stop_game, open_directory, start_proxy, stop_proxy, check_proxy_status, force_stop_proxy, check_and_disable_windows_proxy, install_ssl_certificate, install_ca_certificate, check_certificate_status, check_ssl_certificate_installed, check_admin_privileges, proxy::set_proxy_addr, proxy::get_proxy_addr, proxy::get_proxy_logs, proxy::clear_proxy_logs, proxy::get_proxy_domains, proxy::add_proxy_domain, proxy::remove_proxy_domain, proxy::set_proxy_port, proxy::get_proxy_port, proxy::find_available_port, proxy::start_proxy_with_port])
     .setup(|app| {
       if cfg!(debug_assertions) {

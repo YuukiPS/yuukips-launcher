@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { X, Folder, RotateCcw, HardDrive, Calendar, Clock, Check, Trash2, Plus, RefreshCw, Trash } from 'lucide-react';
 import { Game } from '../types';
 import { GameApiService } from '../services/gameApi';
@@ -127,15 +127,23 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
     }
   }, []);
 
-  // Load proxy logs and check proxy status when modal opens
-  useEffect(() => {
-    if (isOpen) {
-      fetchProxyLogs();
-      checkProxyStatus();
-      fetchProxyDomains();
-      loadProxyPort();
+  // Save proxy domains to localStorage whenever they change
+  const saveProxyDomains = useCallback((domains: string[]) => {
+    setProxyDomains(domains);
+    localStorage.setItem('saved-proxy-domains', JSON.stringify(domains));
+  }, []);
+
+  // Fetch proxy domains from backend
+  const fetchProxyDomains = useCallback(async () => {
+    try {
+      const domains = await invoke('get_proxy_domains');
+      if (Array.isArray(domains)) {
+        saveProxyDomains(domains);
+      }
+    } catch (error) {
+      console.error('Failed to fetch proxy domains:', error);
     }
-  }, [isOpen]);
+  }, [saveProxyDomains]);
 
   // Load current proxy port
   const loadProxyPort = async () => {
@@ -149,17 +157,15 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
     }
   };
 
-  // Fetch proxy domains from backend
-  const fetchProxyDomains = async () => {
-    try {
-      const domains = await invoke('get_proxy_domains');
-      if (Array.isArray(domains)) {
-        saveProxyDomains(domains);
-      }
-    } catch (error) {
-      console.error('Failed to fetch proxy domains:', error);
+  // Load proxy logs and check proxy status when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      fetchProxyLogs();
+      checkProxyStatus();
+      fetchProxyDomains();
+      loadProxyPort();
     }
-  };
+  }, [isOpen, fetchProxyDomains]);
 
   // Auto-refresh logs every 2 seconds when enabled
   useEffect(() => {
@@ -184,12 +190,6 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const saveDirectories = (newDirectories: Record<string, Record<number, string>>) => {
     setVersionDirectories(newDirectories);
     localStorage.setItem(`game-${game.id}-directories-v2`, JSON.stringify(newDirectories));
-  };
-
-  // Save proxy domains to localStorage whenever they change
-  const saveProxyDomains = (domains: string[]) => {
-    setProxyDomains(domains);
-    localStorage.setItem('saved-proxy-domains', JSON.stringify(domains));
   };
 
   // Show notification

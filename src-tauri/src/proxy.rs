@@ -46,12 +46,6 @@ use std::process::Command;
 #[cfg(target_os = "linux")]
 use std::{fs::File, io::Write, process::Command};
 
-async fn shutdown_signal() {
-    tokio::signal::ctrl_c()
-        .await
-        .expect("Failed to install CTRL+C signal handler");
-}
-
 // Global ver for getting server address.
 static SERVER: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("https://ps.yuuki.me".to_string()));
 
@@ -113,7 +107,7 @@ pub fn get_proxy_addr() -> String {
 
 #[tauri::command]
 pub fn set_proxy_port(port: u16) -> Result<String, String> {
-    if port < 1024 || port > 65535 {
+    if port < 1024 || port >= 65535 {
         return Err("Port must be between 1024 and 65535".to_string());
     }
     

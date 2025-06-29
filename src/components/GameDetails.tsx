@@ -28,69 +28,6 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
   const [gameProcessId, setGameProcessId] = useState<number | null>(null);
   const [monitorInterval, setMonitorInterval] = useState<NodeJS.Timeout | null>(null);
 
-  useEffect(() => {
-    // Check if game is installed when component mounts or game changes
-    checkGameInstallation();
-  }, [game.id]);
-
-  useEffect(() => {
-    // Cleanup monitor interval on unmount
-    return () => {
-      if (monitorInterval) {
-        clearInterval(monitorInterval);
-      }
-    };
-  }, [monitorInterval]);
-
-  const checkGameInstallation = useCallback(async () => {
-    try {
-      // const installed = await invoke('check_game_installed', { gameId: game.id.toString() });
-      setIsInstalled(true); // TODO
-    } catch (error) {
-      console.error('Error checking game installation:', error);
-      setIsInstalled(false);
-    }
-  }, [game.id]);
-
-  const handlePlay = useCallback(async () => {
-    if (isGameRunning) {
-      // Stop the game if it's running
-      await handleStopGame();
-    } else {
-      // Check if game has engines (API games) or is a legacy game
-      if (game.engine && game.engine.length > 0) {
-        // Show engine selection modal for API games
-        setShowEngineSelection(true);
-      } else {
-        // Legacy (no more)
-        alert(`No Game?`);
-      }
-    }
-  }, [isGameRunning, game.engine]);
-
-  const handleEngineLaunch = useCallback(async (engine: GameEngine, version: string, channel: number) => {
-    setIsLaunching(true);
-    try {
-      // Check proxy and SSL status before launching
-      const proxyStatus = await startProxyWithSSLCheck();
-      
-      if (proxyStatus.needsSSL) {
-        // Store the pending launch details and show SSL modal
-        setPendingLaunch({ engine, version, channel });
-        setShowSSLModal(true);
-        setIsLaunching(false);
-        return;
-      }
-      
-      // Proceed with game launch
-      await launchGameWithEngine(engine, version, channel);
-    } catch (error) {
-      console.error('Error in pre-launch checks:', error);
-      // Continue with launch even if proxy check fails
-      await launchGameWithEngine(engine, version, channel);
-    }
-  }, []);
-
   const getGameFolderPath = useCallback((version: string, channel: number): string => {
     const storageKey = `${STORAGE_KEY_PREFIX}${game.id}${STORAGE_KEY_SUFFIX}`;
     const savedDirectories = localStorage.getItem(storageKey);
@@ -113,6 +50,49 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
     
     return '';
   }, [game.id]);
+
+  const stopGameMonitoring = useCallback(() => {
+    if (monitorInterval) {
+      clearInterval(monitorInterval);
+      setMonitorInterval(null);
+    }
+  }, [monitorInterval]);
+
+  const handleGameStopped = useCallback(async () => {
+    setIsGameRunning(false);
+    setGameProcessId(null);
+    stopGameMonitoring();
+    
+    // Stop proxy when game closes
+    try {
+      await invoke('stop_proxy');
+    } catch (error) {
+      console.error('Error stopping proxy:', error);
+    }
+  }, [stopGameMonitoring]);
+
+  const startGameMonitoring = useCallback(() => {
+    // Clear any existing interval
+    stopGameMonitoring();
+    
+    // Start monitoring every 2 seconds
+    const interval = setInterval(async () => {
+      try {
+        const isRunning = await invoke('check_game_running', { gameId: game.id });
+        
+        if (!isRunning && isGameRunning) {
+          // Game has stopped
+          await handleGameStopped();
+        }
+      } catch (error) {
+        console.error('Error checking game status:', error);
+        // If we can't check status, assume game stopped
+        await handleGameStopped();
+      }
+    }, MONITOR_INTERVAL_MS);
+    
+    setMonitorInterval(interval);
+  }, [game.id, isGameRunning, stopGameMonitoring, handleGameStopped]);
 
   const launchGameWithEngine = useCallback(async (engine: GameEngine, version: string, channel: number) => {
     try {
@@ -163,50 +143,31 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
     } finally {
       setIsLaunching(false);
     }
-  }, [game, getGameFolderPath, onGameUpdate]);
+  }, [game, getGameFolderPath, onGameUpdate, startGameMonitoring]);
 
-  const stopGameMonitoring = useCallback(() => {
-    if (monitorInterval) {
-      clearInterval(monitorInterval);
-      setMonitorInterval(null);
-    }
-  }, [monitorInterval]);
-
-  const handleGameStopped = useCallback(async () => {
-    setIsGameRunning(false);
-    setGameProcessId(null);
-    stopGameMonitoring();
-    
-    // Stop proxy when game closes
+  const checkGameInstallation = useCallback(async () => {
     try {
-      await invoke('stop_proxy');
+      // const installed = await invoke('check_game_installed', { gameId: game.id.toString() });
+      setIsInstalled(true); // TODO
     } catch (error) {
-      console.error('Error stopping proxy:', error);
+      console.error('Error checking game installation:', error);
+      setIsInstalled(false);
     }
-  }, [stopGameMonitoring]);
+  }, []);
 
-  const startGameMonitoring = useCallback(() => {
-    // Clear any existing interval
-    stopGameMonitoring();
-    
-    // Start monitoring every 2 seconds
-    const interval = setInterval(async () => {
-      try {
-        const isRunning = await invoke('check_game_running', { gameId: game.id });
-        
-        if (!isRunning && isGameRunning) {
-          // Game has stopped
-          await handleGameStopped();
-        }
-      } catch (error) {
-        console.error('Error checking game status:', error);
-        // If we can't check status, assume game stopped
-        await handleGameStopped();
+  useEffect(() => {
+    // Check if game is installed when component mounts or game changes
+    checkGameInstallation();
+  }, [checkGameInstallation]);
+
+  useEffect(() => {
+    // Cleanup monitor interval on unmount
+    return () => {
+      if (monitorInterval) {
+        clearInterval(monitorInterval);
       }
-    }, MONITOR_INTERVAL_MS);
-    
-    setMonitorInterval(interval);
-  }, [game.id, isGameRunning, stopGameMonitoring, handleGameStopped]);
+    };
+  }, [monitorInterval]);
 
   const handleStopGame = useCallback(async () => {
     try {
@@ -222,6 +183,45 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate }) 
       alert(`Failed to stop ${game.title}: ${error}`);
     }
   }, [gameProcessId, game.id, game.title, handleGameStopped]);
+
+  const handlePlay = useCallback(async () => {
+    if (isGameRunning) {
+      // Stop the game if it's running
+      await handleStopGame();
+    } else {
+      // Check if game has engines (API games) or is a legacy game
+      if (game.engine && game.engine.length > 0) {
+        // Show engine selection modal for API games
+        setShowEngineSelection(true);
+      } else {
+        // Legacy (no more)
+        alert(`No Game?`);
+      }
+    }
+  }, [isGameRunning, game.engine, handleStopGame]);
+
+  const handleEngineLaunch = useCallback(async (engine: GameEngine, version: string, channel: number) => {
+    setIsLaunching(true);
+    try {
+      // Check proxy and SSL status before launching
+      const proxyStatus = await startProxyWithSSLCheck();
+      
+      if (proxyStatus.needsSSL) {
+        // Store the pending launch details and show SSL modal
+        setPendingLaunch({ engine, version, channel });
+        setShowSSLModal(true);
+        setIsLaunching(false);
+        return;
+      }
+      
+      // Proceed with game launch
+      await launchGameWithEngine(engine, version, channel);
+    } catch (error) {
+      console.error('Error in pre-launch checks:', error);
+      // Continue with launch even if proxy check fails
+      await launchGameWithEngine(engine, version, channel);
+    }
+  }, [launchGameWithEngine]);
 
   const handleSSLInstallComplete = useCallback(() => {
     // Resume the pending launch after SSL installation
