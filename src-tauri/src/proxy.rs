@@ -5,6 +5,9 @@
 use once_cell::sync::Lazy;
 use std::{path::PathBuf, str::FromStr, sync::Mutex};
 use tokio::runtime::Runtime;
+use std::collections::VecDeque;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 
 use hudsucker::{
   async_trait::async_trait,
@@ -53,6 +56,16 @@ static SERVER: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("https://ps.yuuki.m
 // Global proxy state
 static PROXY_STATE: Lazy<Mutex<Option<ProxyHandle>>> = Lazy::new(|| Mutex::new(None));
 
+// Global proxy logs storage
+static PROXY_LOGS: Lazy<Mutex<VecDeque<ProxyLogEntry>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ProxyLogEntry {
+    pub timestamp: String,
+    pub original_url: String,
+    pub redirected_url: String,
+}
+
 struct ProxyHandle {
     _runtime: Runtime,
     shutdown_tx: tokio::sync::oneshot::Sender<()>,
@@ -71,6 +84,39 @@ pub fn set_proxy_addr(addr: String) {
   }
 
   println!("Set server to {}", SERVER.lock().unwrap());
+}
+
+#[tauri::command]
+pub fn get_proxy_addr() -> String {
+  SERVER.lock().unwrap().clone()
+}
+
+// Helper function to log proxy redirections
+fn log_proxy_redirection(original_url: String, redirected_url: String) {
+    let timestamp = Utc::now().format("%H:%M:%S").to_string();
+    let log_entry = ProxyLogEntry {
+        timestamp,
+        original_url,
+        redirected_url,
+    };
+    
+    if let Ok(mut logs) = PROXY_LOGS.lock() {
+        logs.push_back(log_entry);
+        // Keep only the last 100 log entries to prevent memory issues
+        if logs.len() > 100 {
+            logs.pop_front();
+        }
+    }
+}
+
+#[tauri::command]
+pub fn get_proxy_logs() -> Vec<ProxyLogEntry> {
+    PROXY_LOGS.lock().unwrap().iter().cloned().collect()
+}
+
+#[tauri::command]
+pub fn clear_proxy_logs() {
+    PROXY_LOGS.lock().unwrap().clear();
 }
 
 #[async_trait]
@@ -103,10 +149,15 @@ impl HttpHandler for ProxyHandler {
         *res.body()
       } else {
         let uri_path_and_query = req.uri().path_and_query().unwrap().as_str();
+        let original_uri = req.uri().to_string();
         // Create new URI.
         let new_uri =
           Uri::from_str(format!("{}{}", SERVER.lock().unwrap(), uri_path_and_query).as_str())
             .unwrap();
+        
+        // Log the proxy redirection
+        log_proxy_redirection(original_uri, new_uri.to_string());
+        
         // Set request URI to the new one.
         *req.uri_mut() = new_uri;
       }

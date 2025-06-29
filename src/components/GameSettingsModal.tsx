@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Folder, RotateCcw, HardDrive, Calendar, Clock, Check } from 'lucide-react';
+import { X, Folder, RotateCcw, HardDrive, Calendar, Clock, Check, Trash2, Plus, RefreshCw, Trash } from 'lucide-react';
 import { Game } from '../types';
 import { GameApiService } from '../services/gameApi';
 import { invoke } from '@tauri-apps/api/core';
@@ -22,6 +22,13 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const [selectedVersion, setSelectedVersion] = useState("");
   const [versionDirectories, setVersionDirectories] = useState<Record<string, string>>({});
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [proxyAddress, setProxyAddress] = useState('https://ps.yuuki.me');
+  const [savedProxyServers, setSavedProxyServers] = useState<string[]>(['https://ps.yuuki.me']);
+  const [newServerInput, setNewServerInput] = useState('');
+  const [proxyLogs, setProxyLogs] = useState<Array<{timestamp: string, original_url: string, redirected_url: string}>>([]);
+  const [autoRefreshLogs, setAutoRefreshLogs] = useState(false);
+  const [isProxyRunning, setIsProxyRunning] = useState(false);
+  const [proxyStatusLoading, setProxyStatusLoading] = useState(false);
 
   // Get available versions dynamically from game engine data
   const availableVersions = GameApiService.getAvailableVersionsForPlatform(game, 1);
@@ -45,6 +52,63 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
     }
   }, [game.id]);
 
+  // Load current proxy address on component mount
+  useEffect(() => {
+    const loadProxyAddress = async () => {
+      try {
+        const currentProxy = await invoke('get_proxy_addr');
+        if (currentProxy && typeof currentProxy === 'string') {
+          setProxyAddress(currentProxy.replace(':443', ''));
+        }
+      } catch (error) {
+        console.error('Failed to load proxy address:', error);
+      }
+    };
+    loadProxyAddress();
+  }, []);
+
+  // Load saved proxy servers from localStorage
+  useEffect(() => {
+    const savedServers = localStorage.getItem('saved-proxy-servers');
+    if (savedServers) {
+      try {
+        const servers = JSON.parse(savedServers);
+        if (Array.isArray(servers) && servers.length > 0) {
+          setSavedProxyServers(servers);
+        }
+      } catch (error) {
+        console.error('Failed to parse saved proxy servers:', error);
+      }
+    }
+  }, []);
+
+  // Load proxy logs and check proxy status when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      fetchProxyLogs();
+      checkProxyStatus();
+    }
+  }, [isOpen]);
+
+  // Auto-refresh logs every 2 seconds when enabled
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (autoRefreshLogs && isOpen) {
+      interval = setInterval(fetchProxyLogs, 2000);
+    }
+    return () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
+  }, [autoRefreshLogs, isOpen]);
+
+  // Save proxy servers to localStorage whenever they change
+  const saveProxyServers = (servers: string[]) => {
+    setSavedProxyServers(servers);
+    localStorage.setItem('saved-proxy-servers', JSON.stringify(servers));
+  };
+
   // Save directories to localStorage whenever they change
   const saveDirectories = (newDirectories: Record<string, string>) => {
     setVersionDirectories(newDirectories);
@@ -55,6 +119,71 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
+  };
+
+  // Fetch proxy logs from backend
+  const fetchProxyLogs = async () => {
+    try {
+      const logs = await invoke('get_proxy_logs');
+      if (Array.isArray(logs)) {
+        setProxyLogs(logs);
+      }
+    } catch (error) {
+      console.error('Failed to fetch proxy logs:', error);
+    }
+  };
+
+  // Clear proxy logs
+  const handleClearProxyLogs = async () => {
+    try {
+      await invoke('clear_proxy_logs');
+      setProxyLogs([]);
+      showNotification('Proxy logs cleared successfully!');
+    } catch (error) {
+      console.error('Failed to clear proxy logs:', error);
+      showNotification('Failed to clear proxy logs', 'error');
+    }
+  };
+
+  // Check proxy status
+  const checkProxyStatus = async () => {
+    try {
+      const status = await invoke('check_proxy_status');
+      setIsProxyRunning(status as boolean);
+    } catch (error) {
+      console.error('Failed to check proxy status:', error);
+      setIsProxyRunning(false);
+    }
+  };
+
+  // Start proxy
+  const handleStartProxy = async () => {
+    setProxyStatusLoading(true);
+    try {
+      await invoke('start_proxy');
+      setIsProxyRunning(true);
+      showNotification('Proxy started successfully!');
+    } catch (error) {
+      console.error('Failed to start proxy:', error);
+      showNotification('Failed to start proxy', 'error');
+    } finally {
+      setProxyStatusLoading(false);
+    }
+  };
+
+  // Stop proxy
+  const handleStopProxy = async () => {
+    setProxyStatusLoading(true);
+    try {
+      await invoke('stop_proxy');
+      setIsProxyRunning(false);
+      showNotification('Proxy stopped successfully!');
+    } catch (error) {
+      console.error('Failed to stop proxy:', error);
+      showNotification('Failed to stop proxy', 'error');
+    } finally {
+      setProxyStatusLoading(false);
+    }
   };
 
   const handleVersionChange = (version: string) => {
@@ -96,6 +225,53 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
     } catch (error) {
       console.error('Failed to open directory dialog:', error);
       showNotification('Failed to open directory selection dialog', 'error');
+    }
+  };
+
+  const handleProxyAddressChange = async (newAddress: string) => {
+    setProxyAddress(newAddress);
+    try {
+      // Add :443 port if not specified
+      const addressWithPort = newAddress.includes(':') ? newAddress : `${newAddress}:443`;
+      await invoke('set_proxy_addr', { addr: addressWithPort });
+      showNotification('Proxy address updated successfully!');
+    } catch (error) {
+      console.error('Failed to set proxy address:', error);
+      showNotification('Failed to update proxy address', 'error');
+    }
+  };
+
+  const handleAddNewServer = () => {
+    const trimmedServer = newServerInput.trim();
+    if (trimmedServer && !savedProxyServers.includes(trimmedServer)) {
+      const updatedServers = [...savedProxyServers, trimmedServer];
+      saveProxyServers(updatedServers);
+      setNewServerInput('');
+      showNotification('Server added to list successfully!');
+    } else if (savedProxyServers.includes(trimmedServer)) {
+      showNotification('Server already exists in the list', 'error');
+    } else {
+      showNotification('Please enter a valid server address', 'error');
+    }
+  };
+
+  const handleSelectServer = async (serverAddress: string) => {
+    setProxyAddress(serverAddress);
+    await handleProxyAddressChange(serverAddress);
+  };
+
+  const handleRemoveServer = (serverToRemove: string) => {
+    if (savedProxyServers.length > 1) {
+      const updatedServers = savedProxyServers.filter(server => server !== serverToRemove);
+      saveProxyServers(updatedServers);
+      showNotification('Server removed from list');
+      
+      // If the removed server was the current one, switch to the first available
+      if (proxyAddress === serverToRemove && updatedServers.length > 0) {
+        handleSelectServer(updatedServers[0]);
+      }
+    } else {
+      showNotification('Cannot remove the last server from the list', 'error');
     }
   };
 
@@ -143,6 +319,15 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                   }`}
               >
                 Basic Information
+              </button>
+              <button
+                onClick={() => setActiveTab('proxy')}
+                className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${activeTab === 'proxy'
+                    ? 'bg-purple-600/30 text-purple-400 border border-purple-500/50'
+                    : 'text-gray-300 hover:bg-gray-700/50'
+                  }`}
+              >
+                Proxy Settings
               </button>
               <button
                 onClick={() => setActiveTab('advanced')}
@@ -248,8 +433,207 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                     </button>
                   </div>
                 </div>
+
+
               </div>
             )}
+
+            {activeTab === 'proxy' && (
+              <div className="space-y-6">
+                <h3 className="text-lg font-semibold text-white mb-4">Proxy Settings</h3>
+
+                {/* Proxy Status and Control */}
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-semibold mb-3">Proxy Status</h4>
+                  <div className="space-y-4">
+                    {/* Status Display */}
+                    <div className="flex items-center justify-between p-3 bg-gray-700/50 rounded-lg">
+                      <div className="flex items-center space-x-3">
+                        <div className={`w-3 h-3 rounded-full ${
+                          isProxyRunning ? 'bg-green-400' : 'bg-red-400'
+                        }`}></div>
+                        <span className={`font-medium ${
+                          isProxyRunning ? 'text-green-400' : 'text-red-400'
+                        }`}>
+                          {isProxyRunning ? 'Running' : 'Stopped'}
+                        </span>
+                        <span className="text-gray-300 text-sm">
+                          {isProxyRunning ? 'Proxy server is active on port 8080' : 'Proxy server is not running'}
+                        </span>
+                      </div>
+                      
+                      {/* Control Button */}
+                      <button
+                        onClick={isProxyRunning ? handleStopProxy : handleStartProxy}
+                        disabled={proxyStatusLoading}
+                        className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+                          proxyStatusLoading
+                            ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                            : isProxyRunning
+                            ? 'bg-red-600 text-white hover:bg-red-700'
+                            : 'bg-green-600 text-white hover:bg-green-700'
+                        }`}
+                      >
+                        {proxyStatusLoading ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                            <span>Loading...</span>
+                          </>
+                        ) : (
+                          <>
+                            <div className={`w-2 h-2 rounded-full ${
+                              isProxyRunning ? 'bg-white' : 'bg-white'
+                            }`}></div>
+                            <span>{isProxyRunning ? 'Stop Proxy' : 'Start Proxy'}</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    
+                    <p className="text-gray-400 text-sm">
+                      The proxy server intercepts and redirects game traffic. Games can continue running even when the proxy is stopped.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Proxy Address Configuration */}
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <h4 className="text-white font-semibold mb-3">Proxy Server Address</h4>
+                  <div className="space-y-4">
+                    {/* Current Server Status */}
+                    <div className="flex items-center space-x-2 p-3 bg-gray-700/50 rounded-lg">
+                      <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                      <span className="text-green-400 text-sm font-medium">Active:</span>
+                      <span className="text-white text-sm">{proxyAddress}</span>
+                    </div>
+
+                    {/* Saved Servers List */}
+                    <div>
+                      <label className="block text-gray-300 text-sm mb-2">Saved Servers</label>
+                      <div className="space-y-2 max-h-32 overflow-y-auto">
+                        {savedProxyServers.map((server, index) => (
+                          <div
+                            key={index}
+                            className={`flex items-center justify-between p-2 rounded-lg transition-colors ${
+                              server === proxyAddress
+                                ? 'bg-purple-600/30 border border-purple-500/50'
+                                : 'bg-gray-700/50 hover:bg-gray-700/70'
+                            }`}
+                          >
+                            <span className="text-white text-sm font-mono flex-1">{server}</span>
+                            <div className="flex items-center space-x-2">
+                              {server !== proxyAddress && (
+                                <button
+                                  onClick={() => handleSelectServer(server)}
+                                  className="px-2 py-1 bg-purple-600 text-white text-xs rounded hover:bg-purple-700 transition-colors"
+                                >
+                                  Set
+                                </button>
+                              )}
+                              {savedProxyServers.length > 1 && (
+                                <button
+                                  onClick={() => handleRemoveServer(server)}
+                                  className="p-1 text-red-400 hover:text-red-300 hover:bg-red-400/20 rounded transition-colors"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Add New Server */}
+                    <div>
+                      <label className="block text-gray-300 text-sm mb-2">Add New Server</label>
+                      <div className="flex space-x-2">
+                        <input
+                          type="text"
+                          value={newServerInput}
+                          onChange={(e) => setNewServerInput(e.target.value)}
+                          onKeyPress={(e) => e.key === 'Enter' && handleAddNewServer()}
+                          className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-purple-500 focus:outline-none"
+                          placeholder="https://example.com"
+                        />
+                        <button
+                          onClick={handleAddNewServer}
+                          className="flex items-center space-x-1 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                          <Plus className="w-4 h-4" />
+                          <span>Add</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <p className="text-gray-400 text-sm">
+                      Manage your proxy servers. Click 'Set' to switch between saved servers or add new ones.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Proxy Logs */}
+                <div className="bg-gray-800/50 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-white font-semibold">Proxy Logs</h4>
+                    <div className="flex items-center space-x-2">
+                      <label className="flex items-center space-x-2 text-sm text-gray-300">
+                        <input
+                          type="checkbox"
+                          checked={autoRefreshLogs}
+                          onChange={(e) => setAutoRefreshLogs(e.target.checked)}
+                          className="text-purple-600 focus:ring-purple-500"
+                        />
+                        <span>Auto-refresh</span>
+                      </label>
+                      <button
+                        onClick={fetchProxyLogs}
+                        className="flex items-center space-x-1 px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        <span>Refresh</span>
+                      </button>
+                      <button
+                        onClick={handleClearProxyLogs}
+                        className="flex items-center space-x-1 px-2 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700 transition-colors"
+                      >
+                        <Trash className="w-3 h-3" />
+                        <span>Clear</span>
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-gray-900/50 rounded-lg p-3 max-h-64 overflow-y-auto">
+                    {proxyLogs.length === 0 ? (
+                      <div className="text-center text-gray-400 py-4">
+                        <p>No proxy logs available</p>
+                        <p className="text-xs mt-1">Logs will appear here when proxy redirections occur</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {proxyLogs.slice().reverse().map((log, index) => (
+                          <div key={index} className="flex items-center space-x-3 p-2 bg-gray-800/50 rounded text-xs font-mono">
+                            <span className="text-blue-400 font-medium min-w-[60px]">{log.timestamp}</span>
+                            <span className="text-gray-300">-</span>
+                            <span className="text-yellow-400 flex-1 truncate" title={log.original_url}>
+                              {log.original_url}
+                            </span>
+                            <span className="text-gray-300">to</span>
+                            <span className="text-green-400 flex-1 truncate" title={log.redirected_url}>
+                              {log.redirected_url}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  
+                  <p className="text-gray-400 text-xs mt-2">
+                    Shows real-time proxy redirections. Latest entries appear at the top.
+                  </p>
+                </div>
+               </div>
+             )}
 
             {activeTab === 'advanced' && (
               <div className="space-y-6">
