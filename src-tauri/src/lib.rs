@@ -1,11 +1,23 @@
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 use std::process::Command;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use serde_json::Number;
 use serde::{Deserialize, Serialize};
 use tauri::command;
 // Import the proxy module
 mod proxy;
+
+// Global game monitoring state
+static GAME_MONITOR_STATE: once_cell::sync::Lazy<Arc<Mutex<Option<GameMonitorHandle>>>> = 
+    once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(None)));
+
+struct GameMonitorHandle {
+    should_stop: Arc<Mutex<bool>>,
+    thread_handle: Option<thread::JoinHandle<()>>,
+}
 
 #[derive(Serialize, Deserialize)]
 struct LaunchResult {
@@ -292,9 +304,10 @@ fn launch_game_with_engine(
             return Err(format!("Game folder not found: {}. Please verify the path in game settings.", game_folder_path));
         }
         
-        // Start HTTP proxy before launching the game (will automatically stop existing proxy if running)
-        if let Err(e) = proxy::start_proxy() {
-            return Err(format!("Failed to start HTTP proxy: {}", e));
+        // Start game monitoring instead of just starting proxy
+        // This will automatically manage proxy based on game state
+        if let Err(e) = start_game_monitor(game_id.clone()) {
+            return Err(format!("Failed to start game monitoring: {}", e));
         }
         
         // Determine game executable name based on game ID
@@ -330,7 +343,8 @@ fn launch_game_with_engine(
                 }
             },
             Err(e) => {
-                // If game launch fails, try to clean up proxy
+                // If game launch fails, stop monitoring and clean up proxy
+                let _ = stop_game_monitor();
                 let _ = proxy::stop_proxy();
                 Err(format!("Failed to launch game: {}", e))
             },
@@ -424,8 +438,8 @@ fn check_game_installed(_game_id: Number, _version: String, game_folder_path: St
     }
 }
 
-#[command]
-fn check_game_running(game_id: Number) -> Result<bool, String> {
+// Internal function to check if a specific game is running
+fn check_game_running_internal(game_id: &Number) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
@@ -433,7 +447,7 @@ fn check_game_running(game_id: Number) -> Result<bool, String> {
         // Determine game executable names based on game ID
         let game_exe_names = match game_id.as_u64() {
             Some(1) => vec!["GenshinImpact.exe"],
-            Some(2) => vec!["StarRail.exe", "HonkaiStarRail.exe", "StarRail_Data.exe", "Game.exe"],
+            Some(2) => vec!["StarRail.exe"],
             Some(3) => vec!["BlueArchive.exe"],
             _ => return Err(format!("Unsupported game ID: {}", game_id)),
         };
@@ -441,16 +455,28 @@ fn check_game_running(game_id: Number) -> Result<bool, String> {
         // Check each possible executable name
         for game_exe_name in game_exe_names {
             let output = Command::new("tasklist")
-                .args(["/FI", &format!("IMAGENAME eq {}", game_exe_name)])
+                .args(["/FI", &format!("IMAGENAME eq {}", game_exe_name), "/FO", "CSV"])
                 .output()
                 .map_err(|e| format!("Failed to execute tasklist: {}", e))?;
             
             if output.status.success() {
                 let output_str = String::from_utf8_lossy(&output.stdout);
                 // Check if the game executable is listed in the output
-                if output_str.contains(game_exe_name) {
-                    return Ok(true);
+                // Use CSV format for more reliable parsing
+                let lines: Vec<&str> = output_str.lines().collect();
+                for line in lines.iter().skip(1) { // Skip header line
+                    if line.contains(game_exe_name) && !line.trim().is_empty() {
+                        // Additional validation: check if the line contains actual process info
+                        let parts: Vec<&str> = line.split(',').collect();
+                        if parts.len() >= 2 && parts[0].trim_matches('"') == game_exe_name {
+                            return Ok(true);
+                        }
+                    }
                 }
+            } else {
+                // If tasklist fails, log the error but continue checking other executables
+                let error_msg = String::from_utf8_lossy(&output.stderr);
+                eprintln!("⚠️ Warning: tasklist failed for {}: {}", game_exe_name, error_msg);
             }
         }
         Ok(false)
@@ -464,10 +490,201 @@ fn check_game_running(game_id: Number) -> Result<bool, String> {
 }
 
 #[command]
+fn check_game_running(game_id: Number) -> Result<bool, String> {
+    check_game_running_internal(&game_id)
+}
+
+// Function to start monitoring a specific game
+#[command]
+fn start_game_monitor(game_id: Number) -> Result<String, String> {
+    let mut monitor_state = GAME_MONITOR_STATE.lock().map_err(|e| format!("Failed to lock monitor state: {}", e))?;
+    
+    // Stop existing monitor if running
+    if let Some(mut handle) = monitor_state.take() {
+        *handle.should_stop.lock().unwrap() = true;
+        if let Some(thread_handle) = handle.thread_handle.take() {
+            let _ = thread_handle.join();
+        }
+    }
+    
+    let should_stop = Arc::new(Mutex::new(false));
+    let should_stop_clone = Arc::clone(&should_stop);
+    let game_id_clone = game_id.clone();
+    
+    let thread_handle = thread::spawn(move || {
+        let mut last_game_state = false;
+        let mut proxy_started_by_us = false;
+        let mut consecutive_errors = 0;
+        const MAX_CONSECUTIVE_ERRORS: u32 = 5;
+        
+        println!("🔍 Started monitoring game {} for automatic proxy management", game_id_clone);
+        
+        // Ensure we clean up the monitor state when thread exits
+        let _cleanup_guard = scopeguard::guard((), |_| {
+            if let Ok(mut monitor_state) = GAME_MONITOR_STATE.lock() {
+                *monitor_state = None;
+                println!("🔧 Game monitor state cleared for game {}", game_id_clone);
+            }
+        });
+        
+        loop {
+            // Check if we should stop monitoring
+            if *should_stop_clone.lock().unwrap() {
+                break;
+            }
+            
+            // Check if game is currently running
+             match check_game_running_internal(&game_id_clone) {
+                 Ok(is_running) => {
+                     consecutive_errors = 0; // Reset error counter on success
+                     
+                     if is_running != last_game_state {
+                         if is_running {
+                             // Game just started - start proxy if not already running
+                             if !proxy::is_proxy_running() {
+                                 match proxy::start_proxy() {
+                                     Ok(_) => {
+                                         proxy_started_by_us = true;
+                                         println!("🎮 Game {} started - Proxy activated automatically", game_id_clone);
+                                     }
+                                     Err(e) => {
+                                         eprintln!("⚠️ Failed to start proxy when game started: {}", e);
+                                     }
+                                 }
+                             } else {
+                                 println!("🎮 Game {} started - Proxy was already running", game_id_clone);
+                             }
+                         } else {
+                            // Game just stopped - force stop proxy regardless of who started it
+                            if proxy::is_proxy_running() {
+                                match proxy::force_stop_proxy() {
+                                    Ok(_) => {
+                                        proxy_started_by_us = false;
+                                        println!("🎮 Game {} stopped - Proxy force stopped automatically", game_id_clone);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("⚠️ Failed to force stop proxy when game stopped: {}", e);
+                                        // Try regular stop as fallback
+                                        match proxy::stop_proxy() {
+                                            Ok(_) => {
+                                                proxy_started_by_us = false;
+                                                println!("🎮 Game {} stopped - Proxy stopped with fallback method", game_id_clone);
+                                            }
+                                            Err(e2) => {
+                                                eprintln!("⚠️ Failed to stop proxy with fallback method: {}", e2);
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                println!("🎮 Game {} stopped - Proxy was not running", game_id_clone);
+                            }
+                             
+                             // Stop monitoring after game stops to allow frontend to reset
+                             println!("🔧 Game {} stopped - Stopping automatic monitoring", game_id_clone);
+                             break;
+                         }
+                         last_game_state = is_running;
+                     }
+                 }
+                Err(e) => {
+                    consecutive_errors += 1;
+                    eprintln!("⚠️ Error checking game status (attempt {}): {}", consecutive_errors, e);
+                    
+                    // If we have too many consecutive errors, assume game stopped
+                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS && last_game_state {
+                        eprintln!("⚠️ Too many consecutive errors, assuming game {} has stopped", game_id_clone);
+                        if proxy::is_proxy_running() {
+                            match proxy::force_stop_proxy() {
+                                Ok(_) => {
+                                    proxy_started_by_us = false;
+                                    println!("🎮 Game {} assumed stopped due to errors - Proxy force stopped", game_id_clone);
+                                }
+                                Err(e) => {
+                                    eprintln!("⚠️ Failed to force stop proxy after error detection: {}", e);
+                                    // Try regular stop as fallback
+                                    match proxy::stop_proxy() {
+                                        Ok(_) => {
+                                            proxy_started_by_us = false;
+                                            println!("🎮 Game {} assumed stopped due to errors - Proxy stopped with fallback", game_id_clone);
+                                        }
+                                        Err(e2) => {
+                                            eprintln!("⚠️ Failed to stop proxy with fallback after error detection: {}", e2);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        //last_game_state = false;
+                        //consecutive_errors = 0; // Reset counter
+                        
+                        // Stop monitoring after assuming game stopped
+                        println!("🔧 Game {} assumed stopped due to errors - Stopping automatic monitoring", game_id_clone);
+                        break;
+                    }
+                }
+            }
+            
+            // Wait 1 second before next check
+            thread::sleep(Duration::from_secs(1));
+        }
+        
+        // Clean up proxy if we started it when monitor stops
+        if proxy_started_by_us && proxy::is_proxy_running() {
+            let _ = proxy::stop_proxy();
+            println!("🔧 Monitor stopped - Proxy deactivated");
+        }
+    });
+    
+    *monitor_state = Some(GameMonitorHandle {
+        should_stop,
+        thread_handle: Some(thread_handle),
+    });
+    
+    Ok(format!("Started monitoring game {} - proxy will auto-start/stop with game", game_id))
+}
+
+// Function to stop game monitoring
+#[command]
+fn stop_game_monitor() -> Result<String, String> {
+    let mut monitor_state = GAME_MONITOR_STATE.lock().map_err(|e| format!("Failed to lock monitor state: {}", e))?;
+    
+    if let Some(mut handle) = monitor_state.take() {
+        *handle.should_stop.lock().unwrap() = true;
+        if let Some(thread_handle) = handle.thread_handle.take() {
+            let _ = thread_handle.join();
+        }
+        Ok("Game monitoring stopped".to_string())
+    } else {
+        Err("Game monitoring is not active".to_string())
+    }
+}
+
+// Function to check if game monitoring is active
+#[command]
+fn is_game_monitor_active() -> Result<bool, String> {
+    let monitor_state = GAME_MONITOR_STATE.lock().map_err(|e| format!("Failed to lock monitor state: {}", e))?;
+    Ok(monitor_state.is_some())
+}
+
+#[command]
 fn stop_game_process(process_id: u32) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
+        
+        // First check if the process exists
+        let check_output = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {}", process_id)])
+            .output()
+            .map_err(|e| format!("Failed to check process existence: {}", e))?;
+        
+        if check_output.status.success() {
+            let check_output_str = String::from_utf8_lossy(&check_output.stdout);
+            if !check_output_str.contains(&process_id.to_string()) {
+                return Ok(format!("Process with PID {} is not running (already terminated)", process_id));
+            }
+        }
         
         // Use taskkill to terminate the process by PID
         let output = Command::new("taskkill")
@@ -479,7 +696,12 @@ fn stop_game_process(process_id: u32) -> Result<String, String> {
             Ok(format!("Successfully terminated process with PID: {}", process_id))
         } else {
             let error_msg = String::from_utf8_lossy(&output.stderr);
-            Err(format!("Failed to terminate process: {}", error_msg))
+            // Handle common error cases more gracefully
+            if error_msg.contains("not found") || error_msg.contains("not running") {
+                Ok(format!("Process with PID {} was not running (already terminated)", process_id))
+            } else {
+                Err(format!("Failed to terminate process: {}", error_msg))
+            }
         }
     }
     
@@ -543,7 +765,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_opener::init())
-    .invoke_handler(tauri::generate_handler![launch_game_with_engine, get_game_folder_path, show_game_folder, check_game_installed, check_game_running, stop_game_process, stop_game, open_directory, start_proxy, stop_proxy, check_proxy_status, force_stop_proxy, check_and_disable_windows_proxy, install_ssl_certificate, install_ca_certificate, check_certificate_status, check_ssl_certificate_installed, check_admin_privileges, proxy::set_proxy_addr, proxy::get_proxy_addr, proxy::get_proxy_logs, proxy::clear_proxy_logs, proxy::get_proxy_domains, proxy::add_proxy_domain, proxy::remove_proxy_domain, proxy::set_proxy_port, proxy::get_proxy_port, proxy::find_available_port, proxy::start_proxy_with_port])
+    .invoke_handler(tauri::generate_handler![launch_game_with_engine, get_game_folder_path, show_game_folder, check_game_installed, check_game_running, start_game_monitor, stop_game_monitor, is_game_monitor_active, stop_game_process, stop_game, open_directory, start_proxy, stop_proxy, check_proxy_status, force_stop_proxy, check_and_disable_windows_proxy, install_ssl_certificate, install_ca_certificate, check_certificate_status, check_ssl_certificate_installed, check_admin_privileges, proxy::set_proxy_addr, proxy::get_proxy_addr, proxy::get_proxy_logs, proxy::clear_proxy_logs, proxy::get_proxy_domains, proxy::add_proxy_domain, proxy::remove_proxy_domain, proxy::set_proxy_port, proxy::get_proxy_port, proxy::find_available_port, proxy::start_proxy_with_port])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

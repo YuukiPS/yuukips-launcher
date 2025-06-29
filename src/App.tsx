@@ -13,8 +13,13 @@ import { Megaphone, MessageCircle, Twitter, Youtube, Tv, Loader } from 'lucide-r
 function App() {
   const [games, setGames] = useState<Game[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null);
+  const [runningGameId, setRunningGameId] = useState<number | null>(null);
   
   const handleGameSelect = (gameId: string | number) => {
+    // Prevent game selection if any game is currently running
+    if (runningGameId !== null) {
+      return;
+    }
     setSelectedGameId(typeof gameId === 'string' ? parseInt(gameId) : gameId);
   };
   const [showNews, setShowNews] = useState(false);
@@ -51,6 +56,10 @@ function App() {
         game.id === updatedGame.id ? updatedGame : game
       )
     );
+  };
+
+  const handleGameRunningStatusChange = (gameId: number, isRunning: boolean) => {
+    setRunningGameId(isRunning ? gameId : null);
   };
 
   const getSocialIcon = (iconName: string) => {
@@ -118,7 +127,8 @@ function App() {
         <Sidebar 
           games={games} 
           selectedGameId={selectedGameId} 
-          onGameSelect={handleGameSelect} 
+          onGameSelect={handleGameSelect}
+          runningGameId={runningGameId}
         />
         
         {selectedGame ? (
@@ -126,6 +136,7 @@ function App() {
             key={selectedGame.id}
             game={selectedGame} 
             onGameUpdate={handleGameUpdate}
+            onGameRunningStatusChange={handleGameRunningStatusChange}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center bg-gray-800">

@@ -10,13 +10,15 @@ interface GameSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   onVersionChange: (gameId: number, newVersion: string) => void;
+  isGameRunning?: boolean;
 }
 
 export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   game,
   isOpen,
   onClose,
-  onVersionChange
+  onVersionChange,
+  isGameRunning = false
 }) => {
   const [activeTab, setActiveTab] = useState('basic');
   const [selectedVersion, setSelectedVersion] = useState("");
@@ -532,24 +534,37 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
           <div className="flex-1 p-6 overflow-y-auto">
             {activeTab === 'basic' && (
               <div className="space-y-6">
-                <h3 className="text-lg font-semibold text-white mb-4">Basic Information: {game.title}</h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-white">Basic Information: {game.title}</h3>
+                  {isGameRunning && (
+                    <div className="flex items-center space-x-2 px-3 py-1 bg-red-600/20 border border-red-500/50 rounded-lg">
+                      <div className="w-2 h-2 bg-red-400 rounded-full animate-pulse"></div>
+                      <span className="text-red-400 text-sm font-medium">Game Running - Settings Locked</span>
+                    </div>
+                  )}
+                </div>
 
                 {/* Version Selection */}
-                <div className="bg-gray-800/50 rounded-lg p-4">
+                <div className={`bg-gray-800/50 rounded-lg p-4 ${isGameRunning ? 'opacity-60' : ''}`}>
                   <h4 className="text-white font-semibold mb-3">Game Version</h4>
                   <div className="space-y-2">
                     {availableVersions.map((version) => (
                       <label
                         key={version}
-                        className="flex items-center space-x-3 p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700/70 cursor-pointer transition-colors"
+                        className={`flex items-center space-x-3 p-3 bg-gray-700/50 rounded-lg transition-colors ${
+                          isGameRunning 
+                            ? 'cursor-not-allowed' 
+                            : 'hover:bg-gray-700/70 cursor-pointer'
+                        }`}
                       >
                         <input
                           type="radio"
                           name="version"
                           value={version}
                           checked={selectedVersion === version}
-                          onChange={() => handleVersionChange(version)}
-                          className="text-purple-600 focus:ring-purple-500"
+                          onChange={() => !isGameRunning && handleVersionChange(version)}
+                          disabled={isGameRunning}
+                          className="text-purple-600 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
                         />
                         <span className="text-white font-medium">{version}</span>
                         <div className="flex items-center space-x-2 ml-auto">
@@ -572,21 +587,26 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
 
                 {/* Channel Selection */}
                 {selectedVersion && availableChannels.length > 0 && (
-                  <div className="bg-gray-800/50 rounded-lg p-4">
+                  <div className={`bg-gray-800/50 rounded-lg p-4 ${isGameRunning ? 'opacity-60' : ''}`}>
                     <h4 className="text-white font-semibold mb-3">Select Channel</h4>
                     <div className="space-y-2">
                       {availableChannels.map((channel) => (
                         <label
                           key={channel}
-                          className="flex items-center space-x-3 p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700/70 cursor-pointer transition-colors"
+                          className={`flex items-center space-x-3 p-3 bg-gray-700/50 rounded-lg transition-colors ${
+                            isGameRunning 
+                              ? 'cursor-not-allowed' 
+                              : 'hover:bg-gray-700/70 cursor-pointer'
+                          }`}
                         >
                           <input
                             type="radio"
                             name="channel"
                             value={channel}
                             checked={selectedChannel === channel}
-                            onChange={() => setSelectedChannel(channel)}
-                            className="text-purple-600 focus:ring-purple-500"
+                            onChange={() => !isGameRunning && setSelectedChannel(channel)}
+                            disabled={isGameRunning}
+                            className="text-purple-600 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
                           />
                           <span className="text-white font-medium">{getChannelName(channel)}</span>
                           <div className="flex items-center space-x-2 ml-auto">
@@ -609,12 +629,17 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                 )}
 
                 {/* Game Directory */}
-                <div className="bg-gray-800/50 rounded-lg p-4">
+                <div className={`bg-gray-800/50 rounded-lg p-4 ${isGameRunning ? 'opacity-60' : ''}`}>
                   <div className="flex items-center justify-between mb-3">
                     <h4 className="text-white font-semibold">Game Directory</h4>
                     <button
                       onClick={handleOpenDirectory}
-                      className="flex items-center space-x-2 px-3 py-1 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 transition-colors"
+                      disabled={isGameRunning}
+                      className={`flex items-center space-x-2 px-3 py-1 rounded transition-colors ${
+                        isGameRunning
+                          ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
+                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                      }`}
                     >
                       <Folder className="w-4 h-4" />
                       <span>Open Directory</span>
@@ -642,7 +667,12 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                     </p>
                     <button
                       onClick={handleRelocate}
-                      className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                      disabled={isGameRunning}
+                      className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
+                        isGameRunning
+                          ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
+                          : 'bg-purple-600 text-white hover:bg-purple-700'
+                      }`}
                     >
                       <RotateCcw className="w-4 h-4" />
                       <span>{getCurrentDirectory() ? 'Relocate' : 'Set Directory'}</span>
