@@ -1,16 +1,17 @@
 {
   "name": "yuukips-launcher",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.0.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "npm version patch --no-git-tag-version && vite build",
+    "update": "npm version patch --no-git-tag-version",
+    "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "npm version patch --no-git-tag-version && tauri build"
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.6.0",
