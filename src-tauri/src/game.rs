@@ -511,34 +511,39 @@ pub fn start_game_monitor(game_id: Number) -> Result<String, String> {
                     consecutive_errors = 0; // Reset error counter on success
 
                     if !is_running {
-                        // Game has stopped - handle cleanup
-                        handle_game_stopped_cleanup(&game_id_clone);
+                        // Game has stopped - handle cleanup in separate thread to avoid blocking
+                        let game_id_for_cleanup = game_id_clone.clone();
+                        thread::spawn(move || {
+                            handle_game_stopped_cleanup(&game_id_for_cleanup);
+                        });
 
-                        // Stop proxy
-                        if proxy::is_proxy_running() {
-                            match proxy::force_stop_proxy() {
-                                Ok(_) => {
-                                    proxy_started_by_us = false;
-                                    println!("🎮 Game {} stopped - Proxy force stopped automatically", game_id_clone);
-                                }
-                                Err(e) => {
-                                    eprintln!("⚠️ Failed to force stop proxy when game stopped: {}", e);
-                                    // Try regular stop as fallback
-                                    match proxy::stop_proxy() {
-                                        Ok(_) => {
-                                            proxy_started_by_us = false;
-                                            println!("🎮 Game {} stopped - Proxy stopped with fallback method", game_id_clone);
-                                        }
-                                        Err(e2) => {
-                                            eprintln!("⚠️ Failed to stop proxy with fallback method: {}", e2);
+                        // Stop proxy without blocking
+                        if proxy::is_proxy_running() && proxy_started_by_us {
+                            // Spawn detached thread for proxy cleanup - don't wait for it
+                            thread::spawn(|| {
+                                match proxy::force_stop_proxy() {
+                                    Ok(_) => {
+                                        println!("🎮 Proxy force stopped automatically");
+                                    }
+                                    Err(e) => {
+                                        eprintln!("⚠️ Failed to force stop proxy: {}", e);
+                                        // Try regular stop as fallback
+                                        match proxy::stop_proxy() {
+                                            Ok(_) => {
+                                                println!("🎮 Proxy stopped with fallback method");
+                                            }
+                                            Err(e2) => {
+                                                eprintln!("⚠️ Failed to stop proxy with fallback: {}", e2);
+                                            }
                                         }
                                     }
                                 }
-                            }
+                            });
+                            proxy_started_by_us = false;
                         }
 
                         // Stop monitoring after game stops
-                        println!("🔧 Game {} stopped - Stopping automatic monitoring", game_id_clone);
+                        println!("🔧 Monitor stopped");
                         break;
                     }
                     // Game is still running, continue monitoring
@@ -556,32 +561,31 @@ pub fn start_game_monitor(game_id: Number) -> Result<String, String> {
                             "⚠️ Too many consecutive errors, assuming game {} has stopped",
                             game_id_clone
                         );
-                        if proxy::is_proxy_running() {
-                            match proxy::force_stop_proxy() {
-                                Ok(_) => {
-                                    proxy_started_by_us = false;
-                                    println!("🎮 Game {} assumed stopped due to errors - Proxy force stopped", game_id_clone);
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "⚠️ Failed to force stop proxy after error detection: {}",
-                                        e
-                                    );
-                                    match proxy::stop_proxy() {
-                                        Ok(_) => {
-                                            proxy_started_by_us = false;
-                                            println!("🎮 Game {} assumed stopped due to errors - Proxy stopped with fallback", game_id_clone);
-                                        }
-                                        Err(e2) => {
-                                            eprintln!("⚠️ Failed to stop proxy with fallback after error detection: {}", e2);
+                        if proxy::is_proxy_running() && proxy_started_by_us {
+                            // Spawn detached thread for proxy cleanup - don't wait for it
+                            thread::spawn(|| {
+                                match proxy::force_stop_proxy() {
+                                    Ok(_) => {
+                                        println!("🎮 Proxy force stopped due to errors");
+                                    }
+                                    Err(e) => {
+                                        eprintln!("⚠️ Failed to force stop proxy after error detection: {}", e);
+                                        match proxy::stop_proxy() {
+                                            Ok(_) => {
+                                                println!("🎮 Proxy stopped with fallback due to errors");
+                                            }
+                                            Err(e2) => {
+                                                eprintln!("⚠️ Failed to stop proxy with fallback after error detection: {}", e2);
+                                            }
                                         }
                                     }
                                 }
-                            }
+                            });
+                            proxy_started_by_us = false;
                         }
 
                         // Stop monitoring after assuming game stopped
-                        println!("🔧 Game {} assumed stopped due to errors - Stopping automatic monitoring", game_id_clone);
+                        println!("🔧 Monitor stopped");
                         break;
                     }
                 }
@@ -591,10 +595,19 @@ pub fn start_game_monitor(game_id: Number) -> Result<String, String> {
             thread::sleep(Duration::from_secs(3));
         }
 
-        // Clean up proxy if we started it when monitor stops
+        // Clean up proxy if we started it when monitor stops (detached)
         if proxy_started_by_us && proxy::is_proxy_running() {
-            let _ = proxy::stop_proxy();
-            println!("🔧 Monitor stopped - Proxy deactivated");
+            // Spawn detached cleanup thread - don't wait for it
+            thread::spawn(|| {
+                match proxy::stop_proxy() {
+                    Ok(_) => {
+                        println!("🔧 Monitor stopped - Proxy deactivated");
+                    }
+                    Err(e) => {
+                        eprintln!("⚠️ Failed to stop proxy during cleanup: {}", e);
+                    }
+                }
+            });
         }
     });
 
@@ -691,10 +704,16 @@ pub fn stop_game_monitor() -> Result<String, String> {
         .map_err(|e| format!("Failed to lock monitor state: {}", e))?;
 
     if let Some(mut handle) = monitor_state.take() {
+        // Signal the thread to stop
         *handle.should_stop.lock().unwrap() = true;
-        if let Some(thread_handle) = handle.thread_handle.take() {
-            let _ = thread_handle.join();
+        
+        // Don't wait for thread to join - just detach it
+        // The thread will clean itself up when it detects the stop signal
+        if let Some(_thread_handle) = handle.thread_handle.take() {
+            // Thread will stop on its own when it checks should_stop flag
+            println!("🔧 Game monitor stop signal sent");
         }
+        
         Ok("Game monitoring stopped".to_string())
     } else {
         Err("Game monitoring is not active".to_string())
@@ -718,13 +737,14 @@ pub fn force_stop_game_monitor() -> Result<String, String> {
         .map_err(|e| format!("Failed to lock monitor state: {}", e))?;
     
     if let Some(mut handle) = monitor_state.take() {
+        // Signal the thread to stop
         *handle.should_stop.lock().unwrap() = true;
-        if let Some(thread_handle) = handle.thread_handle.take() {
-            // Give thread time to cleanup
-            thread::sleep(Duration::from_millis(100));
-            let _ = thread_handle.join();
+        
+        // Don't wait for thread to join - just detach it
+        if let Some(_thread_handle) = handle.thread_handle.take() {
+            println!("🔧 Game monitor force stop signal sent");
         }
-        println!("🔧 Game monitor force stopped and cleaned up");
+        
         Ok("Game monitor stopped".to_string())
     } else {
         Ok("No monitor was running".to_string())

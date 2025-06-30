@@ -185,13 +185,43 @@ impl HttpHandler for ProxyHandler {
                 // Respond to CONNECT
                 *res.body()
             } else {
-                let uri_path_and_query = req.uri().path_and_query().unwrap().as_str();
+                let uri_path_and_query = match req.uri().path_and_query() {
+                    Some(pq) => pq.as_str(),
+                    None => {
+                        eprintln!("⚠️ Failed to get path and query from URI");
+                        let error_response = Response::builder()
+                             .status(StatusCode::BAD_REQUEST)
+                             .body(Body::empty())
+                             .unwrap();
+                         return error_response.into();
+                    }
+                };
                 let original_uri = req.uri().to_string();
                 // Create new URI.
-                let new_uri = Uri::from_str(
-                    format!("{}{}", SERVER.lock().unwrap(), uri_path_and_query).as_str(),
-                )
-                .unwrap();
+                let server_addr = match SERVER.lock() {
+                    Ok(addr) => addr.clone(),
+                    Err(e) => {
+                        eprintln!("⚠️ Failed to lock SERVER: {}", e);
+                        let error_response = Response::builder()
+                             .status(StatusCode::INTERNAL_SERVER_ERROR)
+                             .body(Body::empty())
+                             .unwrap();
+                         return error_response.into();
+                    }
+                };
+                let new_uri = match Uri::from_str(
+                    format!("{}{}", server_addr, uri_path_and_query).as_str(),
+                ) {
+                    Ok(uri) => uri,
+                    Err(e) => {
+                        eprintln!("⚠️ Failed to create new URI: {}", e);
+                        let error_response = Response::builder()
+                             .status(StatusCode::BAD_REQUEST)
+                             .body(Body::empty())
+                             .unwrap();
+                         return error_response.into();
+                    }
+                };
 
                 // Log the proxy redirection
                 log_proxy_redirection(original_uri, new_uri.to_string());
@@ -292,7 +322,7 @@ pub async fn create_proxy_internal(
  * Connects to the local HTTP(S) proxy server.
  */
 #[cfg(windows)]
-pub fn connect_to_proxy(proxy_port: u16) {
+pub fn connect_to_proxy(proxy_port: u16) -> Result<(), String> {
     // Create 'ProxyServer' string.
     let server_string: String = format!(
         "http=127.0.0.1:{};https=127.0.0.1:{}",
@@ -309,10 +339,12 @@ pub fn connect_to_proxy(proxy_port: u16) {
         .unwrap();
 
     // Set registry values.
-    settings
-        .set_value("ProxyServer", &Data::String(server_string.parse().unwrap()))
-        .unwrap();
-    settings.set_value("ProxyEnable", &Data::U32(1)).unwrap();
+    if let Err(e) = settings.set_value("ProxyServer", &Data::String(server_string.parse().map_err(|e| format!("Failed to parse server string: {}", e))?)) {
+        return Err(format!("Failed to set ProxyServer registry value: {}", e));
+    }
+    if let Err(e) = settings.set_value("ProxyEnable", &Data::U32(1)) {
+        return Err(format!("Failed to set ProxyEnable registry value: {}", e));
+    }
 
     // Display the proxy domains being used
     if let Ok(user_domains) = USER_PROXY_DOMAINS.lock() {
@@ -321,11 +353,12 @@ pub fn connect_to_proxy(proxy_port: u16) {
     } else {
         println!("Connected to the proxy.");
     }
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
-pub fn connect_to_proxy(proxy_port: u16) {
-    let mut config = Config::get().unwrap();
+pub fn connect_to_proxy(proxy_port: u16) -> Result<(), String> {
+    let mut config = Config::get().map_err(|e| format!("Failed to get config: {}", e))?;
     let proxy_addr = format!("127.0.0.1:{}", proxy_port);
     if !config.game.environment.contains_key("http_proxy") {
         config
@@ -351,11 +384,13 @@ pub fn connect_to_proxy(proxy_port: u16) {
     } else {
         println!("Connected to the proxy.");
     }
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
-pub fn connect_to_proxy(_proxy_port: u16) {
-    println!("No Mac support yet. Someone mail me a Macbook and I will do it B)")
+pub fn connect_to_proxy(_proxy_port: u16) -> Result<(), String> {
+    println!("No Mac support yet. Someone mail me a Macbook and I will do it B)");
+    Ok(())
 }
 
 /**
@@ -363,18 +398,26 @@ pub fn connect_to_proxy(_proxy_port: u16) {
  */
 #[cfg(windows)]
 pub fn disconnect_from_proxy() {
-    // Fetch the 'Internet Settings' registry key.
-    let settings = Hive::CurrentUser
-        .open(
-            r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-            Security::AllAccess,
-        )
-        .unwrap();
-
-    // Set registry values.
-    settings.set_value("ProxyEnable", &Data::U32(0)).unwrap();
-
-    println!("Disconnected from proxy.");
+    // Fetch the 'Internet Settings' registry key with error handling
+    match Hive::CurrentUser.open(
+        r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+        Security::AllAccess,
+    ) {
+        Ok(settings) => {
+            // Set registry values with error handling
+            match settings.set_value("ProxyEnable", &Data::U32(0)) {
+                Ok(_) => {
+                    println!("Disconnected from proxy.");
+                }
+                Err(e) => {
+                    eprintln!("⚠️ Failed to disable proxy in registry: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("⚠️ Failed to open Internet Settings registry key: {}", e);
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -696,7 +739,12 @@ pub fn start_proxy() -> Result<String, String> {
         .to_string_lossy()
         .to_string();
 
-    let proxy_port = *PROXY_PORT.lock().unwrap();
+    let proxy_port = match PROXY_PORT.lock() {
+        Ok(port) => *port,
+        Err(e) => {
+            return Err(format!("Failed to lock PROXY_PORT: {}", e));
+        }
+    };
     runtime.spawn(create_proxy_internal(proxy_port, cert_path, shutdown_rx));
 
     *state = Some(ProxyHandle {
@@ -705,7 +753,9 @@ pub fn start_proxy() -> Result<String, String> {
     });
 
     // Re-establish proxy connection after starting
-    connect_to_proxy(proxy_port);
+    if let Err(e) = connect_to_proxy(proxy_port) {
+        eprintln!("⚠️ Failed to connect to proxy: {}", e);
+    }
 
     Ok(format!("Proxy started successfully on port {} with {} domains configured", proxy_port, domains_to_use.len()))
 }
@@ -787,11 +837,19 @@ pub struct ProxyStatus {
 #[tauri::command]
 pub fn get_proxy_status_with_domains() -> Result<ProxyStatus, String> {
     let is_running = is_proxy_running();
-    let port = *PROXY_PORT.lock().unwrap();
-    let active_domains = USER_PROXY_DOMAINS
-        .lock()
-        .map(|domains| domains.clone())
-        .unwrap_or_default();
+    let port = match PROXY_PORT.lock() {
+        Ok(port) => *port,
+        Err(e) => {
+            return Err(format!("Failed to lock PROXY_PORT: {}", e));
+        }
+    };
+    let active_domains = match USER_PROXY_DOMAINS.lock() {
+        Ok(domains) => domains.clone(),
+        Err(e) => {
+            eprintln!("⚠️ Failed to lock USER_PROXY_DOMAINS: {}", e);
+            Vec::new()
+        }
+    };
     let domains_count = active_domains.len();
 
     Ok(ProxyStatus {
