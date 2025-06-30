@@ -29,7 +29,7 @@ export interface DownloadProgress {
 }
 
 export class UpdateService {
-  private static readonly GITHUB_API_URL = 'https://api.github.com/repos/YuukiPS/yuukips-launcher/releases/latest';
+  private static readonly GITHUB_API_URL = 'https://book-api.yuuki.me/app/yuukips-launcher/latest';
   
   /**
    * Check for available updates

@@ -4,8 +4,6 @@
 use reqwest;
 use serde::{Deserialize, Serialize};
 use tauri::{command, AppHandle, Emitter};
-use std::fs::File;
-use std::io;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
