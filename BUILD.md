@@ -54,11 +54,13 @@ You can also manually trigger builds:
 - Rust (latest stable)
 - Visual Studio Build Tools
 
-**Linux:**
+**Linux (Ubuntu 22.04+ recommended):**
 ```bash
 sudo apt-get update
 sudo apt-get install -y libwebkit2gtk-4.0-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 ```
+
+**Note:** The build system uses Ubuntu 22.04 in CI/CD as Ubuntu 20.04 will be deprecated on April 15, 2025.
 
 ### Build Commands
 
