@@ -27,6 +27,18 @@ export function UpdateModal({ isOpen, onClose, updateInfo }: UpdateModalProps) {
   }, []);
   
   const handleDownload = async () => {
+    // Check if this is a debug/forced update (no real download URL)
+    const isDebugUpdate = !updateInfo.downloadUrl || updateInfo.downloadUrl === '';
+    
+    if (isDebugUpdate) {
+      // For debug updates, just show a message and close the modal
+      setError('Debug update: This is a simulated update for testing purposes.');
+      setTimeout(() => {
+        onClose();
+      }, 2000);
+      return;
+    }
+    
     if (!updateInfo.downloadUrl) {
       setError('Download URL not available');
       return;
@@ -41,8 +53,13 @@ export function UpdateModal({ isOpen, onClose, updateInfo }: UpdateModalProps) {
         (progress) => setDownloadProgress(progress)
       );
       
-      // After successful download and installation, restart the app
-      await UpdateService.restartApplication();
+      // Show completion message before closing
+      setError('✅ Download complete! The application will close automatically and the update will install in the background.');
+      
+      // Wait a moment for user to read the message, then close the app
+      setTimeout(async () => {
+        await UpdateService.restartApplication();
+      }, 3000);
     } catch (err) {
       setError(`Update failed: ${err}`);
       setIsDownloading(false);
@@ -154,9 +171,13 @@ export function UpdateModal({ isOpen, onClose, updateInfo }: UpdateModalProps) {
             </div>
           )}
           
-          {/* Error Message */}
+          {/* Status Message */}
           {error && (
-            <div className="text-red-500 text-sm mb-4 p-2 bg-red-900 bg-opacity-20 rounded">
+            <div className={`text-sm mb-4 p-2 rounded ${
+              error.startsWith('✅') 
+                ? 'text-green-400 bg-green-900 bg-opacity-20' 
+                : 'text-red-500 bg-red-900 bg-opacity-20'
+            }`}>
               {error}
             </div>
           )}

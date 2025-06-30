@@ -33,8 +33,9 @@ export class UpdateService {
   
   /**
    * Check for available updates
+   * @param force - If true, bypasses version comparison and always returns update info
    */
-  static async checkForUpdates(): Promise<UpdateInfo> {
+  static async checkForUpdates(force: boolean = false): Promise<UpdateInfo> {
     try {
       // Get current version from package.json
       const currentVersion = await invoke('get_current_version') as string;
@@ -47,7 +48,7 @@ export class UpdateService {
       const latestVersion = release.tag_name.replace(/^v/, ''); // Remove 'v' prefix if present
       const isUpdateAvailable = this.compareVersions(currentVersion, latestVersion) < 0;
       
-      if (!isUpdateAvailable) {
+      if (!isUpdateAvailable && !force) {
         return {
           available: false,
           currentVersion,

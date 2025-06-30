@@ -285,57 +285,93 @@ pub async fn download_and_install_update(
     Ok(())
 }
 
-/// Install the downloaded update
+/// Install the downloaded update using a delayed batch script to avoid file locking
 async fn install_update(file_path: &PathBuf) -> Result<(), String> {
     let file_name = file_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("");
     
-    println!("🔧 Installing update: {}", file_name);
+    println!("🔧 Preparing delayed installation: {}", file_name);
     
-    if file_name.ends_with(".msi") {
-        // Install MSI package
-        let output = std::process::Command::new("msiexec")
-            .args(["/i", file_path.to_str().unwrap(), "/quiet", "/norestart"])
-            .output()
-            .map_err(|e| format!("Failed to run msiexec: {}", e))?;
-        
-        if !output.status.success() {
-            return Err(format!(
-                "MSI installation failed: {}", 
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+    // Get current process ID
+    let current_pid = std::process::id();
+    
+    // Create batch file for delayed installation
+    let temp_dir = std::env::temp_dir();
+    let batch_file_path = temp_dir.join("yuukips_update_installer.bat");
+    
+    let installer_path = file_path.to_str().unwrap();
+    
+    let batch_content = if file_name.ends_with(".msi") {
+        format!(
+            r#"@echo off
+echo Waiting for launcher to close...
+timeout /t 3 /nobreak >nul
+echo Killing launcher process...
+taskkill /f /pid {} >nul 2>&1
+echo Installing update...
+msiexec /i "{}" /quiet /norestart
+if %ERRORLEVEL% EQU 0 (
+    echo Update installed successfully
+) else (
+    echo Update installation failed with error code %ERRORLEVEL%
+    pause
+)
+del "{}"
+del "%~f0"
+"#,
+            current_pid, installer_path, installer_path
+        )
     } else if file_name.ends_with(".exe") {
-        // Run executable installer
-        let output = std::process::Command::new(file_path)
-            .args(["/S"]) // Silent install flag (may vary by installer)
-            .output()
-            .map_err(|e| format!("Failed to run installer: {}", e))?;
-        
-        if !output.status.success() {
-            return Err(format!(
-                "Installer failed: {}", 
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+        format!(
+            r#"@echo off
+echo Waiting for launcher to close...
+timeout /t 3 /nobreak >nul
+echo Killing launcher process...
+taskkill /f /pid {} >nul 2>&1
+echo Installing update...
+"{}" /S
+if %ERRORLEVEL% EQU 0 (
+    echo Update installed successfully
+) else (
+    echo Update installation failed with error code %ERRORLEVEL%
+    pause
+)
+del "{}"
+del "%~f0"
+"#,
+            current_pid, installer_path, installer_path
+        )
     } else {
         return Err("Unsupported update file format".to_string());
-    }
+    };
     
-    println!("✅ Update installed successfully");
+    // Write batch file
+    tokio::fs::write(&batch_file_path, batch_content)
+        .await
+        .map_err(|e| format!("Failed to create batch file: {}", e))?;
+    
+    // Start the batch file in a detached process
+    std::process::Command::new("cmd")
+        .args(["/c", "start", "", batch_file_path.to_str().unwrap()])
+        .spawn()
+        .map_err(|e| format!("Failed to start installer batch: {}", e))?;
+    
+    println!("✅ Delayed installation initiated. Application will close and update will install automatically.");
     Ok(())
 }
 
 /// Restart the application
 #[command]
 pub async fn restart_application(app_handle: AppHandle) -> Result<(), String> {
-    println!("🔄 Restarting application...");
+    println!("🔄 Closing application for update installation...");
     
     // Give a small delay to ensure the response is sent
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(1000)).await;
     
-    app_handle.restart();
-    // Note: This function will never return as the app restarts
+    // Exit the application cleanly to allow the batch installer to work
+    app_handle.exit(0);
+    // Note: This function will never return as the app exits, but we need to satisfy the return type
+    Ok(())
 }

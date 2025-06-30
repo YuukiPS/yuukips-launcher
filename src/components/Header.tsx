@@ -1,12 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Gamepad2, Settings, User, Bell, TestTube } from 'lucide-react';
+import { Gamepad2, Settings, User, Bell } from 'lucide-react';
 import { WindowControls } from './WindowControls';
-import ProxyTestModal from './ProxyTestModal';
+import { DebugSettingsModal } from './DebugSettingsModal';
 import packageJson from '../../package.json';
 
-export const Header: React.FC = () => {
+interface HeaderProps {
+  onForceUpdate: () => void;
+}
+
+export const Header: React.FC<HeaderProps> = ({ onForceUpdate }) => {
   const [isTauri, setIsTauri] = useState(false);
-  const [isProxyTestOpen, setIsProxyTestOpen] = useState(false);
+  const [isDebugSettingsOpen, setIsDebugSettingsOpen] = useState(false);
 
   useEffect(() => {
     setIsTauri(window.__TAURI__ !== undefined);
@@ -31,13 +35,10 @@ export const Header: React.FC = () => {
               <Bell className="w-5 h-5" />
             </button>
             <button 
-              onClick={() => setIsProxyTestOpen(true)}
+              onClick={() => setIsDebugSettingsOpen(true)}
               className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors duration-200"
-              title="Test Proxy Bypass"
+              title="Debug Settings"
             >
-              <TestTube className="w-5 h-5" />
-            </button>
-            <button className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors duration-200">
               <Settings className="w-5 h-5" />
             </button>
             <button className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors duration-200">
@@ -48,10 +49,11 @@ export const Header: React.FC = () => {
         </div>
       </header>
       
-      <ProxyTestModal 
-         isOpen={isProxyTestOpen} 
-         onClose={() => setIsProxyTestOpen(false)} 
-       />
+      <DebugSettingsModal
+        isOpen={isDebugSettingsOpen}
+        onClose={() => setIsDebugSettingsOpen(false)}
+        onForceUpdate={onForceUpdate}
+      />
      </>
   );
 };

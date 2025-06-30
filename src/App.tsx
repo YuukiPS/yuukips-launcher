@@ -5,6 +5,7 @@ import { Sidebar } from './components/Sidebar';
 import { GameDetails } from './components/GameDetails';
 import { NewsPanel } from './components/NewsPanel';
 import { UpdateModal } from './components/UpdateModal';
+import { UpdateErrorModal } from './components/UpdateErrorModal';
 import { newsItems } from './data/news';
 import { socialLinks } from './data/socialLinks';
 import { Game } from './types';
@@ -22,6 +23,8 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [updateCheckCompleted, setUpdateCheckCompleted] = useState(false);
+  const [updateCheckError, setUpdateCheckError] = useState<string | null>(null);
+  const [showUpdateError, setShowUpdateError] = useState(false);
   
   const handleGameSelect = (gameId: string | number) => {
     // Prevent game selection if any game is currently running
@@ -61,8 +64,8 @@ function App() {
   }, [selectedGameId]);
 
   // Check for updates on startup
-  const checkForUpdates = useCallback(async () => {
-    if (updateCheckCompleted) return;
+  const checkForUpdates = useCallback(async (showErrorToUser: boolean = false) => {
+    if (updateCheckCompleted && !showErrorToUser) return;
     
     try {
       console.log('🔍 Checking for updates...');
@@ -72,14 +75,25 @@ function App() {
         console.log('✅ Update available:', updateInfo.latestVersion);
         setUpdateInfo(updateInfo);
         setShowUpdateModal(true);
+        setUpdateCheckError(null);
+        setShowUpdateError(false);
       } else {
         console.log('✅ No updates available');
+        setUpdateCheckError(null);
+        setShowUpdateError(false);
       }
     } catch (error) {
       console.error('❌ Update check failed:', error);
-      // Don't show error to user, just log it
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      setUpdateCheckError(errorMessage);
+      
+      if (showErrorToUser) {
+        setShowUpdateError(true);
+      }
     } finally {
-      setUpdateCheckCompleted(true);
+      if (!showErrorToUser) {
+        setUpdateCheckCompleted(true);
+      }
     }
   }, [updateCheckCompleted]);
   
@@ -89,7 +103,7 @@ function App() {
     
     // Check for updates after a short delay to ensure proxy is disabled first
     const updateCheckTimer = setTimeout(() => {
-      checkForUpdates();
+      checkForUpdates(false); // Don't show errors to user on startup
     }, 2000); // 2 second delay
     
     return () => clearTimeout(updateCheckTimer);
@@ -106,6 +120,50 @@ function App() {
   const handleGameRunningStatusChange = (gameId: number, isRunning: boolean) => {
     setRunningGameId(isRunning ? gameId : null);
   };
+
+  // Force update function for debug purposes
+  const handleForceUpdate = useCallback(async () => {
+    console.log('🔧 Force update triggered from debug menu');
+    
+    try {
+      // Make a real API call with force=true to get authentic update information
+      const realUpdateInfo = await UpdateService.checkForUpdates(true);
+      
+      // Force the update to appear available even if versions are the same
+      const forcedUpdateInfo: UpdateInfo = {
+        ...realUpdateInfo,
+        available: true, // Always show as available in debug mode
+      };
+      
+      setUpdateInfo(forcedUpdateInfo);
+      setShowUpdateModal(true);
+      setUpdateCheckError(null);
+      setShowUpdateError(false);
+    } catch (error) {
+       console.error('❌ Force update check failed:', error);
+       // Fallback to fake data if API call fails
+       const fallbackUpdateInfo: UpdateInfo = {
+         available: true,
+         currentVersion: '0.0.7',
+         latestVersion: '0.0.8',
+         releaseNotes: 'This is a simulated update for testing purposes.\n\n**Debug Features:**\n- Force update functionality\n- Update error notifications\n- Enhanced update system\n\n**Note:** This is not a real update. The API call failed, so fallback debug data is being used.',
+         downloadUrl: '',
+         assetSize: undefined,
+       };
+      
+      setUpdateInfo(fallbackUpdateInfo);
+      setShowUpdateModal(true);
+      setUpdateCheckError(null);
+      setShowUpdateError(false);
+    }
+  }, []);
+
+  // Retry update check function
+  const handleRetryUpdateCheck = useCallback(async () => {
+    setShowUpdateError(false);
+    setUpdateCheckError(null);
+    await checkForUpdates(true); // Show errors to user on manual retry
+  }, [checkForUpdates]);
 
   const getSocialIcon = (iconName: string) => {
     switch (iconName) {
@@ -151,7 +209,7 @@ function App() {
   if (isLoading) {
     return (
       <div className="h-screen bg-gray-900 flex flex-col overflow-hidden">
-        <Header />
+        <Header onForceUpdate={handleForceUpdate} />
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <Loader className="w-12 h-12 text-purple-500 animate-spin mx-auto mb-4" />
@@ -164,9 +222,7 @@ function App() {
 
   return (
     <div className="h-screen bg-gray-900 flex flex-col overflow-hidden">
-      <Header />
-      
-
+      <Header onForceUpdate={handleForceUpdate} />
       
       <div className="flex-1 flex overflow-hidden relative">
         <Sidebar 
@@ -231,6 +287,14 @@ function App() {
             updateInfo={updateInfo}
           />
         )}
+        
+        {/* Update Error Modal */}
+        <UpdateErrorModal
+          isOpen={showUpdateError}
+          onClose={() => setShowUpdateError(false)}
+          onRetry={handleRetryUpdateCheck}
+          errorMessage={updateCheckError || 'Unknown error'}
+        />
       </div>
     </div>
   );
