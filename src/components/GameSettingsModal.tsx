@@ -56,14 +56,14 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   useEffect(() => {
     if (selectedVersion && game.engine && game.engine.length > 0) {
       // Get the first engine for the selected version to determine available channels
-      const engineForVersion = game.engine.find(() => 
+      const engineForVersion = game.engine.find(() =>
         GameApiService.getAvailableVersionsForPlatform(game, 1).includes(selectedVersion)
       );
-      
+
       if (engineForVersion) {
         const channels = GameApiService.getAvailableChannelsForEngineVersion(engineForVersion, selectedVersion, 1);
         setAvailableChannels(channels);
-        
+
         // Set default channel when version changes
         if (channels.length > 0) {
           setSelectedChannel(channels[0]);
@@ -135,15 +135,15 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
     localStorage.setItem('saved-proxy-domains', JSON.stringify(domains));
   }, []);
 
-  // Fetch proxy domains from backend
+  // Fetch user proxy domains from backend (initialize with defaults if empty)
   const fetchProxyDomains = useCallback(async () => {
     try {
-      const domains = await invoke('get_proxy_domains');
+      const domains = await invoke('initialize_user_domains_if_empty');
       if (Array.isArray(domains)) {
         saveProxyDomains(domains);
       }
     } catch (error) {
-      console.error('Failed to fetch proxy domains:', error);
+      console.error('Failed to fetch user proxy domains:', error);
     }
   }, [saveProxyDomains]);
 
@@ -314,16 +314,21 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
       return;
     }
 
+    if (proxyDomains.includes(trimmedDomain)) {
+      showNotification(`Domain '${trimmedDomain}' already exists`, 'error');
+      return;
+    }
+
     try {
-      const result = await invoke('add_proxy_domain', { domain: trimmedDomain });
-      if (typeof result === 'string') {
-        showNotification(result);
-        setNewDomainInput('');
-        // Update localStorage and state with the new domain
-        const updatedDomains = [...proxyDomains, trimmedDomain];
-        saveProxyDomains(updatedDomains);
-        fetchProxyDomains(); // Sync with backend
-      }
+      // Add to frontend state and localStorage
+      const updatedDomains = [...proxyDomains, trimmedDomain];
+      saveProxyDomains(updatedDomains);
+
+      // Sync with backend
+      await invoke('add_proxy_domain', { domain: trimmedDomain });
+
+      setNewDomainInput('');
+      showNotification(`Domain '${trimmedDomain}' added successfully`);
     } catch (error) {
       console.error('Failed to add domain:', error);
       showNotification(typeof error === 'string' ? error : 'Failed to add domain', 'error');
@@ -333,17 +338,61 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   // Remove domain
   const handleRemoveDomain = async (domain: string) => {
     try {
-      const result = await invoke('remove_proxy_domain', { domain });
-      if (typeof result === 'string') {
-        showNotification(result);
-        // Update localStorage and state by removing the domain
-        const updatedDomains = proxyDomains.filter(d => d !== domain);
-        saveProxyDomains(updatedDomains);
-        fetchProxyDomains(); // Sync with backend
-      }
+      // Update frontend state and localStorage
+      const updatedDomains = proxyDomains.filter(d => d !== domain);
+      saveProxyDomains(updatedDomains);
+
+      // Sync with backend
+      await invoke('remove_proxy_domain', { domain });
+
+      showNotification(`Domain '${domain}' removed successfully`);
     } catch (error) {
       console.error('Failed to remove domain:', error);
       showNotification(typeof error === 'string' ? error : 'Failed to remove domain', 'error');
+    }
+  };
+
+  // Delete all domains
+  const handleDeleteAllDomains = async () => {
+    try {
+      // Clear frontend state and localStorage
+      saveProxyDomains([]);
+
+      // Sync with backend - remove all current domains
+      for (const domain of proxyDomains) {
+        await invoke('remove_proxy_domain', { domain });
+      }
+
+      showNotification('All domains deleted successfully');
+    } catch (error) {
+      console.error('Failed to delete all domains:', error);
+      showNotification(typeof error === 'string' ? error : 'Failed to delete all domains', 'error');
+    }
+  };
+
+  // Reset to default domains
+  const handleResetToDefaults = async () => {
+    try {
+      // First clear all current domains
+      for (const domain of proxyDomains) {
+        await invoke('remove_proxy_domain', { domain });
+      }
+
+      // Get default domains and set them as user domains
+      const defaultDomains = await invoke('get_proxy_domains');
+      if (Array.isArray(defaultDomains)) {
+        // Add each default domain to backend
+        for (const domain of defaultDomains) {
+          await invoke('add_proxy_domain', { domain });
+        }
+
+        // Update frontend state and localStorage
+        saveProxyDomains(defaultDomains);
+        showNotification('Domains reset to defaults successfully');
+      }
+    } catch (error) {
+      console.error('Failed to reset to defaults:', error);
+      showNotification(typeof error === 'string' ? error : 'Failed to reset to defaults', 'error');
     }
   };
 
@@ -551,11 +600,10 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                     {availableVersions.map((version) => (
                       <label
                         key={version}
-                        className={`flex items-center space-x-3 p-3 bg-gray-700/50 rounded-lg transition-colors ${
-                          isGameRunning 
-                            ? 'cursor-not-allowed' 
+                        className={`flex items-center space-x-3 p-3 bg-gray-700/50 rounded-lg transition-colors ${isGameRunning
+                            ? 'cursor-not-allowed'
                             : 'hover:bg-gray-700/70 cursor-pointer'
-                        }`}
+                          }`}
                       >
                         <input
                           type="radio"
@@ -593,11 +641,10 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                       {availableChannels.map((channel) => (
                         <label
                           key={channel}
-                          className={`flex items-center space-x-3 p-3 bg-gray-700/50 rounded-lg transition-colors ${
-                            isGameRunning 
-                              ? 'cursor-not-allowed' 
+                          className={`flex items-center space-x-3 p-3 bg-gray-700/50 rounded-lg transition-colors ${isGameRunning
+                              ? 'cursor-not-allowed'
                               : 'hover:bg-gray-700/70 cursor-pointer'
-                          }`}
+                            }`}
                         >
                           <input
                             type="radio"
@@ -635,11 +682,10 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                     <button
                       onClick={handleOpenDirectory}
                       disabled={isGameRunning}
-                      className={`flex items-center space-x-2 px-3 py-1 rounded transition-colors ${
-                        isGameRunning
+                      className={`flex items-center space-x-2 px-3 py-1 rounded transition-colors ${isGameRunning
                           ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
                           : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                      }`}
+                        }`}
                     >
                       <Folder className="w-4 h-4" />
                       <span>Open Directory</span>
@@ -668,11 +714,10 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                     <button
                       onClick={handleRelocate}
                       disabled={isGameRunning}
-                      className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
-                        isGameRunning
+                      className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${isGameRunning
                           ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
                           : 'bg-purple-600 text-white hover:bg-purple-700'
-                      }`}
+                        }`}
                     >
                       <RotateCcw className="w-4 h-4" />
                       <span>{getCurrentDirectory() ? 'Relocate' : 'Set Directory'}</span>
@@ -711,10 +756,10 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                         onClick={isProxyRunning ? handleStopProxy : handleStartProxy}
                         disabled={proxyStatusLoading}
                         className={`flex items-center space-x-2 px-4 py-2 rounded-lg font-medium transition-colors ${proxyStatusLoading
-                            ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                            : isProxyRunning
-                              ? 'bg-red-600 text-white hover:bg-red-700'
-                              : 'bg-green-600 text-white hover:bg-green-700'
+                          ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                          : isProxyRunning
+                            ? 'bg-red-600 text-white hover:bg-red-700'
+                            : 'bg-green-600 text-white hover:bg-green-700'
                           }`}
                       >
                         {proxyStatusLoading ? (
@@ -755,11 +800,10 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                       <button
                         onClick={handleFindAvailablePort}
                         disabled={isProxyRunning}
-                        className={`flex items-center justify-center space-x-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-                          isProxyRunning
+                        className={`flex items-center justify-center space-x-2 px-4 py-2 rounded-lg font-medium transition-colors ${isProxyRunning
                             ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
                             : 'bg-blue-600 text-white hover:bg-blue-700'
-                        }`}
+                          }`}
                       >
                         <RefreshCw className="w-4 h-4" />
                         <span>Find Available Port</span>
@@ -773,9 +817,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                           onChange={(e) => setCustomPortInput(e.target.value)}
                           onKeyPress={(e) => e.key === 'Enter' && handleSetCustomPort()}
                           disabled={isProxyRunning}
-                          className={`flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-purple-500 focus:outline-none ${
-                            isProxyRunning ? 'opacity-50 cursor-not-allowed' : ''
-                          }`}
+                          className={`flex-1 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white focus:border-purple-500 focus:outline-none ${isProxyRunning ? 'opacity-50 cursor-not-allowed' : ''
+                            }`}
                           placeholder="Custom port (1024-65535)"
                           min="1024"
                           max="65535"
@@ -783,11 +826,10 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                         <button
                           onClick={handleSetCustomPort}
                           disabled={isProxyRunning || !customPortInput.trim()}
-                          className={`px-3 py-2 rounded-lg font-medium transition-colors ${
-                            isProxyRunning || !customPortInput.trim()
+                          className={`px-3 py-2 rounded-lg font-medium transition-colors ${isProxyRunning || !customPortInput.trim()
                               ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
                               : 'bg-purple-600 text-white hover:bg-purple-700'
-                          }`}
+                            }`}
                         >
                           Set
                         </button>
@@ -821,8 +863,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                           <div
                             key={index}
                             className={`flex items-center justify-between p-2 rounded-lg transition-colors ${server === proxyAddress
-                                ? 'bg-purple-600/30 border border-purple-500/50'
-                                : 'bg-gray-700/50 hover:bg-gray-700/70'
+                              ? 'bg-purple-600/30 border border-purple-500/50'
+                              : 'bg-gray-700/50 hover:bg-gray-700/70'
                               }`}
                           >
                             <span className="text-white text-sm font-mono flex-1">{server}</span>
@@ -887,7 +929,9 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
 
                     {/* Domain List */}
                     <div>
-                      <label className="block text-gray-300 text-sm mb-2">Current Domains ({proxyDomains.length})</label>
+                      <label className="block text-gray-300 text-sm mb-2">
+                        {proxyDomains.length > 0 ? `Current Domains (${proxyDomains.length})` : `No domains configured`}
+                      </label>
                       <div className="space-y-2 max-h-40 overflow-y-auto bg-gray-700/30 rounded-lg p-3">
                         {proxyDomains.length > 0 ? (
                           proxyDomains.map((domain, index) => (
@@ -937,6 +981,27 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                         Enter domain names without protocol. Ports are supported (e.g., "mihoyo.com" or "yuanshen.com:12401")
                       </p>
                     </div>
+
+                    {/* Domain Management Actions */}
+                    <div className="flex space-x-2 pt-2 border-t border-gray-700/50">
+                      {proxyDomains.length > 0 && (
+                        <button
+                          onClick={handleDeleteAllDomains}
+                          className="flex items-center space-x-1 px-3 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          <span>Delete All</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={handleResetToDefaults}
+                        className="flex items-center space-x-1 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                        <span>Reset to Defaults</span>
+                      </button>
+                    </div>
+
                   </div>
                 </div>
 

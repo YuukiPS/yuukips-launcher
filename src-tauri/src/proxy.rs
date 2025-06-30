@@ -42,7 +42,7 @@ fn get_data_dir() -> Result<PathBuf, String> {
 use registry::{Data, Hive, Security};
 
 #[cfg(target_os = "linux")]
-use std::{fs::File, io::Write, collections::HashMap};
+use std::{collections::HashMap, fs::File, io::Write};
 
 // Linux-specific configuration structure
 #[cfg(target_os = "linux")]
@@ -66,7 +66,7 @@ impl Config {
             },
         })
     }
-    
+
     fn update(_config: Self) {
         // TODO: Implement config persistence
     }
@@ -84,8 +84,8 @@ static PROXY_PORT: Lazy<Mutex<u16>> = Lazy::new(|| Mutex::new(8080));
 // Global proxy logs storage
 static PROXY_LOGS: Lazy<Mutex<VecDeque<ProxyLogEntry>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
 
-// Global domain list for proxy interception
-static PROXY_DOMAINS: Lazy<Mutex<Vec<String>>> = Lazy::new(|| {
+// Global default domain list for proxy interception
+static DEFAULT_PROXY_DOMAINS: Lazy<Mutex<Vec<String>>> = Lazy::new(|| {
     Mutex::new(vec![
         "hoyoverse.com".to_string(),
         "mihoyo.com".to_string(),
@@ -97,6 +97,11 @@ static PROXY_DOMAINS: Lazy<Mutex<Vec<String>>> = Lazy::new(|| {
         "zenlesszonezero.com".to_string(),
         "yuanshen.com:12401".to_string(),
     ])
+});
+
+// Global user-configured domain list for proxy interception
+static USER_PROXY_DOMAINS: Lazy<Mutex<Vec<String>>> = Lazy::new(|| {
+    Mutex::new(Vec::new())
 });
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -113,67 +118,6 @@ struct ProxyHandle {
 
 #[derive(Clone)]
 struct ProxyHandler;
-
-#[tauri::command]
-pub fn set_proxy_addr(addr: String) {
-    if addr.contains(' ') {
-        let addr2 = addr.replace(' ', "");
-        *SERVER.lock().unwrap() = addr2;
-    } else {
-        *SERVER.lock().unwrap() = addr;
-    }
-
-    println!("Set server to {}", SERVER.lock().unwrap());
-}
-
-#[tauri::command]
-pub fn get_proxy_addr() -> String {
-    SERVER.lock().unwrap().clone()
-}
-
-#[tauri::command]
-pub fn set_proxy_port(port: u16) -> Result<String, String> {
-    if port < 1024 || port >= 65535 {
-        return Err("Port must be between 1024 and 65535".to_string());
-    }
-    
-    *PROXY_PORT.lock().unwrap() = port;
-    Ok(format!("Proxy port set to {}", port))
-}
-
-#[tauri::command]
-pub fn get_proxy_port() -> u16 {
-    *PROXY_PORT.lock().unwrap()
-}
-
-#[tauri::command]
-pub fn find_available_port() -> Result<u16, String> {
-    use std::net::TcpListener;
-    
-    // Try to find an available port starting from 8080
-    for port in 8080..=8999 {
-        if let Ok(_) = TcpListener::bind(format!("127.0.0.1:{}", port)) {
-            return Ok(port);
-        }
-    }
-    
-    // If no port found in the preferred range, try a random port
-    match TcpListener::bind("127.0.0.1:0") {
-        Ok(listener) => {
-            let port = listener.local_addr().unwrap().port();
-            Ok(port)
-        }
-        Err(_) => Err("Could not find any available port".to_string())
-    }
-}
-
-#[tauri::command]
-pub fn start_proxy_with_port(port: u16) -> Result<String, String> {
-    // Set the port first
-    set_proxy_port(port)?;
-    // Then start the proxy
-    start_proxy()
-}
 
 // Helper function to log proxy redirections
 fn log_proxy_redirection(original_url: String, redirected_url: String) {
@@ -193,61 +137,15 @@ fn log_proxy_redirection(original_url: String, redirected_url: String) {
     }
 }
 
-#[tauri::command]
-pub fn get_proxy_logs() -> Vec<ProxyLogEntry> {
-    PROXY_LOGS.lock().unwrap().iter().cloned().collect()
-}
-
-#[tauri::command]
-pub fn clear_proxy_logs() {
-    PROXY_LOGS.lock().unwrap().clear();
-}
-
-#[tauri::command]
-pub fn get_proxy_domains() -> Vec<String> {
-    PROXY_DOMAINS.lock().unwrap().clone()
-}
-
-#[tauri::command]
-pub fn add_proxy_domain(domain: String) -> Result<String, String> {
-    let mut domains = PROXY_DOMAINS
-        .lock()
-        .map_err(|e| format!("Failed to lock domains: {}", e))?;
-    let trimmed_domain = domain.trim().to_lowercase();
-
-    if trimmed_domain.is_empty() {
-        return Err("Domain cannot be empty".to_string());
-    }
-
-    if domains.contains(&trimmed_domain) {
-        return Err("Domain already exists in the list".to_string());
-    }
-
-    domains.push(trimmed_domain.clone());
-    Ok(format!("Domain '{}' added successfully", trimmed_domain))
-}
-
-#[tauri::command]
-pub fn remove_proxy_domain(domain: String) -> Result<String, String> {
-    let mut domains = PROXY_DOMAINS
-        .lock()
-        .map_err(|e| format!("Failed to lock domains: {}", e))?;
-    let trimmed_domain = domain.trim().to_lowercase();
-
-    if let Some(pos) = domains.iter().position(|d| d == &trimmed_domain) {
-        domains.remove(pos);
-        Ok(format!("Domain '{}' removed successfully", trimmed_domain))
-    } else {
-        Err("Domain not found in the list".to_string())
-    }
-}
-
 // Helper function to check if URI should be intercepted based on domain list
 fn should_intercept_uri(uri: &str) -> bool {
-    if let Ok(domains) = PROXY_DOMAINS.lock() {
-        for domain in domains.iter() {
-            if uri.contains(domain) {
-                return true;
+    // Only use user-configured domains for interception
+    if let Ok(user_domains) = USER_PROXY_DOMAINS.lock() {
+        if !user_domains.is_empty() {
+            for domain in user_domains.iter() {
+                if uri.contains(domain) {
+                    return true;
+                }
             }
         }
     }
@@ -615,6 +513,117 @@ fi
 
 // Additional functions required by lib.rs
 
+#[tauri::command]
+pub fn get_proxy_addr() -> Result<String, String> {
+    SERVER
+        .lock()
+        .map(|addr| addr.clone())
+        .map_err(|e| format!("Failed to get proxy address: {}", e))
+}
+
+#[tauri::command]
+pub fn set_proxy_addr(addr: String) -> Result<String, String> {
+    SERVER
+        .lock()
+        .map(|mut server| {
+            *server = addr.clone();
+            format!("Proxy address set to: {}", addr)
+        })
+        .map_err(|e| format!("Failed to set proxy address: {}", e))
+}
+
+#[tauri::command]
+pub fn get_proxy_port() -> Result<u16, String> {
+    PROXY_PORT
+        .lock()
+        .map(|port| *port)
+        .map_err(|e| format!("Failed to get proxy port: {}", e))
+}
+
+#[tauri::command]
+pub fn set_proxy_port(port: u16) -> Result<String, String> {
+    PROXY_PORT
+        .lock()
+        .map(|mut proxy_port| {
+            *proxy_port = port;
+            format!("Proxy port set to: {}", port)
+        })
+        .map_err(|e| format!("Failed to set proxy port: {}", e))
+}
+
+#[tauri::command]
+pub fn find_available_port() -> Result<u16, String> {
+    use std::net::{TcpListener, SocketAddr};
+    
+    // Try to find an available port starting from 8080
+    for port in 8080..=8999 {
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        if TcpListener::bind(addr).is_ok() {
+            return Ok(port);
+        }
+    }
+    
+    Err("No available port found in range 8080-8999".to_string())
+}
+
+#[tauri::command]
+pub fn start_proxy_with_port(port: u16) -> Result<String, String> {
+    // Set the port first
+    set_proxy_port(port)?;
+    // Then start the proxy
+    start_proxy()
+}
+
+#[tauri::command]
+pub fn add_proxy_domain(domain: String) -> Result<String, String> {
+    USER_PROXY_DOMAINS
+        .lock()
+        .map(|mut domains| {
+            if !domains.contains(&domain) {
+                domains.push(domain.clone());
+                format!("Domain '{}' added successfully", domain)
+            } else {
+                format!("Domain '{}' already exists", domain)
+            }
+        })
+        .map_err(|e| format!("Failed to add domain: {}", e))
+}
+
+#[tauri::command]
+pub fn remove_proxy_domain(domain: String) -> Result<String, String> {
+    USER_PROXY_DOMAINS
+        .lock()
+        .map(|mut domains| {
+            if let Some(pos) = domains.iter().position(|d| d == &domain) {
+                domains.remove(pos);
+                format!("Domain '{}' removed successfully", domain)
+            } else {
+                format!("Domain '{}' not found", domain)
+            }
+        })
+        .map_err(|e| format!("Failed to remove domain: {}", e))
+}
+
+#[tauri::command]
+pub fn get_proxy_logs() -> Result<Vec<ProxyLogEntry>, String> {
+    PROXY_LOGS
+        .lock()
+        .map(|logs| logs.iter().cloned().collect())
+        .map_err(|e| format!("Failed to get proxy logs: {}", e))
+}
+
+#[tauri::command]
+pub fn clear_proxy_logs() -> Result<String, String> {
+    PROXY_LOGS
+        .lock()
+        .map(|mut logs| {
+            logs.clear();
+            "Proxy logs cleared successfully".to_string()
+        })
+        .map_err(|e| format!("Failed to clear proxy logs: {}", e))
+}
+
+#[tauri::command]
 pub fn start_proxy() -> Result<String, String> {
     let mut state = PROXY_STATE
         .lock()
@@ -650,6 +659,7 @@ pub fn start_proxy() -> Result<String, String> {
     Ok(format!("Proxy started successfully on port {}", proxy_port))
 }
 
+#[tauri::command]
 pub fn stop_proxy() -> Result<String, String> {
     let mut state = PROXY_STATE
         .lock()
@@ -664,6 +674,11 @@ pub fn stop_proxy() -> Result<String, String> {
     }
 }
 
+#[tauri::command]
+pub fn check_proxy_status() -> Result<bool, String> {
+    Ok(is_proxy_running())
+}
+
 pub fn is_proxy_running() -> bool {
     PROXY_STATE
         .lock()
@@ -671,6 +686,54 @@ pub fn is_proxy_running() -> bool {
         .unwrap_or(false)
 }
 
+#[tauri::command]
+pub fn get_proxy_domains() -> Result<Vec<String>, String> {
+    DEFAULT_PROXY_DOMAINS
+        .lock()
+        .map(|domains| domains.clone())
+        .map_err(|e| format!("Failed to get default proxy domains: {}", e))
+}
+
+#[tauri::command]
+pub fn get_user_proxy_domains() -> Result<Vec<String>, String> {
+    USER_PROXY_DOMAINS
+        .lock()
+        .map(|domains| domains.clone())
+        .map_err(|e| format!("Failed to get user proxy domains: {}", e))
+}
+
+#[tauri::command]
+pub fn get_all_proxy_domains() -> Result<Vec<String>, String> {
+    let mut all_domains = Vec::new();
+    
+    if let Ok(default_domains) = DEFAULT_PROXY_DOMAINS.lock() {
+        all_domains.extend(default_domains.clone());
+    }
+    
+    if let Ok(user_domains) = USER_PROXY_DOMAINS.lock() {
+        all_domains.extend(user_domains.clone());
+    }
+    
+    Ok(all_domains)
+}
+
+#[tauri::command]
+pub fn initialize_user_domains_if_empty() -> Result<Vec<String>, String> {
+    let mut user_domains = USER_PROXY_DOMAINS
+        .lock()
+        .map_err(|e| format!("Failed to lock user domains: {}", e))?;
+    
+    // If user domains are empty, initialize with default domains
+    if user_domains.is_empty() {
+        if let Ok(default_domains) = DEFAULT_PROXY_DOMAINS.lock() {
+            *user_domains = default_domains.clone();
+        }
+    }
+    
+    Ok(user_domains.clone())
+}
+
+#[tauri::command]
 pub fn force_stop_proxy() -> Result<String, String> {
     let mut state = PROXY_STATE
         .lock()
@@ -683,24 +746,6 @@ pub fn force_stop_proxy() -> Result<String, String> {
     } else {
         Ok("Proxy was not running".to_string())
     }
-}
-
-pub fn check_and_disable_windows_proxy() -> Result<String, String> {
-    #[cfg(windows)]
-    {
-        disconnect_from_proxy();
-        Ok("Windows proxy settings checked and disabled if necessary".to_string())
-    }
-    #[cfg(not(windows))]
-    {
-        Ok("Proxy check not needed on this platform".to_string())
-    }
-}
-
-pub fn install_ca_certificate() -> Result<String, String> {
-    let cert_path = get_data_dir().unwrap().join("yuukips");
-    generate_ca_files(&cert_path);
-    Ok("CA certificate installed successfully".to_string())
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]

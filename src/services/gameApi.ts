@@ -1,8 +1,6 @@
 import { Game, GameEngine } from '../types';
 import { invoke } from '@tauri-apps/api/core';
 
-const API_BASE_URL = 'https://ps.yuuki.me/json';
-
 // Proxy management functions
 export const startProxy = async (): Promise<string> => {
   try {
@@ -61,7 +59,7 @@ export class GameApiService {
     try {
       const randomTime = Date.now();
       const responseText = await invoke('fetch_api_data', { 
-        url: `${API_BASE_URL}/game_all.json?time=${randomTime}` 
+        url: `https://ps.yuuki.me/json/game_all.json?time=${randomTime}` 
       }) as string;
       
       const games: Game[] = JSON.parse(responseText);

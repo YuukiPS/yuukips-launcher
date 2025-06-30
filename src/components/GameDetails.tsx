@@ -305,7 +305,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
     setShowSettings(true);
   }, []);
 
-  const handleVersionChange = useCallback((gameId: number, newVersion: string) => {
+  const handleVersionChange = useCallback((_gameId: number, newVersion: string) => {
     const updatedGame = { ...game, version: newVersion };
     onGameUpdate(updatedGame);
   }, [game, onGameUpdate]);

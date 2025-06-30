@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "yuukips-launcher",
+  "productName": "YuukiPS",
   "version": "0.1.0",
   "identifier": "com.yuukips.launcher",
   "build": {
