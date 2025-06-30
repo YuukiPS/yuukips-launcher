@@ -39,6 +39,8 @@ npm run tauri:dev
 
 ### Building
 
+#### Quick Build
+
 1. Build web version:
 ```bash
 npm run build
@@ -48,6 +50,41 @@ npm run build
 ```bash
 npm run tauri:build
 ```
+
+#### Automated Builds
+
+This project includes automated build workflows that create setup files for Windows and Linux:
+
+- **GitHub Actions**: Automatically builds on push/PR and creates releases
+- **Local Scripts**: Cross-platform build scripts for development
+
+**Using build scripts:**
+
+```bash
+# Windows (PowerShell)
+.\build.ps1
+
+# Linux/macOS
+./build.sh
+
+# Development mode
+.\build.ps1 -Dev     # Windows
+./build.sh --dev    # Linux/macOS
+
+# Clean build
+.\build.ps1 -Clean  # Windows
+./build.sh --clean  # Linux/macOS
+```
+
+**Creating releases:**
+
+```bash
+# Tag and push to trigger automated release
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+For detailed build instructions, platform-specific setup, and troubleshooting, see [BUILD.md](BUILD.md).
 
 ## Tauri Integration
 
