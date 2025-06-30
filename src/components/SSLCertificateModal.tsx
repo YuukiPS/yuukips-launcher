@@ -5,14 +5,14 @@ import { installSSLCertificate, checkSSLCertificateInstalled } from '../services
 interface SSLCertificateModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onCancel: () => void;
   onInstallComplete?: () => void;
 }
 
 export const SSLCertificateModal: React.FC<SSLCertificateModalProps> = ({
   isOpen,
   onClose,
-  onInstallComplete
-}) => {
+  onCancel}) => {
   const [isInstalling, setIsInstalling] = useState(false);
   const [installationResult, setInstallationResult] = useState<string | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
@@ -28,12 +28,8 @@ export const SSLCertificateModal: React.FC<SSLCertificateModalProps> = ({
       setInstallationResult(result);
       
       // Check if installation was successful
-      if (result.includes('installed automatically')) {
+      if (result.includes('installed successfully')) {
         setIsInstalled(true);
-        setTimeout(() => {
-          onInstallComplete?.();
-          onClose();
-        }, 2000);
       }
     } catch (error) {
       setInstallationResult(`Installation failed: ${error}`);
@@ -47,11 +43,6 @@ export const SSLCertificateModal: React.FC<SSLCertificateModalProps> = ({
       const installed = await checkSSLCertificateInstalled();
       if (installed) {
         setIsInstalled(true);
-        setInstallationResult('SSL Certificate is now installed and active!');
-        setTimeout(() => {
-          onInstallComplete?.();
-          onClose();
-        }, 2000);
       } else {
         setInstallationResult('SSL Certificate is not yet installed. Please follow the manual installation steps.');
       }
@@ -69,7 +60,7 @@ export const SSLCertificateModal: React.FC<SSLCertificateModalProps> = ({
             <h2 className="text-xl font-bold text-white">SSL Certificate Required</h2>
           </div>
           <button
-            onClick={onClose}
+            onClick={onCancel}
             className="text-gray-400 hover:text-white transition-colors"
           >
             <X className="w-6 h-6" />
@@ -149,12 +140,14 @@ export const SSLCertificateModal: React.FC<SSLCertificateModalProps> = ({
             </button>
           )}
 
-          <button
-            onClick={onClose}
-            className="w-full py-2 px-4 rounded-lg font-medium bg-gray-600 hover:bg-gray-700 text-white transition-colors"
-          >
-            {isInstalled ? 'Continue' : 'Skip for Now'}
-          </button>
+          {isInstalled && (
+            <button
+              onClick={onClose}
+              className="w-full py-2 px-4 rounded-lg font-medium bg-green-600 hover:bg-green-700 text-white transition-colors"
+            >
+              Continue
+            </button>
+          )}
         </div>
 
         <div className="mt-4 p-3 bg-gray-900 rounded-lg">

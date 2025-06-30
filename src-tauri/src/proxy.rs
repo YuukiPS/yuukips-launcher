@@ -517,7 +517,7 @@ pub fn install_ca_files(cert_path: &Path) {
         .args(["-addstore", "-f", "Root", &cert_path.to_string_lossy()])
         .output()
         .expect("Failed to install certificate");
-    println!("Installed certificate.");
+    println!("Installed certificate: {}", cert_path.to_string_lossy());
 }
 
 #[cfg(target_os = "macos")]
@@ -674,13 +674,7 @@ pub fn check_and_disable_windows_proxy() -> Result<String, String> {
 pub fn install_ca_certificate() -> Result<String, String> {
     let cert_path = get_data_dir().unwrap().join("yuukips");
     generate_ca_files(&cert_path);
-    install_ca_files(&cert_path);
     Ok("CA certificate installed successfully".to_string())
-}
-
-pub fn get_certificate_path() -> Result<String, String> {
-    let cert_path = get_data_dir().unwrap().join("yuukips").join("cert.crt");
-    Ok(cert_path.to_string_lossy().to_string())
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]

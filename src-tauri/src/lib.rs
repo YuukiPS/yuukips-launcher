@@ -143,123 +143,10 @@ fn check_and_disable_windows_proxy() -> Result<String, String> {
     proxy::check_and_disable_windows_proxy()
 }
 
-// Function to automatically install SSL certificate on Windows with multiple methods
-#[cfg(target_os = "windows")]
-fn auto_install_certificate(cert_path: &std::path::Path) -> Result<(), String> {
-    use std::process::Command;
-    
-    println!("🔧 Installing CA certificate automatically for all domains...");
-    
-    // First, try to remove any existing certificate with the same name
-    let _ = Command::new("certutil")
-        .args(["-delstore", "Root", "YuukiPS MITM Proxy CA"])
-        .output();
-    
-    // Method 1: Try certutil first
-    let output = Command::new("certutil")
-        .args(["-addstore", "-f", "Root", &cert_path.to_string_lossy()])
-        .output()
-        .map_err(|e| format!("Failed to execute certutil: {}", e))?;
-    
-    if output.status.success() {
-        println!("✅ CA certificate installed successfully via certutil!");
-        return Ok(());
-    }
-    
-    println!("⚠️ Certutil failed, trying PowerShell method...");
-    
-    // Method 2: Try PowerShell as fallback
-    let ps_script = format!(
-        "Import-Certificate -FilePath '{}' -CertStoreLocation Cert:\\LocalMachine\\Root",
-        cert_path.to_string_lossy()
-    );
-    
-    let ps_output = Command::new("powershell")
-        .args(["-Command", &ps_script])
-        .output()
-        .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
-    
-    if ps_output.status.success() {
-        println!("✅ CA certificate installed successfully via PowerShell!");
-        return Ok(());
-    }
-    
-    // Method 3: Try elevated PowerShell
-    println!("⚠️ Standard PowerShell failed, trying elevated PowerShell...");
-    let elevated_ps_script = format!(
-        "Start-Process powershell -ArgumentList '-Command Import-Certificate -FilePath \\'{}\\' -CertStoreLocation Cert:\\\\LocalMachine\\\\Root' -Verb RunAs -Wait",
-        cert_path.to_string_lossy()
-    );
-    
-    let elevated_output = Command::new("powershell")
-        .args(["-Command", &elevated_ps_script])
-        .output()
-        .map_err(|e| format!("Failed to execute elevated PowerShell: {}", e))?;
-    
-    if elevated_output.status.success() {
-        println!("✅ CA certificate installed successfully via elevated PowerShell!");
-        return Ok(());
-    }
-    
-    let error_msg = String::from_utf8_lossy(&output.stderr);
-    let ps_error_msg = String::from_utf8_lossy(&ps_output.stderr);
-    Err(format!(
-        "All automatic installation methods failed:\n- Certutil: {}\n- PowerShell: {}",
-        error_msg, ps_error_msg
-    ))
-}
-
 #[command]
 fn install_ssl_certificate() -> Result<String, String> {
     // Use the new install_ca_certificate function from proxy module
     proxy::install_ca_certificate()
-}
-
-#[command]
-fn install_ca_certificate() -> Result<String, String> {
-    // Get the certificate path from proxy module
-    let cert_path_str = proxy::get_certificate_path()?;
-    let cert_path = std::path::Path::new(&cert_path_str);
-    
-    // Check if certificate file exists
-    if !cert_path.exists() {
-        return Err("SSL certificate not found. Please start the proxy first to generate the certificate.".to_string());
-    }
-    
-    #[cfg(target_os = "windows")]
-    {
-        // Try automatic installation first
-        match auto_install_certificate(&cert_path) {
-            Ok(_) => {
-                return Ok(format!("🎉 SSL Certificate installed automatically for ALL domains!\n\n✅ The certificate has been added to your system's trusted root certificates.\n🌐 HTTPS interception is now enabled for ALL game domains and websites.\n🔒 No more certificate warnings!"));
-            }
-            Err(auto_error) => {
-                println!("Automatic installation failed: {}", auto_error);
-                
-                // Fallback to manual installation
-                match Command::new("certlm.msc")
-                    .spawn()
-                {
-                    Ok(_) => Ok(format!("Certificate saved to: {}\n\nAutomatic installation failed. Opened Certificate Manager.\n\nPlease manually:\n1. Navigate to 'Trusted Root Certification Authorities' > 'Certificates'\n2. Right-click and select 'All Tasks' > 'Import'\n3. Import the certificate file\n4. This will enable HTTPS interception for game domains", cert_path.display())),
-                    Err(_) => {
-                        // Final fallback: try to open the certificate file directly
-                        match Command::new("cmd")
-                            .args(["/C", "start", "", &cert_path.to_string_lossy()])
-                            .spawn()
-                        {
-                            Ok(_) => Ok(format!("Certificate saved to: {}\n\nAutomatic installation failed. Please install this certificate manually as a trusted root certificate to enable HTTPS interception.", cert_path.display())),
-                            Err(e) => Err(format!("Failed to open certificate: {}\n\nCertificate saved to: {}\nPlease manually install it as a trusted root certificate.", e, cert_path.display()))
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    #[cfg(not(target_os = "windows"))]
-    {
-        Ok(format!("Certificate saved to: {}\n\nPlease install this certificate as a trusted root certificate to enable HTTPS interception.\n\nOn macOS: Double-click the certificate and add it to Keychain\nOn Linux: Copy to /usr/local/share/ca-certificates/ and run update-ca-certificates", cert_path.display()))
-    }
 }
 
 #[command]
@@ -289,6 +176,102 @@ fn check_certificate_status() -> Result<String, String> {
     {
         Ok("manual_check_required".to_string())
     }
+}
+
+// Function to make HTTP requests bypassing proxy settings
+// Test command to verify proxy bypass functionality
+#[command]
+fn test_proxy_bypass() -> Result<String, String> {
+    println!("[DEBUG] Testing proxy bypass functionality...");
+    
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| format!("Failed to create tokio runtime: {}", e))?;
+    
+    rt.block_on(async {
+        // Test with a simple HTTP endpoint
+        let test_url = "https://httpbin.org/ip";
+        println!("[DEBUG] Testing with URL: {}", test_url);
+        
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .no_proxy()
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+        
+        let response = client
+            .get(test_url)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP request failed: {}", e))?;
+        
+        if !response.status().is_success() {
+            return Err(format!("HTTP request failed with status: {}", response.status()));
+        }
+        
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| format!("Failed to read response body: {}", e))?;
+        
+        println!("[DEBUG] Test successful, response: {}", response_text);
+        Ok(format!("Proxy bypass test successful: {}", response_text))
+    })
+}
+
+#[command]
+fn fetch_api_data(url: String) -> Result<String, String> {
+    println!("[DEBUG] fetch_api_data called with URL: {}", url);
+    
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| {
+            let error_msg = format!("Failed to create tokio runtime: {}", e);
+            println!("[ERROR] {}", error_msg);
+            error_msg
+        })?;
+    
+    rt.block_on(async {
+        println!("[DEBUG] Creating HTTP client with no_proxy()...");
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .no_proxy()
+            .build()
+            .map_err(|e| {
+                let error_msg = format!("Failed to create HTTP client: {}", e);
+                println!("[ERROR] {}", error_msg);
+                error_msg
+            })?;
+        
+        println!("[DEBUG] Sending GET request to: {}", url);
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| {
+                let error_msg = format!("HTTP request failed: {}", e);
+                println!("[ERROR] {}", error_msg);
+                error_msg
+            })?;
+        
+        println!("[DEBUG] Response status: {}", response.status());
+        
+        if !response.status().is_success() {
+            let error_msg = format!("HTTP request failed with status: {}", response.status());
+            println!("[ERROR] {}", error_msg);
+            return Err(error_msg);
+        }
+        
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| {
+                let error_msg = format!("Failed to read response body: {}", e);
+                println!("[ERROR] {}", error_msg);
+                error_msg
+            })?;
+        
+        println!("[DEBUG] Response received, length: {} bytes", response_text.len());
+        Ok(response_text)
+    })
 }
 
 #[command]
@@ -368,16 +351,12 @@ fn launch_game(
         let md5_str = format!("{:x}", md5);
 
         // Get patch info from API and apply patches if needed
-        let mut patched_files = Vec::new();
-        let mut patch_response_data = None;
-        
-        match check_and_apply_patches(game_id.clone(), version.clone(), channel.clone(), md5_str.clone(), game_folder_path.clone()) {
+        let (patched_files, patch_response_data) = match check_and_apply_patches(game_id.clone(), version.clone(), channel.clone(), md5_str.clone(), game_folder_path.clone()) {
             Ok((patch_message, response, files)) => {
                 if !patch_message.is_empty() {
                     println!("🔧 Patch status: {}", patch_message);
                 }
-                patched_files = files;
-                patch_response_data = response.clone();
+                let patch_response_data = response.clone();
                 
                 // Check if we need to show a message to user before proceeding
                 if let Some(ref resp) = response {
@@ -392,13 +371,14 @@ fn launch_game(
                         println!("⚠️ Proxy disabled by patch response");
                     }
                 }
+                (files, patch_response_data)
             },
             Err(e) => {
                 // Any patching failure should abort game launch
                 let _ = stop_game_monitor();
                 return Err(format!("Cannot launch game: Patching failed. Error: {}", e));
             }
-        }
+        };
         
         // Start game monitoring AFTER patching is complete
         // This ensures proxy is not started until patches are applied
@@ -767,6 +747,16 @@ fn check_and_apply_patches(
     md5: String,
     game_folder_path: String,
 ) -> Result<(String, Option<PatchResponse>, Vec<String>), String> {
+    
+    // Ensure proxy is not running during patching to prevent conflicts
+    let proxy_was_running = proxy::is_proxy_running();
+    if proxy_was_running {
+        println!("⚠️ Stopping proxy for patching...");
+        if let Err(e) = proxy::stop_proxy() {
+            return Err(format!("Failed to stop proxy before patching: {}", e));
+        }
+    }
+
     // Construct API URL
     let api_url = format!(
         "https://ps.yuuki.me/game/patch/{}/{}/{}/{}.json",
@@ -805,16 +795,7 @@ fn check_and_apply_patches(
             println!("⚠️ Warning: Could not check if game is running: {}", e);
             println!("🔄 Proceeding with patching anyway...");
         }
-    }
-    
-    // Ensure proxy is not running during patching to prevent conflicts
-    let proxy_was_running = proxy::is_proxy_running();
-    if proxy_was_running {
-        println!("⚠️ Stopping proxy for patching...");
-        if let Err(e) = proxy::stop_proxy() {
-            return Err(format!("Failed to stop proxy before patching: {}", e));
-        }
-    }
+    }    
     
     // Apply patches based on method
     let result = match patch_response.metode {
@@ -846,6 +827,7 @@ fn fetch_patch_info(url: &str) -> Result<PatchResponse, String> {
     rt.block_on(async {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
+            .no_proxy()
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
         
@@ -953,6 +935,7 @@ fn download_and_verify_file(url: &str, file_path: &Path, expected_md5: &str) -> 
     rt.block_on(async {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(300)) // 5 minutes for file downloads
+            .no_proxy()
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
         
@@ -1547,7 +1530,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_opener::init())
-    .invoke_handler(tauri::generate_handler![launch_game, get_game_folder_path, show_game_folder, check_game_installed, check_game_running, kill_game, start_game_monitor, stop_game_monitor, is_game_monitor_active, stop_game_process, stop_game, open_directory, start_proxy, stop_proxy, check_proxy_status, force_stop_proxy, check_and_disable_windows_proxy, install_ssl_certificate, install_ca_certificate, check_certificate_status, check_ssl_certificate_installed, check_admin_privileges, check_patch_status, restore_game_files, get_download_progress, clear_download_progress, proxy::set_proxy_addr, proxy::get_proxy_addr, proxy::get_proxy_logs, proxy::clear_proxy_logs, proxy::get_proxy_domains, proxy::add_proxy_domain, proxy::remove_proxy_domain, proxy::set_proxy_port, proxy::get_proxy_port, proxy::find_available_port, proxy::start_proxy_with_port])
+    .invoke_handler(tauri::generate_handler![launch_game, get_game_folder_path, show_game_folder, check_game_installed, check_game_running, kill_game, start_game_monitor, stop_game_monitor, is_game_monitor_active, stop_game_process, stop_game, open_directory, start_proxy, stop_proxy, check_proxy_status, force_stop_proxy, check_and_disable_windows_proxy, install_ssl_certificate, check_certificate_status, check_ssl_certificate_installed, check_admin_privileges, check_patch_status, restore_game_files, get_download_progress, clear_download_progress, fetch_api_data, test_proxy_bypass, proxy::set_proxy_addr, proxy::get_proxy_addr, proxy::get_proxy_logs, proxy::clear_proxy_logs, proxy::get_proxy_domains, proxy::add_proxy_domain, proxy::remove_proxy_domain, proxy::set_proxy_port, proxy::get_proxy_port, proxy::find_available_port, proxy::start_proxy_with_port])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

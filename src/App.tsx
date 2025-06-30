@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -14,6 +14,7 @@ function App() {
   const [games, setGames] = useState<Game[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null);
   const [runningGameId, setRunningGameId] = useState<number | null>(null);
+  const gamesLoadedRef = useRef(false);
   
   const handleGameSelect = (gameId: string | number) => {
     // Prevent game selection if any game is currently running
@@ -27,12 +28,18 @@ function App() {
 
   const selectedGame = games.find(game => game.id === selectedGameId) || null;
 
-  const loadGames = useCallback(async () => {
+  const loadGames = useCallback(async (forceRefresh: boolean = false) => {
+    // Only fetch games once per session unless forced to refresh
+    if (gamesLoadedRef.current && !forceRefresh) {
+      return;
+    }
+    
     setIsLoading(true);
     
     try {
       const apiGames = await GameApiService.fetchGames();
       setGames(apiGames);
+      gamesLoadedRef.current = true;
       
       // Set the first game as selected if no game is currently selected
       if (selectedGameId === null && apiGames.length > 0) {
@@ -46,6 +53,7 @@ function App() {
     }
   }, [selectedGameId]);
 
+  // Function to manually refresh games list
   useEffect(() => {
     loadGames();
   }, [loadGames]);

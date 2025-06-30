@@ -291,6 +291,14 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
     }
   }, [pendingLaunch, launchGameWithEngine]);
 
+  const handleSSLModalCancel = useCallback(() => {
+    setShowSSLModal(false);
+    // Cancel the pending launch completely
+    if (pendingLaunch) {
+      setPendingLaunch(null);
+    }
+  }, [pendingLaunch]);
+
 
 
   const handleSettings = useCallback(() => {
@@ -428,6 +436,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
       <SSLCertificateModal
         isOpen={showSSLModal}
         onClose={handleSSLModalClose}
+        onCancel={handleSSLModalCancel}
         onInstallComplete={handleSSLInstallComplete}
       />
     </>

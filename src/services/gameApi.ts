@@ -60,13 +60,11 @@ export class GameApiService {
   static async fetchGames(): Promise<Game[]> {
     try {
       const randomTime = Date.now();
-      const response = await fetch(`${API_BASE_URL}/game_all.json?time=${randomTime}`);
+      const responseText = await invoke('fetch_api_data', { 
+        url: `${API_BASE_URL}/game_all.json?time=${randomTime}` 
+      }) as string;
       
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const games: Game[] = await response.json();
+      const games: Game[] = JSON.parse(responseText);
       
       // Filter games to only include those that support Platform 1 (PC)
       const pcSupportedGames = games.filter(game => this.gameSupportsPC(game));
