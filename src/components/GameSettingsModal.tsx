@@ -747,7 +747,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                           {isProxyRunning ? 'Running' : 'Stopped'}
                         </span>
                         <span className="text-gray-300 text-sm">
-                          {isProxyRunning ? `Proxy server is active on port ${proxyPort}` : 'Proxy server is not running'}
+                          {isProxyRunning ? `Proxy server is active on port ${proxyPort} with ${proxyDomains.length} domains` : 'Proxy server is not running'}
                         </span>
                       </div>
 

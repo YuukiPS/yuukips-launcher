@@ -49,6 +49,8 @@ pub fn run() {
             proxy::get_proxy_domains,
             proxy::get_user_proxy_domains,
             proxy::get_all_proxy_domains,
+            proxy::get_active_proxy_domains,
+            proxy::get_proxy_status_with_domains,
             proxy::initialize_user_domains_if_empty,
             // HTTP functions
             test_proxy_bypass,
@@ -68,6 +70,7 @@ pub fn run() {
             start_game_monitor,
             stop_game_monitor,
             is_game_monitor_active,
+            force_stop_game_monitor,
             stop_game_process,
             stop_game,
             // Patch functions

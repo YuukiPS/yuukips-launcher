@@ -7,6 +7,20 @@ use tauri::{command, AppHandle, Emitter};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
+use std::process::Command;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+/// Create a command with hidden window on Windows
+fn create_hidden_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GitHubRelease {
@@ -304,164 +318,10 @@ async fn install_update_with_termination(file_path: &PathBuf) -> Result<(), Stri
     }
 }
 
-/// Install the downloaded update with admin privileges (legacy function)
-async fn install_update(file_path: &PathBuf) -> Result<(), String> {
-    let file_name = file_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
-    
-    println!("🔧 Installing update: {}", file_name);
-    
-    // Try to install with admin privileges to handle file access issues
-    if file_name.ends_with(".msi") {
-        install_msi_with_admin(file_path).await
-    } else if file_name.ends_with(".exe") {
-        install_exe_with_admin(file_path).await
-    } else {
-        Err("Unsupported update file format".to_string())
-    }
-}
-
-/// Install MSI package with administrator privileges
-#[cfg(target_os = "windows")]
-async fn install_msi_with_admin(file_path: &PathBuf) -> Result<(), String> {
-    use std::ffi::OsStr;
-    use std::os::windows::ffi::OsStrExt;
-    use std::ptr;
-    use winapi::um::shellapi::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
-    use winapi::um::synchapi::WaitForSingleObject;
-    use winapi::um::winbase::INFINITE;
-    use winapi::um::handleapi::CloseHandle;
-    use winapi::um::processthreadsapi::GetExitCodeProcess;
-    
-    let file_path_str = file_path.to_str().ok_or("Invalid file path")?;
-    let parameters = format!("/i \"{}\" /quiet /norestart", file_path_str);
-    
-    // Convert strings to wide strings for Windows API
-    let verb: Vec<u16> = OsStr::new("runas").encode_wide().chain(std::iter::once(0)).collect();
-    let file: Vec<u16> = OsStr::new("msiexec").encode_wide().chain(std::iter::once(0)).collect();
-    let params: Vec<u16> = OsStr::new(&parameters).encode_wide().chain(std::iter::once(0)).collect();
-    
-    unsafe {
-        let mut sei = SHELLEXECUTEINFOW {
-            cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-            fMask: SEE_MASK_NOCLOSEPROCESS,
-            hwnd: ptr::null_mut(),
-            lpVerb: verb.as_ptr(),
-            lpFile: file.as_ptr(),
-            lpParameters: params.as_ptr(),
-            lpDirectory: ptr::null(),
-            nShow: 0, // SW_HIDE
-            hInstApp: ptr::null_mut(),
-            lpIDList: ptr::null_mut(),
-            lpClass: ptr::null(),
-            hkeyClass: ptr::null_mut(),
-            dwHotKey: 0,
-            hMonitor: ptr::null_mut(),
-            hProcess: ptr::null_mut(),
-        };
-        
-        if ShellExecuteExW(&mut sei) == 0 {
-            return Err("Failed to start MSI installer with admin privileges".to_string());
-        }
-        
-        if sei.hProcess.is_null() {
-            return Err("Failed to get installer process handle".to_string());
-        }
-        
-        // Wait for the installer to complete
-        WaitForSingleObject(sei.hProcess, INFINITE);
-        
-        // Check exit code
-        let mut exit_code: u32 = 0;
-        if GetExitCodeProcess(sei.hProcess, &mut exit_code) != 0 {
-            CloseHandle(sei.hProcess);
-            if exit_code == 0 {
-                println!("✅ MSI update installed successfully");
-                Ok(())
-            } else {
-                Err(format!("MSI installer failed with exit code: {}", exit_code))
-            }
-        } else {
-            CloseHandle(sei.hProcess);
-            Err("Failed to get installer exit code".to_string())
-        }
-    }
-}
-
-/// Install EXE package with administrator privileges
-#[cfg(target_os = "windows")]
-async fn install_exe_with_admin(file_path: &PathBuf) -> Result<(), String> {
-    use std::ffi::OsStr;
-    use std::os::windows::ffi::OsStrExt;
-    use std::ptr;
-    use winapi::um::shellapi::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
-    use winapi::um::synchapi::WaitForSingleObject;
-    use winapi::um::winbase::INFINITE;
-    use winapi::um::handleapi::CloseHandle;
-    use winapi::um::processthreadsapi::GetExitCodeProcess;
-    
-    let file_path_str = file_path.to_str().ok_or("Invalid file path")?;
-    let parameters = "/S"; // Silent install flag
-    
-    // Convert strings to wide strings for Windows API
-    let verb: Vec<u16> = OsStr::new("runas").encode_wide().chain(std::iter::once(0)).collect();
-    let file: Vec<u16> = OsStr::new(file_path_str).encode_wide().chain(std::iter::once(0)).collect();
-    let params: Vec<u16> = OsStr::new(parameters).encode_wide().chain(std::iter::once(0)).collect();
-    
-    unsafe {
-        let mut sei = SHELLEXECUTEINFOW {
-            cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-            fMask: SEE_MASK_NOCLOSEPROCESS,
-            hwnd: ptr::null_mut(),
-            lpVerb: verb.as_ptr(),
-            lpFile: file.as_ptr(),
-            lpParameters: params.as_ptr(),
-            lpDirectory: ptr::null(),
-            nShow: 0, // SW_HIDE
-            hInstApp: ptr::null_mut(),
-            lpIDList: ptr::null_mut(),
-            lpClass: ptr::null(),
-            hkeyClass: ptr::null_mut(),
-             dwHotKey: 0,
-             hMonitor: ptr::null_mut(),
-             hProcess: ptr::null_mut(),
-         };
-        
-        if ShellExecuteExW(&mut sei) == 0 {
-            return Err("Failed to start EXE installer with admin privileges".to_string());
-        }
-        
-        if sei.hProcess.is_null() {
-            return Err("Failed to get installer process handle".to_string());
-        }
-        
-        // Wait for the installer to complete
-        WaitForSingleObject(sei.hProcess, INFINITE);
-        
-        // Check exit code
-        let mut exit_code: u32 = 0;
-        if GetExitCodeProcess(sei.hProcess, &mut exit_code) != 0 {
-            CloseHandle(sei.hProcess);
-            if exit_code == 0 {
-                println!("✅ EXE update installed successfully");
-                Ok(())
-            } else {
-                Err(format!("EXE installer failed with exit code: {}", exit_code))
-            }
-        } else {
-            CloseHandle(sei.hProcess);
-            Err("Failed to get installer exit code".to_string())
-        }
-    }
-}
-
 /// Create and run MSI installer script that terminates launcher first
 #[cfg(target_os = "windows")]
 async fn create_and_run_msi_installer_script(file_path: &PathBuf) -> Result<(), String> {
     use std::fs;
-    use std::process::Command;
     
     let file_path_str = file_path.to_str().ok_or("Invalid file path")?;
     let temp_dir = std::env::temp_dir();
@@ -501,7 +361,7 @@ del "%~f0"
         .map_err(|e| format!("Failed to create installer script: {}", e))?;
     
     // Start the script in a new process
-    Command::new("cmd")
+    create_hidden_command("cmd")
         .args(["/c", "start", "", script_path.to_str().unwrap()])
         .spawn()
         .map_err(|e| format!("Failed to start installer script: {}", e))?;
@@ -517,7 +377,6 @@ del "%~f0"
 #[cfg(target_os = "windows")]
 async fn create_and_run_exe_installer_script(file_path: &PathBuf) -> Result<(), String> {
     use std::fs;
-    use std::process::Command;
     
     let file_path_str = file_path.to_str().ok_or("Invalid file path")?;
     let temp_dir = std::env::temp_dir();
@@ -557,7 +416,7 @@ del "%~f0"
         .map_err(|e| format!("Failed to create installer script: {}", e))?;
     
     // Start the script in a new process
-    Command::new("cmd")
+    create_hidden_command("cmd")
         .args(["/c", "start", "", script_path.to_str().unwrap()])
         .spawn()
         .map_err(|e| format!("Failed to start installer script: {}", e))?;

@@ -222,24 +222,24 @@ async fn apply_file_patches(
     }
     
     for (index, patch_file) in patch_response.patched.iter().enumerate() {
-        let file_path = Path::new(game_folder_path).join(&patch_file.file);
-        let cache_file_path = cache_dir.join(format!("{}.patch", patch_file.file.replace(['/', '\\'], "_")));
+        let file_path = Path::new(game_folder_path).join(&patch_file.location);
+        let cache_file_path = cache_dir.join(format!("{}.patch", patch_file.location.replace(['/', '\\'], "_")));
         
-        println!("🔧 Processing patch {}/{}: {}", index + 1, patch_response.patched.len(), patch_file.file);
+        println!("🔧 Processing patch {}/{}: {}", index + 1, patch_response.patched.len(), patch_file.location);
         
         // Check if we have a cached version with matching MD5
         let mut use_cached = false;
         if cache_file_path.exists() {
             match calculate_md5(&cache_file_path) {
                 Ok(cached_md5) if cached_md5 == patch_file.md5 => {
-                    println!("📦 Using cached patch for: {}", patch_file.file);
+                    println!("📦 Using cached patch for: {}", patch_file.location);
                     use_cached = true;
                 }
                 Ok(_) => {
-                    println!("🔄 Cache MD5 mismatch for {}, re-downloading", patch_file.file);
+                    println!("🔄 Cache MD5 mismatch for {}, re-downloading", patch_file.location);
                 }
                 Err(e) => {
-                    println!("⚠️ Failed to verify cached file {}: {}", patch_file.file, e);
+                    println!("⚠️ Failed to verify cached file {}: {}", patch_file.location, e);
                 }
             }
         }
@@ -247,7 +247,7 @@ async fn apply_file_patches(
         if !use_cached {
             // Download the patch file
             download_and_verify_file(&patch_file.file, &cache_file_path, &patch_file.md5).await
-                .map_err(|e| format!("Failed to download patch for {}: {}", patch_file.file, e))?;
+                .map_err(|e| format!("Failed to download patch for {}: {}", patch_file.location, e))?;
         }
         
         // Create backup of original file if it exists
@@ -257,7 +257,7 @@ async fn apply_file_patches(
             
             if !backup_path.exists() {
                 fs::copy(&file_path, &backup_path)
-                    .map_err(|e| format!("Failed to create backup for {}: {}", patch_file.file, e))?;
+                    .map_err(|e| format!("Failed to create backup for {}: {}", patch_file.location, e))?;
                 println!("💾 Created backup: {}", backup_path.display());
             }
         }
@@ -265,10 +265,10 @@ async fn apply_file_patches(
         // Apply the patch (copy from cache to game folder)
         create_parent_directories(&file_path)?;
         fs::copy(&cache_file_path, &file_path)
-            .map_err(|e| format!("Failed to apply patch for {}: {}", patch_file.file, e))?;
+            .map_err(|e| format!("Failed to apply patch for {}: {}", patch_file.location, e))?;
         
-        patched_files.push(patch_file.file.clone());
-        println!("✅ Applied patch: {}", patch_file.file);
+        patched_files.push(patch_file.location.clone());
+        println!("✅ Applied patch: {}", patch_file.location);
     }
     
     if !patched_files.is_empty() {

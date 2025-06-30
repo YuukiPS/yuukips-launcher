@@ -9,6 +9,9 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use tauri::command;
 
 use crate::patch::{
@@ -17,6 +20,19 @@ use crate::patch::{
 };
 use crate::proxy;
 use crate::utils::get_game_executable_names;
+
+/// Helper function to create a Command with hidden window on Windows
+#[cfg(target_os = "windows")]
+fn create_hidden_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    cmd
+}
+
+#[cfg(not(target_os = "windows"))]
+fn create_hidden_command(program: &str) -> Command {
+    Command::new(program)
+}
 
 // Global game monitoring state
 static GAME_MONITOR_STATE: once_cell::sync::Lazy<Arc<Mutex<Option<GameMonitorHandle>>>> =
@@ -221,7 +237,7 @@ pub fn check_game_running_internal(game_id: &Number) -> Result<bool, String> {
 
         // Check each possible executable name
         for game_exe_name in game_exe_names {
-            let output = Command::new("tasklist")
+            let output = create_hidden_command("tasklist")
                 .args([
                     "/FI",
                     &format!("IMAGENAME eq {}", game_exe_name),
@@ -279,7 +295,7 @@ pub fn kill_game_processes(game_id: &Number) -> Result<String, String> {
         // Kill each possible executable
         for game_exe_name in game_exe_names {
             // First check if the process is running
-            let check_output = Command::new("tasklist")
+            let check_output = create_hidden_command("tasklist")
                 .args([
                     "/FI",
                     &format!("IMAGENAME eq {}", game_exe_name),
@@ -309,7 +325,7 @@ pub fn kill_game_processes(game_id: &Number) -> Result<String, String> {
                     println!("🔪 Killing running game process: {}", game_exe_name);
 
                     // Try to kill the process gracefully first
-                    let kill_output = Command::new("taskkill")
+                    let kill_output = create_hidden_command("taskkill")
                         .args(["/IM", game_exe_name, "/T"])
                         .output();
 
@@ -329,7 +345,7 @@ pub fn kill_game_processes(game_id: &Number) -> Result<String, String> {
                             );
 
                             // Try force kill as fallback
-                            let force_kill_output = Command::new("taskkill")
+                            let force_kill_output = create_hidden_command("taskkill")
                                 .args(["/IM", game_exe_name, "/T", "/F"])
                                 .output();
 
@@ -381,7 +397,7 @@ pub fn kill_game(game_id: Number) -> Result<String, String> {
     kill_game_processes(&game_id)
 }
 
-/// Start monitoring a specific game
+/// Start monitoring a specific game - Single source of truth for game monitoring
 #[command]
 pub fn start_game_monitor(game_id: Number) -> Result<String, String> {
     let mut monitor_state = GAME_MONITOR_STATE
@@ -405,9 +421,14 @@ pub fn start_game_monitor(game_id: Number) -> Result<String, String> {
         let mut proxy_started_by_us = false;
         let mut consecutive_errors = 0;
         const MAX_CONSECUTIVE_ERRORS: u32 = 5;
+        
+        // Wait for game to actually start before beginning monitoring
+        let mut game_started = false;
+        let mut startup_checks = 0;
+        const MAX_STARTUP_CHECKS: u32 = 30; // 30 seconds max wait for game to start
 
         println!(
-            "🔍 Started monitoring game {} for automatic proxy management",
+            "🔍 Started monitoring game {} - waiting for game to start",
             game_id_clone
         );
 
@@ -425,23 +446,27 @@ pub fn start_game_monitor(game_id: Number) -> Result<String, String> {
                 break;
             }
 
-            // Check if game is currently running
-            match check_game_running_internal(&game_id_clone) {
-                Ok(is_running) => {
-                    consecutive_errors = 0; // Reset error counter on success
-
-                    if is_running != last_game_state {
+            // Initial startup phase - wait for game to start
+            if !game_started {
+                startup_checks += 1;
+                if startup_checks > MAX_STARTUP_CHECKS {
+                    println!("⚠️ Game {} did not start within 30 seconds, stopping monitor", game_id_clone);
+                    break;
+                }
+                
+                match check_game_running_internal(&game_id_clone) {
+                    Ok(is_running) => {
                         if is_running {
-                            // Game just started - check if proxy should be started
-                            let should_start_proxy =
-                                if let Ok(monitor_state) = GAME_MONITOR_STATE.lock() {
-                                    if let Some(handle) = monitor_state.as_ref() {
-                                        if let Ok(response) = handle.patch_response.lock() {
-                                            if let Some(ref resp) = *response {
-                                                resp.proxy // Only start proxy if patch response allows it
-                                            } else {
-                                                true // Default to true if no patch response
-                                            }
+                            game_started = true;
+                            last_game_state = true;
+                            println!("🎮 Game {} detected as running - starting active monitoring", game_id_clone);
+                            
+                            // Start proxy if needed
+                            let should_start_proxy = if let Ok(monitor_state) = GAME_MONITOR_STATE.lock() {
+                                if let Some(handle) = monitor_state.as_ref() {
+                                    if let Ok(response) = handle.patch_response.lock() {
+                                        if let Some(ref resp) = *response {
+                                            resp.proxy
                                         } else {
                                             true
                                         }
@@ -450,8 +475,11 @@ pub fn start_game_monitor(game_id: Number) -> Result<String, String> {
                                     }
                                 } else {
                                     true
-                                };
-
+                                }
+                            } else {
+                                true
+                            };
+                            
                             if should_start_proxy {
                                 if !proxy::is_proxy_running() {
                                     match proxy::start_proxy() {
@@ -460,68 +488,60 @@ pub fn start_game_monitor(game_id: Number) -> Result<String, String> {
                                             println!("🎮 Game {} started - Proxy activated automatically", game_id_clone);
                                         }
                                         Err(e) => {
-                                            eprintln!(
-                                                "⚠️ Failed to start proxy when game started: {}",
-                                                e
-                                            );
-                                        }
-                                    }
-                                } else {
-                                    println!(
-                                        "🎮 Game {} started - Proxy was already running",
-                                        game_id_clone
-                                    );
-                                }
-                            } else {
-                                println!(
-                                    "🎮 Game {} started - Proxy disabled by patch response",
-                                    game_id_clone
-                                );
-                            }
-                        } else {
-                            // Game just stopped - handle cleanup
-                            handle_game_stopped_cleanup(&game_id_clone);
-
-                            // Stop proxy
-                            if proxy::is_proxy_running() {
-                                match proxy::force_stop_proxy() {
-                                    Ok(_) => {
-                                        proxy_started_by_us = false;
-                                        println!("🎮 Game {} stopped - Proxy force stopped automatically", game_id_clone);
-                                    }
-                                    Err(e) => {
-                                        eprintln!(
-                                            "⚠️ Failed to force stop proxy when game stopped: {}",
-                                            e
-                                        );
-                                        // Try regular stop as fallback
-                                        match proxy::stop_proxy() {
-                                            Ok(_) => {
-                                                proxy_started_by_us = false;
-                                                println!("🎮 Game {} stopped - Proxy stopped with fallback method", game_id_clone);
-                                            }
-                                            Err(e2) => {
-                                                eprintln!("⚠️ Failed to stop proxy with fallback method: {}", e2);
-                                            }
+                                            eprintln!("⚠️ Failed to start proxy when game started: {}", e);
                                         }
                                     }
                                 }
-                            } else {
-                                println!(
-                                    "🎮 Game {} stopped - Proxy was not running",
-                                    game_id_clone
-                                );
                             }
-
-                            // Stop monitoring after game stops
-                            println!(
-                                "🔧 Game {} stopped - Stopping automatic monitoring",
-                                game_id_clone
-                            );
-                            break;
                         }
-                        last_game_state = is_running;
                     }
+                    Err(e) => {
+                        eprintln!("⚠️ Error checking game startup status: {}", e);
+                    }
+                }
+                
+                // Wait 1 second before next startup check
+                thread::sleep(Duration::from_secs(1));
+                continue;
+            }
+
+            // Active monitoring phase - game is running, monitor for stop
+            match check_game_running_internal(&game_id_clone) {
+                Ok(is_running) => {
+                    consecutive_errors = 0; // Reset error counter on success
+
+                    if !is_running {
+                        // Game has stopped - handle cleanup
+                        handle_game_stopped_cleanup(&game_id_clone);
+
+                        // Stop proxy
+                        if proxy::is_proxy_running() {
+                            match proxy::force_stop_proxy() {
+                                Ok(_) => {
+                                    proxy_started_by_us = false;
+                                    println!("🎮 Game {} stopped - Proxy force stopped automatically", game_id_clone);
+                                }
+                                Err(e) => {
+                                    eprintln!("⚠️ Failed to force stop proxy when game stopped: {}", e);
+                                    // Try regular stop as fallback
+                                    match proxy::stop_proxy() {
+                                        Ok(_) => {
+                                            proxy_started_by_us = false;
+                                            println!("🎮 Game {} stopped - Proxy stopped with fallback method", game_id_clone);
+                                        }
+                                        Err(e2) => {
+                                            eprintln!("⚠️ Failed to stop proxy with fallback method: {}", e2);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Stop monitoring after game stops
+                        println!("🔧 Game {} stopped - Stopping automatic monitoring", game_id_clone);
+                        break;
+                    }
+                    // Game is still running, continue monitoring
                 }
                 Err(e) => {
                     consecutive_errors += 1;
@@ -567,8 +587,8 @@ pub fn start_game_monitor(game_id: Number) -> Result<String, String> {
                 }
             }
 
-            // Wait 1 second before next check
-            thread::sleep(Duration::from_secs(1));
+            // Wait 3 seconds before next check (reduced frequency since we only monitor for stop)
+            thread::sleep(Duration::from_secs(3));
         }
 
         // Clean up proxy if we started it when monitor stops
@@ -690,13 +710,34 @@ pub fn is_game_monitor_active() -> Result<bool, String> {
     Ok(monitor_state.is_some())
 }
 
+/// Force stop game monitor - ensures clean shutdown
+#[command]
+pub fn force_stop_game_monitor() -> Result<String, String> {
+    let mut monitor_state = GAME_MONITOR_STATE
+        .lock()
+        .map_err(|e| format!("Failed to lock monitor state: {}", e))?;
+    
+    if let Some(mut handle) = monitor_state.take() {
+        *handle.should_stop.lock().unwrap() = true;
+        if let Some(thread_handle) = handle.thread_handle.take() {
+            // Give thread time to cleanup
+            thread::sleep(Duration::from_millis(100));
+            let _ = thread_handle.join();
+        }
+        println!("🔧 Game monitor force stopped and cleaned up");
+        Ok("Game monitor stopped".to_string())
+    } else {
+        Ok("No monitor was running".to_string())
+    }
+}
+
 /// Stop a game process by PID
 #[command]
 pub fn stop_game_process(process_id: u32) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         // First check if the process exists
-        let check_output = Command::new("tasklist")
+        let check_output = create_hidden_command("tasklist")
             .args(["/FI", &format!("PID eq {}", process_id)])
             .output()
             .map_err(|e| format!("Failed to check process existence: {}", e))?;
@@ -712,7 +753,7 @@ pub fn stop_game_process(process_id: u32) -> Result<String, String> {
         }
 
         // Use taskkill to terminate the process by PID
-        let output = Command::new("taskkill")
+        let output = create_hidden_command("taskkill")
             .args(["/PID", &process_id.to_string(), "/F"])
             .output()
             .map_err(|e| format!("Failed to execute taskkill: {}", e))?;
@@ -753,7 +794,7 @@ pub fn stop_game(game_id: Number) -> Result<String, String> {
 
         // Try to terminate each possible executable
         for game_exe_name in game_exe_names {
-            let output = Command::new("taskkill")
+            let output = create_hidden_command("taskkill")
                 .args(["/IM", game_exe_name, "/F"])
                 .output()
                 .map_err(|e| format!("Failed to execute taskkill: {}", e))?;

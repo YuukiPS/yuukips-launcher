@@ -14,7 +14,6 @@ interface GameDetailsProps {
 }
 
 // Constants
-const MONITOR_INTERVAL_MS = 2000; // 2sec
 const STORAGE_KEY_PREFIX = 'game-';
 const STORAGE_KEY_SUFFIX = '-directories-v2';
 
@@ -77,13 +76,13 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
     // Clear any existing interval
     stopGameMonitoring();
     
-    // Start monitoring every 2sec - check both game status and monitor status
+    // Start lightweight monitoring - only check if backend monitor is active
+    // Backend monitor handles all game state detection and proxy management
     const interval = setInterval(async () => {
       try {
-        // Check if backend game monitor is still active (primary check)
+        // Only check if backend game monitor is still active
         const isMonitorActive = await invoke('is_game_monitor_active');
         
-        // Get current state using functional update
         setIsGameRunning(currentIsGameRunning => {
           if (!isMonitorActive && currentIsGameRunning) {
             // Backend monitor stopped, which means game stopped
@@ -93,28 +92,15 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
           
           return currentIsGameRunning;
         });
-        
-        // Also check game running status as backup
-        const isRunning = await invoke('check_game_running', { gameId: game.id });
-        
-        setIsGameRunning(currentIsGameRunning => {
-          if (!isRunning && currentIsGameRunning) {
-            // Game has stopped
-            handleGameStopped();
-            return false;
-          }
-          
-          return currentIsGameRunning;
-        });
       } catch (error) {
-        console.error('Error checking game status:', error);
+        console.error('Error checking monitor status:', error);
         // If we can't check status, assume game stopped
         handleGameStopped();
       }
-    }, MONITOR_INTERVAL_MS);
+    }, 5000); // Check every 5 seconds (reduced frequency)
     
     setMonitorInterval(interval);
-  }, [game.id, stopGameMonitoring, handleGameStopped]);
+  }, [stopGameMonitoring, handleGameStopped]);
 
   const launchGameWithEngine = useCallback(async (engine: GameEngine, version: string, channel: number) => {
     try {
@@ -194,6 +180,9 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
 
   const handleStopGame = useCallback(async () => {
     try {
+      // Force stop the game monitor for clean shutdown
+      await invoke('force_stop_game_monitor');
+      
       if (gameProcessId) {
         await invoke('stop_game_process', { processId: gameProcessId });
       } else {

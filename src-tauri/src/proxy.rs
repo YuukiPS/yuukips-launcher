@@ -29,6 +29,19 @@ use rustls_pemfile as pemfile;
 
 use std::env;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+/// Create a command with hidden window on Windows
+fn create_hidden_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
 // Helper function to get data directory
 fn get_data_dir() -> Result<PathBuf, String> {
     if let Some(home) = env::var_os("USERPROFILE") {
@@ -301,7 +314,13 @@ pub fn connect_to_proxy(proxy_port: u16) {
         .unwrap();
     settings.set_value("ProxyEnable", &Data::U32(1)).unwrap();
 
-    println!("Connected to the proxy.");
+    // Display the proxy domains being used
+    if let Ok(user_domains) = USER_PROXY_DOMAINS.lock() {
+        println!("Connected to the proxy on port {}.", proxy_port);
+        println!("Active proxy domains ({} total):", user_domains.len());
+    } else {
+        println!("Connected to the proxy.");
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -321,6 +340,17 @@ pub fn connect_to_proxy(proxy_port: u16) {
             .insert("https_proxy".to_string(), proxy_addr);
     }
     Config::update(config);
+
+    // Display the proxy domains being used
+    if let Ok(user_domains) = USER_PROXY_DOMAINS.lock() {
+        println!("Connected to the proxy on port {}.", proxy_port);
+        println!("Active proxy domains ({} total):", user_domains.len());
+        for (index, domain) in user_domains.iter().enumerate() {
+            println!("  {}. {}", index + 1, domain);
+        }
+    } else {
+        println!("Connected to the proxy.");
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -437,7 +467,7 @@ pub fn generate_ca_files(path: &Path) {
  */
 #[cfg(windows)]
 pub fn install_ca_files(cert_path: &Path) {
-    Command::new("certutil")
+    create_hidden_command("certutil")
         .args(["-addstore", "-f", "Root", &cert_path.to_string_lossy()])
         .output()
         .expect("Failed to install certificate");
@@ -446,7 +476,7 @@ pub fn install_ca_files(cert_path: &Path) {
 
 #[cfg(target_os = "macos")]
 pub fn install_ca_files(cert_path: &Path) {
-    Command::new("security")
+    create_hidden_command("security")
         .args([
             "add-trusted-cert",
             "-d",
@@ -497,13 +527,13 @@ fi
     .expect("Failed to write script");
 
     // Make the script executable.
-    Command::new("chmod")
+    create_hidden_command("chmod")
         .args(["a+x", script.to_str().unwrap()])
         .output()
         .expect("Failed to make script executable");
 
     // Run the script as root.
-    Command::new("pkexec")
+    create_hidden_command("pkexec")
         .args([script.to_str().unwrap()])
         .output()
         .expect("Failed to run script");
@@ -635,6 +665,27 @@ pub fn start_proxy() -> Result<String, String> {
         disconnect_from_proxy();
     }
 
+    // Check if user proxy domains are empty, if so, initialize with default domains
+    let domains_to_use = {
+        let mut user_domains = USER_PROXY_DOMAINS
+            .lock()
+            .map_err(|e| format!("Failed to lock user domains: {}", e))?;
+        
+        if user_domains.is_empty() {
+            if let Ok(default_domains) = DEFAULT_PROXY_DOMAINS.lock() {
+                *user_domains = default_domains.clone();
+                println!("User proxy domains were empty, initialized with default domains");
+            }
+        }
+        user_domains.clone()
+    };
+
+    // Log the proxy domains that will be used
+    println!("Proxy starting with the following domains:");
+    for (index, domain) in domains_to_use.iter().enumerate() {
+        println!("  {}. {}", index + 1, domain);
+    }
+
     let runtime = Runtime::new().map_err(|e| format!("Failed to create runtime: {}", e))?;
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
@@ -656,7 +707,7 @@ pub fn start_proxy() -> Result<String, String> {
     // Re-establish proxy connection after starting
     connect_to_proxy(proxy_port);
 
-    Ok(format!("Proxy started successfully on port {}", proxy_port))
+    Ok(format!("Proxy started successfully on port {} with {} domains configured", proxy_port, domains_to_use.len()))
 }
 
 #[tauri::command]
@@ -715,6 +766,40 @@ pub fn get_all_proxy_domains() -> Result<Vec<String>, String> {
     }
     
     Ok(all_domains)
+}
+
+#[tauri::command]
+pub fn get_active_proxy_domains() -> Result<Vec<String>, String> {
+    USER_PROXY_DOMAINS
+        .lock()
+        .map(|domains| domains.clone())
+        .map_err(|e| format!("Failed to get active proxy domains: {}", e))
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ProxyStatus {
+    pub is_running: bool,
+    pub port: u16,
+    pub active_domains: Vec<String>,
+    pub domains_count: usize,
+}
+
+#[tauri::command]
+pub fn get_proxy_status_with_domains() -> Result<ProxyStatus, String> {
+    let is_running = is_proxy_running();
+    let port = *PROXY_PORT.lock().unwrap();
+    let active_domains = USER_PROXY_DOMAINS
+        .lock()
+        .map(|domains| domains.clone())
+        .unwrap_or_default();
+    let domains_count = active_domains.len();
+
+    Ok(ProxyStatus {
+        is_running,
+        port,
+        active_domains,
+        domains_count,
+    })
 }
 
 #[tauri::command]

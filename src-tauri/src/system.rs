@@ -4,6 +4,22 @@
 use std::process::Command;
 use tauri::command;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+/// Helper function to create a Command with hidden window on Windows
+#[cfg(target_os = "windows")]
+fn create_hidden_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    cmd
+}
+
+#[cfg(not(target_os = "windows"))]
+fn create_hidden_command(program: &str) -> Command {
+    Command::new(program)
+}
+
 /// Check if the application is running with administrator privileges
 #[cfg(target_os = "windows")]
 pub fn is_running_as_admin() -> bool {
@@ -56,7 +72,7 @@ pub fn check_and_disable_windows_proxy() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         // Check current proxy settings
-        let check_output = Command::new("reg")
+        let check_output = create_hidden_command("reg")
             .args([
                 "query",
                 "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
@@ -74,7 +90,7 @@ pub fn check_and_disable_windows_proxy() -> Result<String, String> {
                 println!("🔧 Windows proxy is enabled, attempting to disable...");
 
                 // Disable proxy
-                let disable_output = Command::new("reg")
+                let disable_output = create_hidden_command("reg")
                     .args([
                         "add",
                         "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
@@ -120,7 +136,7 @@ pub fn install_ssl_certificate(cert_path: String) -> Result<String, String> {
         }
 
         // Use certutil to install the certificate
-        let output = Command::new("certutil")
+        let output = create_hidden_command("certutil")
             .args(["-addstore", "Root", &cert_path])
             .output()
             .map_err(|e| format!("Failed to execute certutil: {}", e))?;
@@ -163,7 +179,7 @@ pub fn install_ssl_certificate(cert_path: String) -> Result<String, String> {
 pub fn check_certificate_status(cert_name: String) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
-        let output = Command::new("certutil")
+        let output = create_hidden_command("certutil")
             .args(["-store", "Root", &cert_name])
             .output()
             .map_err(|e| format!("Failed to execute certutil: {}", e))?;
@@ -189,7 +205,7 @@ pub fn check_certificate_status(cert_name: String) -> Result<bool, String> {
 pub fn check_ssl_certificate_installed(cert_thumbprint: String) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
-        let output = Command::new("certutil")
+        let output = create_hidden_command("certutil")
             .args(["-store", "Root"])
             .output()
             .map_err(|e| format!("Failed to execute certutil: {}", e))?;
@@ -220,7 +236,7 @@ pub fn get_system_info() -> Result<String, String> {
         let mut info = std::collections::HashMap::new();
 
         // Get OS version
-        if let Ok(output) = Command::new("ver").output() {
+        if let Ok(output) = create_hidden_command("ver").output() {
             if output.status.success() {
                 let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 info.insert("os_version", version);
@@ -228,7 +244,7 @@ pub fn get_system_info() -> Result<String, String> {
         }
 
         // Get computer name
-        if let Ok(output) = Command::new("hostname").output() {
+        if let Ok(output) = create_hidden_command("hostname").output() {
             if output.status.success() {
                 let hostname = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 info.insert("hostname", hostname);
@@ -236,7 +252,7 @@ pub fn get_system_info() -> Result<String, String> {
         }
 
         // Get current user
-        if let Ok(output) = Command::new("whoami").output() {
+        if let Ok(output) = create_hidden_command("whoami").output() {
             if output.status.success() {
                 let username = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 info.insert("username", username);
@@ -269,7 +285,7 @@ pub fn get_system_info() -> Result<String, String> {
 pub fn check_windows_defender_status() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        let output = Command::new("powershell")
+        let output = create_hidden_command("powershell")
             .args([
                 "-Command",
                 "Get-MpPreference | Select-Object DisableRealtimeMonitoring",
@@ -308,7 +324,7 @@ pub fn check_windows_defender_status() -> Result<String, String> {
 pub fn get_dotnet_versions() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        let output = Command::new("reg")
+        let output = create_hidden_command("reg")
             .args([
                 "query",
                 "HKLM\\SOFTWARE\\Microsoft\\NET Framework Setup\\NDP",
@@ -355,7 +371,7 @@ pub fn get_dotnet_versions() -> Result<String, String> {
 pub fn check_service_status(service_name: String) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        let output = Command::new("sc")
+        let output = create_hidden_command("sc")
             .args(["query", &service_name])
             .output()
             .map_err(|e| format!("Failed to query service status: {}", e))?;
