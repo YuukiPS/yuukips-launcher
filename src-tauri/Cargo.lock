@@ -3714,10 +3714,12 @@ dependencies = [
  "system-configuration",
  "tokio",
  "tokio-native-tls",
+ "tokio-util",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams",
  "web-sys",
  "winreg 0.50.0",
 ]
@@ -6475,10 +6477,11 @@ dependencies = [
 
 [[package]]
 name = "yuukips-launcher"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "async-trait",
  "chrono",
+ "futures-util",
  "hudsucker",
  "hyper-rustls",
  "log",

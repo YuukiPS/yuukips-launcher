@@ -2,7 +2,29 @@
 //! Handles HTTP client creation and network requests
 
 use reqwest;
-use tauri::command;
+use serde::{Deserialize, Serialize};
+use tauri::{command, AppHandle, Emitter};
+use std::fs::File;
+use std::io;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
+use tokio::io::AsyncWriteExt;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GitHubRelease {
+    pub tag_name: String,
+    pub name: String,
+    pub body: String,
+    pub published_at: String,
+    pub assets: Vec<GitHubAsset>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GitHubAsset {
+    pub name: String,
+    pub browser_download_url: String,
+    pub size: u64,
+}
 
 /// Create an HTTP client with optional proxy bypass
 pub fn create_http_client(use_proxy: bool) -> Result<reqwest::Client, String> {
@@ -151,4 +173,171 @@ pub fn test_network_connectivity() -> Result<String, String> {
         serde_json::to_string(&summary)
             .map_err(|e| format!("Failed to serialize connectivity test results: {}", e))
     })
+}
+
+/// Get the current version from Cargo.toml
+#[command]
+pub fn get_current_version() -> Result<String, String> {
+    Ok(env!("CARGO_PKG_VERSION").to_string())
+}
+
+/// Fetch the latest release information from GitHub API
+#[command]
+pub async fn fetch_latest_release(url: String) -> Result<GitHubRelease, String> {
+    let client = create_http_client(false)?; // Bypass proxy for GitHub API
+    
+    println!("🔍 Fetching latest release from: {}", url);
+    
+    let response = client
+        .get(&url)
+        .header("Accept", "application/vnd.github.v3+json")
+        .header("User-Agent", "YuukiPS-Launcher")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch release info: {}", e))?;
+    
+    if !response.status().is_success() {
+        return Err(format!("GitHub API returned status: {}", response.status()));
+    }
+    
+    let release: GitHubRelease = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse release JSON: {}", e))?;
+    
+    println!("✅ Found release: {} ({})", release.name, release.tag_name);
+    Ok(release)
+}
+
+/// Download and install update
+#[command]
+pub async fn download_and_install_update(
+    app_handle: AppHandle,
+    download_url: String,
+    progress_callback: Option<String>,
+) -> Result<(), String> {
+    let client = create_http_client(false)?;
+    
+    println!("📥 Starting download from: {}", download_url);
+    
+    // Get the response
+    let response = client
+        .get(&download_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to start download: {}", e))?;
+    
+    if !response.status().is_success() {
+        return Err(format!("Download failed with status: {}", response.status()));
+    }
+    
+    let total_size = response.content_length().unwrap_or(0);
+    
+    // Create temporary file for download
+    let temp_dir = std::env::temp_dir();
+    let file_name = download_url
+        .split('/')
+        .last()
+        .unwrap_or("yuukips_launcher_update")
+        .to_string();
+    let temp_file_path = temp_dir.join(&file_name);
+    
+    let mut file = tokio::fs::File::create(&temp_file_path)
+        .await
+        .map_err(|e| format!("Failed to create temp file: {}", e))?;
+    
+    let mut downloaded = 0u64;
+    let mut stream = response.bytes_stream();
+    let start_time = Instant::now();
+    
+    // Download with progress tracking
+    use futures_util::StreamExt;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("Download error: {}", e))?;
+        
+        file.write_all(&chunk)
+            .await
+            .map_err(|e| format!("Failed to write to file: {}", e))?;
+        
+        downloaded += chunk.len() as u64;
+        
+        // Emit progress event if callback is provided
+        if let Some(ref callback) = progress_callback {
+            let elapsed = start_time.elapsed().as_secs_f64();
+            let speed = if elapsed > 0.0 { downloaded as f64 / elapsed } else { 0.0 };
+            
+            let progress = serde_json::json!({
+                "downloaded": downloaded,
+                "total": total_size,
+                "percentage": if total_size > 0 { (downloaded as f64 / total_size as f64) * 100.0 } else { 0.0 },
+                "speed": speed
+            });
+            
+            let _ = app_handle.emit(callback, progress);
+        }
+    }
+    
+    file.flush().await.map_err(|e| format!("Failed to flush file: {}", e))?;
+    
+    println!("✅ Download completed: {} bytes", downloaded);
+    
+    // Install the update (for Windows, this would typically be an MSI or EXE)
+    install_update(&temp_file_path).await?;
+    
+    Ok(())
+}
+
+/// Install the downloaded update
+async fn install_update(file_path: &PathBuf) -> Result<(), String> {
+    let file_name = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    
+    println!("🔧 Installing update: {}", file_name);
+    
+    if file_name.ends_with(".msi") {
+        // Install MSI package
+        let output = std::process::Command::new("msiexec")
+            .args(["/i", file_path.to_str().unwrap(), "/quiet", "/norestart"])
+            .output()
+            .map_err(|e| format!("Failed to run msiexec: {}", e))?;
+        
+        if !output.status.success() {
+            return Err(format!(
+                "MSI installation failed: {}", 
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+    } else if file_name.ends_with(".exe") {
+        // Run executable installer
+        let output = std::process::Command::new(file_path)
+            .args(["/S"]) // Silent install flag (may vary by installer)
+            .output()
+            .map_err(|e| format!("Failed to run installer: {}", e))?;
+        
+        if !output.status.success() {
+            return Err(format!(
+                "Installer failed: {}", 
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+    } else {
+        return Err("Unsupported update file format".to_string());
+    }
+    
+    println!("✅ Update installed successfully");
+    Ok(())
+}
+
+/// Restart the application
+#[command]
+pub async fn restart_application(app_handle: AppHandle) -> Result<(), String> {
+    println!("🔄 Restarting application...");
+    
+    // Give a small delay to ensure the response is sent
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    
+    app_handle.restart();
+    // Note: This function will never return as the app restarts
 }

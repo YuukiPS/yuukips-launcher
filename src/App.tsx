@@ -4,10 +4,12 @@ import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { GameDetails } from './components/GameDetails';
 import { NewsPanel } from './components/NewsPanel';
+import { UpdateModal } from './components/UpdateModal';
 import { newsItems } from './data/news';
 import { socialLinks } from './data/socialLinks';
 import { Game } from './types';
 import { GameApiService } from './services/gameApi';
+import { UpdateService, UpdateInfo } from './services/updateService';
 import { Megaphone, MessageCircle, Twitter, Youtube, Tv, Loader } from 'lucide-react';
 
 function App() {
@@ -15,6 +17,11 @@ function App() {
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null);
   const [runningGameId, setRunningGameId] = useState<number | null>(null);
   const gamesLoadedRef = useRef(false);
+  
+  // Update-related state
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [updateCheckCompleted, setUpdateCheckCompleted] = useState(false);
   
   const handleGameSelect = (gameId: string | number) => {
     // Prevent game selection if any game is currently running
@@ -53,10 +60,40 @@ function App() {
     }
   }, [selectedGameId]);
 
-  // Function to manually refresh games list
+  // Check for updates on startup
+  const checkForUpdates = useCallback(async () => {
+    if (updateCheckCompleted) return;
+    
+    try {
+      console.log('🔍 Checking for updates...');
+      const updateInfo = await UpdateService.checkForUpdates();
+      
+      if (updateInfo.available) {
+        console.log('✅ Update available:', updateInfo.latestVersion);
+        setUpdateInfo(updateInfo);
+        setShowUpdateModal(true);
+      } else {
+        console.log('✅ No updates available');
+      }
+    } catch (error) {
+      console.error('❌ Update check failed:', error);
+      // Don't show error to user, just log it
+    } finally {
+      setUpdateCheckCompleted(true);
+    }
+  }, [updateCheckCompleted]);
+  
+  // Function to manually refresh games list and check for updates on startup
   useEffect(() => {
     loadGames();
-  }, [loadGames]);
+    
+    // Check for updates after a short delay to ensure proxy is disabled first
+    const updateCheckTimer = setTimeout(() => {
+      checkForUpdates();
+    }, 2000); // 2 second delay
+    
+    return () => clearTimeout(updateCheckTimer);
+  }, [loadGames, checkForUpdates]);
 
   const handleGameUpdate = (updatedGame: Game) => {
     setGames(prevGames => 
@@ -185,6 +222,15 @@ function App() {
           isOpen={showNews}
           onClose={() => setShowNews(false)}
         />
+        
+        {/* Update Modal */}
+        {updateInfo && (
+          <UpdateModal
+            isOpen={showUpdateModal}
+            onClose={() => setShowUpdateModal(false)}
+            updateInfo={updateInfo}
+          />
+        )}
       </div>
     </div>
   );
