@@ -39,7 +39,6 @@ export interface TauriCommands {
   get_all_proxy_domains(): Promise<string[]>;
   initialize_user_domains_if_empty(): Promise<string[]>;
   check_and_disable_windows_proxy(): Promise<string>;
-  check_admin_privileges(): Promise<boolean>;
   install_ssl_certificate(): Promise<string>;
   check_ssl_certificate_installed(): Promise<boolean>;
   launch_game(

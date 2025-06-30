@@ -22,15 +22,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             // System functions
-            check_admin_privileges,
+            is_admin,
             check_and_disable_windows_proxy,
             install_ssl_certificate,
-            check_certificate_status,
-            check_ssl_certificate_installed,
-            get_system_info,
-            check_windows_defender_status,
-            get_dotnet_versions,
-            check_service_status,
             // Proxy functions
             proxy::get_proxy_addr,
             proxy::set_proxy_addr,
@@ -79,7 +73,28 @@ pub fn run() {
             check_patch_status,
             restore_game_files,
         ])
-        .setup(|_app| {
+        .setup(|app| {
+            // Check admin privileges at startup - required for patch operations and proxy functionality
+            if !is_running_as_admin() {
+                eprintln!("❌ Administrator privileges required!");
+                eprintln!("This launcher requires administrator access to:");
+                eprintln!("  • Copy and apply game patches");
+                eprintln!("  • Run the proxy server");
+                eprintln!("  • Modify system proxy settings");
+                eprintln!("Please restart the launcher as administrator.");
+                
+                // Show error dialog to user
+                use tauri_plugin_dialog::DialogExt;
+                let _ = app.dialog()
+                    .message("This launcher requires administrator privileges to perform patch operations and run the proxy server.\n\nPlease restart the application as administrator.")
+                    .title("Administrator Required")
+                    .blocking_show();
+                
+                std::process::exit(1);
+            }
+            
+            println!("✅ Running with administrator privileges");
+            
             // Check and disable Windows proxy on startup
             match check_and_disable_windows_proxy() {
                 Ok(message) => println!("🔧 Startup proxy check: {}", message),

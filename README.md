@@ -11,6 +11,27 @@ A modern game launcher built with React, TypeScript, Tailwind CSS, and Tauri for
 - ⚙️ Game settings and configuration
 - 🔄 Real-time game installation status
 - 🎨 Beautiful UI with Tailwind CSS
+- 🔒 Administrator privilege enforcement for secure operations
+- 🌐 Built-in proxy server functionality
+- 🔧 Automatic game patching capabilities
+
+## ⚠️ Administrator Requirements
+
+**This launcher requires administrator privileges to function properly.**
+
+The application needs admin access for:
+- **Game Patching**: Copying and applying game patches to protected directories
+- **Proxy Server**: Running the built-in proxy server on system ports
+- **System Configuration**: Modifying Windows proxy settings when needed
+
+### Installation
+- The installer will automatically request administrator privileges
+- Always install as administrator when prompted
+
+### Running the Application
+- The launcher will check for admin privileges at startup
+- If not running as admin, the application will display an error and exit
+- **Solution**: Right-click the launcher and select "Run as administrator"
 
 ## Development
 
