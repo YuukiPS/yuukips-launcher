@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Gamepad2, Settings, User, Bell, TestTube } from 'lucide-react';
 import { WindowControls } from './WindowControls';
 import ProxyTestModal from './ProxyTestModal';
+import packageJson from '../../package.json';
 
 export const Header: React.FC = () => {
   const [isTauri, setIsTauri] = useState(false);
@@ -21,7 +22,7 @@ export const Header: React.FC = () => {
             </div>
             <div>
               <h1 className="text-xl font-bold text-white">YuukiPS Launcher</h1>
-              <p className="text-gray-400 text-sm">{isTauri ? 'Desktop Version' : 'Web Version'}</p>
+              <p className="text-gray-400 text-sm">{isTauri ? 'Desktop Version' : 'Web Version'} v{packageJson.version}</p>
             </div>
           </div>
 
