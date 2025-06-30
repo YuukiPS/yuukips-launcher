@@ -1,11 +1,11 @@
 {
   "name": "yuukips-launcher",
   "private": true,
-  "version": "0.0.3",
+  "version": "0.0.7",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "update": "npm version patch --no-git-tag-version",
+    "update": "npm version patch --no-git-tag-version && node sync-version.cjs",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",

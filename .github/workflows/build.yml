@@ -10,7 +10,7 @@ on:
 jobs:
   create-tag:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && !contains(github.event.head_commit.message, '(skip)')
     outputs:
       version: ${{ steps.get-version.outputs.version }}
       tag-created: ${{ steps.create-tag.outputs.tag-created }}
@@ -53,7 +53,7 @@ jobs:
 
   build:
     needs: create-tag
-    if: always() && (needs.create-tag.outputs.tag-created == 'true' || github.event_name == 'workflow_dispatch')
+    if: always() && (needs.create-tag.outputs.tag-created == 'true' || github.event_name == 'workflow_dispatch') && !contains(github.event.head_commit.message, '(skip)')
     strategy:
       fail-fast: false
       matrix:
@@ -124,7 +124,7 @@ jobs:
   release:
     needs: [create-tag, build]
     runs-on: ubuntu-latest
-    if: always() && needs.create-tag.outputs.tag-created == 'true' && needs.build.result == 'success'
+    if: always() && needs.create-tag.outputs.tag-created == 'true' && needs.build.result == 'success' && !contains(github.event.head_commit.message, '(skip)')
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

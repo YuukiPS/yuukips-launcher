@@ -91,38 +91,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
 
 [[package]]
-name = "app"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "hudsucker",
- "hyper-rustls",
- "log",
- "md5",
- "once_cell",
- "rcgen 0.13.2",
- "regex",
- "registry",
- "reqwest 0.11.27",
- "rustls-pemfile",
- "scopeguard",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-log",
- "tauri-plugin-opener",
- "time",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "winapi",
- "winreg 0.52.0",
-]
-
-[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6503,6 +6471,38 @@ dependencies = [
  "quote",
  "syn 2.0.104",
  "synstructure 0.13.2",
+]
+
+[[package]]
+name = "yuukips-launcher"
+version = "0.0.7"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "hudsucker",
+ "hyper-rustls",
+ "log",
+ "md5",
+ "once_cell",
+ "rcgen 0.13.2",
+ "regex",
+ "registry",
+ "reqwest 0.11.27",
+ "rustls-pemfile",
+ "scopeguard",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-log",
+ "tauri-plugin-opener",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "winapi",
+ "winreg 0.52.0",
 ]
 
 [[package]]
