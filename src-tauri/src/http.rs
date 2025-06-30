@@ -279,13 +279,32 @@ pub async fn download_and_install_update(
     
     println!("✅ Download completed: {} bytes", downloaded);
     
-    // Install the update (for Windows, this would typically be an MSI or EXE)
-    install_update(&temp_file_path).await?;
+    // Install the update with automatic launcher termination
+    install_update_with_termination(&temp_file_path).await?;
     
     Ok(())
 }
 
-/// Install the downloaded update with admin privileges
+/// Install the downloaded update with automatic launcher termination
+async fn install_update_with_termination(file_path: &PathBuf) -> Result<(), String> {
+    let file_name = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    
+    println!("🔧 Installing update with launcher termination: {}", file_name);
+    
+    // Create a batch script that will handle the installation after launcher termination
+    if file_name.ends_with(".msi") {
+        create_and_run_msi_installer_script(file_path).await
+    } else if file_name.ends_with(".exe") {
+        create_and_run_exe_installer_script(file_path).await
+    } else {
+        Err("Unsupported update file format".to_string())
+    }
+}
+
+/// Install the downloaded update with admin privileges (legacy function)
 async fn install_update(file_path: &PathBuf) -> Result<(), String> {
     let file_name = file_path
         .file_name()
@@ -438,7 +457,129 @@ async fn install_exe_with_admin(file_path: &PathBuf) -> Result<(), String> {
     }
 }
 
+/// Create and run MSI installer script that terminates launcher first
+#[cfg(target_os = "windows")]
+async fn create_and_run_msi_installer_script(file_path: &PathBuf) -> Result<(), String> {
+    use std::fs;
+    use std::process::Command;
+    
+    let file_path_str = file_path.to_str().ok_or("Invalid file path")?;
+    let temp_dir = std::env::temp_dir();
+    let script_path = temp_dir.join("yuukips_update_installer.bat");
+    
+    // Get current executable path for restarting
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("Failed to get current executable path: {}", e))?
+        .to_str()
+        .ok_or("Invalid current executable path")?
+        .to_string();
+    
+    // Create batch script that will:
+    // 1. Wait for launcher to close
+    // 2. Install the MSI with admin privileges
+    // 3. Restart the launcher
+    // 4. Clean up
+    let script_content = format!(r#"@echo off
+echo Waiting for launcher to close...
+timeout /t 3 /nobreak >nul
+echo Installing update...
+powershell -Command "Start-Process 'msiexec' -ArgumentList '/i \"{}\", /quiet, /norestart' -Verb RunAs -Wait"
+if %ERRORLEVEL% EQU 0 (
+    echo Update installed successfully
+    echo Restarting launcher...
+    start "" "{}"
+) else (
+    echo Update installation failed
+    pause
+)
+echo Cleaning up...
+del "%~f0"
+"#, file_path_str, current_exe);
+    
+    // Write the script to temp directory
+    fs::write(&script_path, script_content)
+        .map_err(|e| format!("Failed to create installer script: {}", e))?;
+    
+    // Start the script in a new process
+    Command::new("cmd")
+        .args(["/c", "start", "", script_path.to_str().unwrap()])
+        .spawn()
+        .map_err(|e| format!("Failed to start installer script: {}", e))?;
+    
+    println!("✅ Installer script started, terminating launcher...");
+    
+    // Give the script time to start, then terminate this process
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    std::process::exit(0);
+}
+
+/// Create and run EXE installer script that terminates launcher first
+#[cfg(target_os = "windows")]
+async fn create_and_run_exe_installer_script(file_path: &PathBuf) -> Result<(), String> {
+    use std::fs;
+    use std::process::Command;
+    
+    let file_path_str = file_path.to_str().ok_or("Invalid file path")?;
+    let temp_dir = std::env::temp_dir();
+    let script_path = temp_dir.join("yuukips_update_installer.bat");
+    
+    // Get current executable path for restarting
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("Failed to get current executable path: {}", e))?
+        .to_str()
+        .ok_or("Invalid current executable path")?
+        .to_string();
+    
+    // Create batch script that will:
+    // 1. Wait for launcher to close
+    // 2. Install the EXE with admin privileges
+    // 3. Restart the launcher
+    // 4. Clean up
+    let script_content = format!(r#"@echo off
+echo Waiting for launcher to close...
+timeout /t 3 /nobreak >nul
+echo Installing update...
+powershell -Command "Start-Process '{}' -ArgumentList '/S' -Verb RunAs -Wait"
+if %ERRORLEVEL% EQU 0 (
+    echo Update installed successfully
+    echo Restarting launcher...
+    start "" "{}"
+) else (
+    echo Update installation failed
+    pause
+)
+echo Cleaning up...
+del "%~f0"
+"#, file_path_str, current_exe);
+    
+    // Write the script to temp directory
+    fs::write(&script_path, script_content)
+        .map_err(|e| format!("Failed to create installer script: {}", e))?;
+    
+    // Start the script in a new process
+    Command::new("cmd")
+        .args(["/c", "start", "", script_path.to_str().unwrap()])
+        .spawn()
+        .map_err(|e| format!("Failed to start installer script: {}", e))?;
+    
+    println!("✅ Installer script started, terminating launcher...");
+    
+    // Give the script time to start, then terminate this process
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    std::process::exit(0);
+}
+
 /// Non-Windows fallback implementations
+#[cfg(not(target_os = "windows"))]
+async fn create_and_run_msi_installer_script(_file_path: &PathBuf) -> Result<(), String> {
+    Err("MSI installation is only supported on Windows".to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn create_and_run_exe_installer_script(_file_path: &PathBuf) -> Result<(), String> {
+    Err("EXE installation with admin privileges is only supported on Windows".to_string())
+}
+
 #[cfg(not(target_os = "windows"))]
 async fn install_msi_with_admin(_file_path: &PathBuf) -> Result<(), String> {
     Err("MSI installation is only supported on Windows".to_string())
