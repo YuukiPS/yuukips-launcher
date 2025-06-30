@@ -3,13 +3,57 @@ name: Build and Release
 on:
   push:
     branches: [ main, master ]
-    tags: [ 'v*' ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
+  create-tag:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+      tag-created: ${{ steps.create-tag.outputs.tag-created }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version from package.json
+        id: get-version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=v$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: v$VERSION"
+
+      - name: Check if tag exists
+        id: check-tag
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            echo "tag-exists=true" >> $GITHUB_OUTPUT
+            echo "Tag v$VERSION already exists"
+          else
+            echo "tag-exists=false" >> $GITHUB_OUTPUT
+            echo "Tag v$VERSION does not exist"
+          fi
+
+      - name: Create and push tag
+        id: create-tag
+        if: steps.check-tag.outputs.tag-exists == 'false'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "Release v$VERSION"
+          git push origin "v$VERSION"
+          echo "tag-created=true" >> $GITHUB_OUTPUT
+          echo "Created and pushed tag v$VERSION"
+
   build:
+    needs: create-tag
+    if: always() && (needs.create-tag.outputs.tag-created == 'true' || github.event_name == 'workflow_dispatch')
     strategy:
       fail-fast: false
       matrix:
@@ -58,10 +102,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'YuukiPS Launcher v__VERSION__'
+          tagName: ${{ needs.create-tag.outputs.version }}
+          releaseName: 'YuukiPS Launcher ${{ needs.create-tag.outputs.version }}'
           releaseBody: 'See the assets to download and install this version.'
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
 
@@ -78,10 +122,45 @@ jobs:
           if-no-files-found: warn
 
   release:
-    needs: build
+    needs: [create-tag, build]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: always() && needs.create-tag.outputs.tag-created == 'true' && needs.build.result == 'success'
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes from commits
+        id: release-notes
+        run: |
+          VERSION=${{ needs.create-tag.outputs.version }}
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          if [ -z "$PREVIOUS_TAG" ]; then
+            # If no previous tag, get all commits
+            COMMITS=$(git log --pretty=format:"- %s" --reverse)
+          else
+            # Get commits since last tag
+            COMMITS=$(git log --pretty=format:"- %s" --reverse $PREVIOUS_TAG..HEAD)
+          fi
+          
+          # Create release notes
+          echo "## What's Changed" > release_notes.md
+          echo "" >> release_notes.md
+          if [ -n "$COMMITS" ]; then
+            echo "$COMMITS" >> release_notes.md
+          else
+            echo "- No changes since last release" >> release_notes.md
+          fi
+          echo "" >> release_notes.md
+          echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREVIOUS_TAG...$VERSION" >> release_notes.md
+          
+          # Set output for use in release
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          cat release_notes.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -90,6 +169,9 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ needs.create-tag.outputs.version }}
+          name: 'YuukiPS Launcher ${{ needs.create-tag.outputs.version }}'
+          body: ${{ steps.release-notes.outputs.notes }}
           files: |
             artifacts/**/*.msi
             artifacts/**/*.exe
@@ -97,6 +179,5 @@ jobs:
             artifacts/**/*.AppImage
           draft: false
           prerelease: false
-          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
