@@ -5,7 +5,7 @@ import { GameSettingsModal } from './GameSettingsModal';
 import { EngineSelectionModal } from './EngineSelectionModal';
 import { SSLCertificateModal } from './SSLCertificateModal';
 import { invoke } from '@tauri-apps/api/core';
-import { startProxyWithSSLCheck } from '../services/gameApi';
+// Removed startProxyWithSSLCheck import - proxy is now managed by backend after patching
 
 interface GameDetailsProps {
   game: Game;
@@ -77,7 +77,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
     // Clear any existing interval
     stopGameMonitoring();
     
-    // Start monitoring every 500ms - check both game status and monitor status
+    // Start monitoring every 2sec - check both game status and monitor status
     const interval = setInterval(async () => {
       try {
         // Check if backend game monitor is still active (primary check)
@@ -118,20 +118,20 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
 
   const launchGameWithEngine = useCallback(async (engine: GameEngine, version: string, channel: number) => {
     try {
-      const gameFolderPath = getGameFolderPath(version, channel);
-      
+
+      const gameFolderPath = getGameFolderPath(version, channel);      
       if (!gameFolderPath) {
         alert(`Game folder path not configured for ${game.title} version ${version} (Channel ${channel}). Please set it in game settings.`);
         setIsLaunching(false);
         return;
       }
+
+      console.log(`Launching game ${game.id}/${version}/${channel} from folder: ${gameFolderPath}`);
       
-      const result = await invoke('launch_game_with_engine', {
+      const result = await invoke('launch_game', {
         gameId: game.id,
-        gameTitle: game.title,
-        engineId: engine.id,
-        engineName: engine.name,
         version: version,
+        channel: channel,
         gameFolderPath: gameFolderPath
       });
       
@@ -239,10 +239,10 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
   const handleEngineLaunch = useCallback(async (engine: GameEngine, version: string, channel: number) => {
     setIsLaunching(true);
     try {
-      // Check proxy and SSL status before launching
-      const proxyStatus = await startProxyWithSSLCheck();
+      // Check SSL certificate status before launching
+      const sslInstalled = await invoke('check_ssl_certificate_installed');
       
-      if (proxyStatus.needsSSL) {
+      if (!sslInstalled) {
         // Store the pending launch details and show SSL modal
         setPendingLaunch({ engine, version, channel });
         setShowSSLModal(true);
@@ -250,11 +250,11 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
         return;
       }
       
-      // Proceed with game launch
+      // Proceed with game launch - proxy will be started after patching in backend
       await launchGameWithEngine(engine, version, channel);
     } catch (error) {
       console.error('Error in pre-launch checks:', error);
-      // Continue with launch even if proxy check fails
+      // Continue with launch even if SSL check fails
       await launchGameWithEngine(engine, version, channel);
     }
   }, [launchGameWithEngine]);
@@ -266,6 +266,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
       setPendingLaunch(null);
       if (engine && version && channel) {
         setIsLaunching(true);
+        // Proxy will be started after patching in backend
         launchGameWithEngine(engine, version, channel);
       }
     }
@@ -283,6 +284,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
         );
         if (proceed) {
           setIsLaunching(true);
+          // Proxy will be started after patching in backend
           launchGameWithEngine(engine, version, channel);
         }
       }

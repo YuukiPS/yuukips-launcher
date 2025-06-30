@@ -43,6 +43,7 @@ rustls-pemfile = "1.0"
 registry = "1.2"
 chrono = { version = "0.4", features = ["serde"] }
 scopeguard = "1.2"
+md5 = "0.7"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["processthreadsapi", "securitybaseapi", "winnt", "handleapi"] }

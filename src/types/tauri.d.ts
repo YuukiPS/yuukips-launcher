@@ -18,12 +18,10 @@ export interface TauriCommands {
   check_admin_privileges(): Promise<boolean>;
   install_ssl_certificate(): Promise<string>;
   check_ssl_certificate_installed(): Promise<boolean>;
-  launch_game_with_engine(
+  launch_game(
     gameId: number,
-    gameTitle: string,
-    engineId: number,
-    engineName: string,
     version: string,
+    channel: number,
     gameFolderPath: string
   ): Promise<string>;
   get_game_folder_path(gameId: number, version: string): Promise<string>;

@@ -7,16 +7,41 @@ use std::time::Duration;
 use serde_json::Number;
 use serde::{Deserialize, Serialize};
 use tauri::command;
+use std::fs;
+use std::path::Path;
 // Import the proxy module
 mod proxy;
+
+// Import scopeguard for cleanup
+use scopeguard;
 
 // Global game monitoring state
 static GAME_MONITOR_STATE: once_cell::sync::Lazy<Arc<Mutex<Option<GameMonitorHandle>>>> = 
     once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(None)));
 
+// Global download progress state
+static DOWNLOAD_PROGRESS: once_cell::sync::Lazy<Arc<Mutex<Vec<DownloadProgress>>>> = 
+    once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(Vec::new())));
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct DownloadProgress {
+    file_name: String,
+    downloaded: u64,
+    total: u64,
+    percentage: f64,
+    status: String, // "downloading", "completed", "failed"
+}
+
 struct GameMonitorHandle {
     should_stop: Arc<Mutex<bool>>,
     thread_handle: Option<thread::JoinHandle<()>>,
+    game_id: Number,
+    version: String,
+    channel: Number,
+    md5: String,
+    game_folder_path: String,
+    patched_files: Arc<Mutex<Vec<String>>>,
+    patch_response: Arc<Mutex<Option<PatchResponse>>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -24,6 +49,25 @@ struct LaunchResult {
     message: String,
     #[serde(rename = "processId")]
     process_id: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct PatchResponse {
+    patch: bool,
+    proxy: bool,
+    message: String,
+    metode: u32,
+    #[serde(default)]
+    patched: Vec<PatchFile>,
+    #[serde(default)]
+    original: Vec<PatchFile>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct PatchFile {
+    location: String, // location file in game folder, so use path_folder+location
+    md5: String, // for check match file 
+    file: String, // file url to download
 }
 
 // Function to check if running as administrator on Windows
@@ -284,19 +328,17 @@ fn get_game_folder_path(game_id: Number, version: String) -> Result<String, Stri
 }
 
 #[command]
-fn launch_game_with_engine(
-    game_id: Number,
-    game_title: String,
-    _engine_id: Number,
-    engine_name: String,
+fn launch_game(
+    game_id: Number,    
     version: String,
+    channel: Number,
     game_folder_path: String,
 ) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         // Use the provided game folder path from frontend settings
         if game_folder_path.is_empty() {
-            return Err(format!("Game folder path not set for {} version {}. Please configure it in game settings.", game_title, version));
+            return Err(format!("Game folder path not set for {} version {}. Please configure it in game settings.", game_id, version));
         }
         
         // Check if game folder exists
@@ -304,26 +346,84 @@ fn launch_game_with_engine(
             return Err(format!("Game folder not found: {}. Please verify the path in game settings.", game_folder_path));
         }
         
-        // Start game monitoring instead of just starting proxy
-        // This will automatically manage proxy based on game state
-        if let Err(e) = start_game_monitor(game_id.clone()) {
-            return Err(format!("Failed to start game monitoring: {}", e));
-        }
-        
         // Determine game executable name based on game ID
         let game_exe_name = match game_id.as_u64() {
             Some(1) => "GenshinImpact.exe",
             Some(2) => "StarRail.exe", // Common names: StarRail.exe, HonkaiStarRail.exe, or StarRail_Data.exe
-            Some(3) => "BlueArchive.exe",
+            //Some(3) => "BlueArchive.exe",
             _ => return Err(format!("Unsupported game ID: {}", game_id)),
         };
 
         // Construct full path to game executable
-        let game_exe_path = std::path::Path::new(&game_folder_path).join(game_exe_name);
-        
+        let game_exe_path = std::path::Path::new(&game_folder_path).join(game_exe_name);        
         // Check if game executable exists
         if !game_exe_path.exists() {
             return Err(format!("Game executable not found: {} = {}. Please verify the game installation.", game_exe_path.display(),game_id));
+        }
+
+        // Check MD5 for game_exe_path
+        let file_contents = std::fs::read(&game_exe_path)
+            .map_err(|e| format!("Failed to read game executable for MD5 calculation: {}", e))?;
+        let md5 = md5::compute(&file_contents);
+        let md5_str = format!("{:x}", md5);
+
+        // Get patch info from API and apply patches if needed
+        let mut patched_files = Vec::new();
+        let mut patch_response_data = None;
+        
+        match check_and_apply_patches(game_id.clone(), version.clone(), channel.clone(), md5_str.clone(), game_folder_path.clone()) {
+            Ok((patch_message, response, files)) => {
+                if !patch_message.is_empty() {
+                    println!("🔧 Patch status: {}", patch_message);
+                }
+                patched_files = files;
+                patch_response_data = response.clone();
+                
+                // Check if we need to show a message to user before proceeding
+                if let Some(ref resp) = response {
+                    if !resp.message.is_empty() {
+                        // For now, just log the message. In a full implementation,
+                        // this would show a popup in the UI and wait for user confirmation
+                        println!("📢 Important message: {}", resp.message);
+                    }
+                    
+                    // Check if proxy should be skipped
+                    if !resp.proxy {
+                        println!("⚠️ Proxy disabled by patch response");
+                    }
+                }
+            },
+            Err(e) => {
+                // Any patching failure should abort game launch
+                let _ = stop_game_monitor();
+                return Err(format!("Cannot launch game: Patching failed. Error: {}", e));
+            }
+        }
+        
+        // Start game monitoring AFTER patching is complete
+        // This ensures proxy is not started until patches are applied
+        if let Err(e) = start_game_monitor(game_id.clone()) {
+            return Err(format!("Failed to start game monitoring: {}", e));
+        }
+        
+        // Update the game monitor with patching information
+        if let Ok(mut monitor_state) = GAME_MONITOR_STATE.lock() {
+            if let Some(handle) = monitor_state.as_mut() {
+                handle.version = version.clone();
+                handle.channel = channel.clone();
+                handle.md5 = md5_str.clone();
+                handle.game_folder_path = game_folder_path.clone();
+                
+                // Update patched files list
+                if let Ok(mut files) = handle.patched_files.lock() {
+                    *files = patched_files;
+                }
+                
+                // Update patch response
+                if let Ok(mut response) = handle.patch_response.lock() {
+                    *response = patch_response_data;
+                }
+            }
         }
         
         // Launch the game executable
@@ -334,7 +434,7 @@ fn launch_game_with_engine(
             Ok(child) => {
                 let process_id = child.id();
                 let result = LaunchResult {
-                    message: format!("Successfully launched {} ({}) with {} from folder {}. HTTP/HTTPS proxy is active on 127.0.0.1:??? with automatic Windows proxy configuration - game traffic redirected to ps.yuuki.me", game_title, game_id, engine_name, game_folder_path),
+                    message: format!("Successfully launched: {} > {}", game_exe_path.display(), md5_str),
                     process_id,
                 };
                 match serde_json::to_string(&result) {
@@ -448,7 +548,7 @@ fn check_game_running_internal(game_id: &Number) -> Result<bool, String> {
         let game_exe_names = match game_id.as_u64() {
             Some(1) => vec!["GenshinImpact.exe"],
             Some(2) => vec!["StarRail.exe"],
-            Some(3) => vec!["BlueArchive.exe"],
+            //Some(3) => vec!["BlueArchive.exe"],
             _ => return Err(format!("Unsupported game ID: {}", game_id)),
         };
         
@@ -489,9 +589,596 @@ fn check_game_running_internal(game_id: &Number) -> Result<bool, String> {
     }
 }
 
+// Function to kill game processes if running
+fn kill_game_processes(game_id: &Number) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        
+        // Determine game executable names based on game ID
+        let game_exe_names = match game_id.as_u64() {
+            Some(1) => vec!["GenshinImpact.exe"],
+            Some(2) => vec!["StarRail.exe"],
+            //Some(3) => vec!["BlueArchive.exe"],
+            _ => return Err(format!("Unsupported game ID: {}", game_id)),
+        };
+        
+        let mut killed_processes = Vec::new();
+        
+        // Kill each possible executable
+        for game_exe_name in game_exe_names {
+            // First check if the process is running
+            let check_output = Command::new("tasklist")
+                .args(["/FI", &format!("IMAGENAME eq {}", game_exe_name), "/FO", "CSV"])
+                .output()
+                .map_err(|e| format!("Failed to execute tasklist: {}", e))?;
+            
+            if check_output.status.success() {
+                let output_str = String::from_utf8_lossy(&check_output.stdout);
+                let lines: Vec<&str> = output_str.lines().collect();
+                let mut process_found = false;
+                
+                for line in lines.iter().skip(1) { // Skip header line
+                    if line.contains(game_exe_name) && !line.trim().is_empty() {
+                        let parts: Vec<&str> = line.split(',').collect();
+                        if parts.len() >= 2 && parts[0].trim_matches('"') == game_exe_name {
+                            process_found = true;
+                            break;
+                        }
+                    }
+                }
+                
+                if process_found {
+                    println!("🔪 Killing running game process: {}", game_exe_name);
+                    
+                    // Try to kill the process gracefully first
+                    let kill_output = Command::new("taskkill")
+                        .args(["/IM", game_exe_name, "/T"])
+                        .output();
+                    
+                    match kill_output {
+                        Ok(output) if output.status.success() => {
+                            killed_processes.push(game_exe_name.to_string());
+                            println!("✅ Successfully killed: {}", game_exe_name);
+                            
+                            // Wait a moment for the process to fully terminate
+                            std::thread::sleep(Duration::from_millis(1000));
+                        },
+                        Ok(output) => {
+                            let error_msg = String::from_utf8_lossy(&output.stderr);
+                            println!("⚠️ Failed to kill {} gracefully: {}", game_exe_name, error_msg);
+                            
+                            // Try force kill as fallback
+                            let force_kill_output = Command::new("taskkill")
+                                .args(["/IM", game_exe_name, "/T", "/F"])
+                                .output();
+                            
+                            match force_kill_output {
+                                Ok(force_output) if force_output.status.success() => {
+                                    killed_processes.push(format!("{} (force killed)", game_exe_name));
+                                    println!("✅ Force killed: {}", game_exe_name);
+                                    std::thread::sleep(Duration::from_millis(1000));
+                                },
+                                _ => {
+                                    return Err(format!("Failed to kill {}: {}", game_exe_name, error_msg));
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            return Err(format!("Failed to execute taskkill for {}: {}", game_exe_name, e));
+                        }
+                    }
+                }
+            }
+        }
+        
+        if killed_processes.is_empty() {
+            Ok("No game processes were running".to_string())
+        } else {
+            Ok(format!("Killed game processes: {}", killed_processes.join(", ")))
+        }
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok("Process killing not supported on this platform".to_string())
+    }
+}
+
 #[command]
 fn check_game_running(game_id: Number) -> Result<bool, String> {
     check_game_running_internal(&game_id)
+}
+
+#[command]
+fn kill_game(game_id: Number) -> Result<String, String> {
+    kill_game_processes(&game_id)
+}
+
+#[command]
+fn check_patch_status(
+    game_id: Number,
+    version: String,
+    channel: Number,
+    md5: String,
+) -> Result<String, String> {
+    let api_url = format!(
+        "https://ps.yuuki.me/game/patch/{}/{}/{}/{}.json",
+        game_id, version, channel, md5
+    );
+    
+    match fetch_patch_info(&api_url) {
+        Ok(response) => {
+            if response.patch {
+                Ok(format!("Patches available (Method {}): {} files to patch", response.metode, response.patched.len()))
+            } else {
+                Ok("No patches needed".to_string())
+            }
+        },
+        Err(e) => Err(format!("Failed to check patch status: {}", e))
+    }
+}
+
+#[command]
+fn restore_game_files(
+    game_id: Number,
+    version: String,
+    channel: Number,
+    md5: String,
+    game_folder_path: String,
+) -> Result<String, String> {
+    let api_url = format!(
+        "https://ps.yuuki.me/game/patch/{}/{}/{}/{}.json",
+        game_id, version, channel, md5
+    );
+    
+    match fetch_patch_info(&api_url) {
+        Ok(response) => {
+            if response.patch {
+                restore_original_files(&response, &game_folder_path)
+            } else {
+                Ok("No patches to restore".to_string())
+            }
+        },
+        Err(e) => Err(format!("Failed to restore files: {}", e))
+    }
+}
+
+#[command]
+fn get_download_progress() -> Result<Vec<DownloadProgress>, String> {
+    let progress = DOWNLOAD_PROGRESS.lock()
+        .map_err(|e| format!("Failed to lock download progress: {}", e))?;
+    Ok(progress.clone())
+}
+
+#[command]
+fn clear_download_progress() -> Result<String, String> {
+    let mut progress = DOWNLOAD_PROGRESS.lock()
+        .map_err(|e| format!("Failed to lock download progress: {}", e))?;
+    progress.clear();
+    Ok("Download progress cleared".to_string())
+}
+
+// Function to check and apply patches
+fn check_and_apply_patches(
+    game_id: Number,
+    version: String,
+    channel: Number,
+    md5: String,
+    game_folder_path: String,
+) -> Result<(String, Option<PatchResponse>, Vec<String>), String> {
+    // Construct API URL
+    let api_url = format!(
+        "https://ps.yuuki.me/game/patch/{}/{}/{}/{}.json",
+        game_id, version, channel, md5
+    );
+    
+    println!("🔍 Checking for patches: {}", api_url);
+    
+    // Make HTTP request to get patch info
+    let patch_response = fetch_patch_info(&api_url)?;
+    
+    if !patch_response.patch {
+        return Ok(("No patches needed".to_string(), Some(patch_response), Vec::new()));
+    }
+    
+    println!("🔧 Patches required (Method {})", patch_response.metode);
+    
+    // Check if game is running outside the launcher and kill it if necessary
+    println!("🔍 Checking if game is running outside launcher...");
+    match check_game_running_internal(&game_id) {
+        Ok(true) => {
+            println!("⚠️ Game is running outside launcher, attempting to close it...");
+            match kill_game_processes(&game_id) {
+                Ok(kill_message) => {
+                    println!("✅ {}", kill_message);
+                },
+                Err(e) => {
+                    return Err(format!("Cannot apply patches: Failed to close running game. {}", e));
+                }
+            }
+        },
+        Ok(false) => {
+            println!("✅ No game processes detected, proceeding with patching...");
+        },
+        Err(e) => {
+            println!("⚠️ Warning: Could not check if game is running: {}", e);
+            println!("🔄 Proceeding with patching anyway...");
+        }
+    }
+    
+    // Ensure proxy is not running during patching to prevent conflicts
+    let proxy_was_running = proxy::is_proxy_running();
+    if proxy_was_running {
+        println!("⚠️ Stopping proxy for patching...");
+        if let Err(e) = proxy::stop_proxy() {
+            return Err(format!("Failed to stop proxy before patching: {}", e));
+        }
+    }
+    
+    // Apply patches based on method
+    let result = match patch_response.metode {
+        0 => {
+            // Method 0: Skip patch
+            Ok(("Patch skipped (Method 0)".to_string(), Some(patch_response), Vec::new()))
+        },
+        1 => {
+            match apply_file_patches(&patch_response, &game_folder_path) {
+                Ok((message, patched_files)) => Ok((message, Some(patch_response), patched_files)),
+                Err(e) => Err(e),
+            }
+        },
+        _ => Err(format!("Unsupported patch method: {}", patch_response.metode)),
+    };
+    
+    // Note: We don't restart the proxy here because the game monitor will handle it
+    // based on the patch response proxy flag when the game actually starts
+    
+    result
+}
+
+// Function to fetch patch info from API
+fn fetch_patch_info(url: &str) -> Result<PatchResponse, String> {
+    // Use tokio runtime for async HTTP request
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| format!("Failed to create tokio runtime: {}", e))?;
+    
+    rt.block_on(async {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+        
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP request failed: {}", e))?;
+        
+        if !response.status().is_success() {
+            return Err(format!("HTTP request failed with status: {}", response.status()));
+        }
+        
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| format!("Failed to read response body: {}", e))?;
+        
+        serde_json::from_str(&response_text)
+            .map_err(|e| format!("Failed to parse API response: {}", e))
+    })
+}
+
+// Function to apply file patches (method 1)
+fn apply_file_patches(patch_response: &PatchResponse, game_folder_path: &str) -> Result<(String, Vec<String>), String> {
+    let mut patched_files = Vec::new();
+    
+    // Create backups and apply patches
+    for patch_file in &patch_response.patched {
+        let file_path = Path::new(game_folder_path).join(&patch_file.location);
+        let patch_cache_path = format!("{}.patch", file_path.display());
+        
+        // Check if we already have a cached patch file
+        if Path::new(&patch_cache_path).exists() {
+            // Verify the cached patch file
+            if let Ok(cached_contents) = fs::read(&patch_cache_path) {
+                let cached_md5 = format!("{:x}", md5::compute(&cached_contents));
+                if cached_md5.to_uppercase() == patch_file.md5.to_uppercase() {
+                    println!("📦 Using cached patch: {}", patch_file.location);
+                    
+                    // Create backup of original file if it exists
+                    if file_path.exists() {
+                        let backup_path = format!("{}.backup", file_path.display());
+                        fs::copy(&file_path, &backup_path)
+                            .map_err(|e| format!("Failed to backup {}: {}", patch_file.location, e))?;
+                        println!("📦 Backed up: {}", patch_file.location);
+                    }
+                    
+                    // Copy cached patch to target location
+                    fs::copy(&patch_cache_path, &file_path)
+                        .map_err(|e| format!("Failed to apply cached patch {}: {}", patch_file.location, e))?;
+                    
+                    patched_files.push(patch_file.location.clone());
+                    println!("✅ Applied cached patch: {}", patch_file.location);
+                    continue;
+                }
+            }
+            // If cached file is invalid, remove it
+            let _ = fs::remove_file(&patch_cache_path);
+        }
+        
+        // Create backup of original file if it exists
+        if file_path.exists() {
+            let backup_path = format!("{}.backup", file_path.display());
+            fs::copy(&file_path, &backup_path)
+                .map_err(|e| format!("Failed to backup {}: {}", patch_file.location, e))?;
+            println!("📦 Backed up: {}", patch_file.location);
+        }
+        
+        // Download and apply patch
+        download_and_verify_file(&patch_file.file, &file_path, &patch_file.md5)?;
+        
+        // Save patch file for future use
+        if let Err(e) = fs::copy(&file_path, &patch_cache_path) {
+            println!("⚠️ Warning: Failed to cache patch file {}: {}", patch_file.location, e);
+        } else {
+            println!("💾 Cached patch: {}", patch_file.location);
+        }
+        
+        patched_files.push(patch_file.location.clone());
+        println!("✅ Patched: {}", patch_file.location);
+    }
+    
+    Ok((format!("Successfully patched {} files", patched_files.len()), patched_files))
+}
+
+// Function to download and verify a file
+fn download_and_verify_file(url: &str, file_path: &Path, expected_md5: &str) -> Result<(), String> {
+    // Create parent directories if they don't exist
+    if let Some(parent) = file_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create directory {}: {}", parent.display(), e))?;
+    }
+    
+    let file_name = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+    
+    // Use tokio runtime for async HTTP request
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| format!("Failed to create tokio runtime: {}", e))?;
+    
+    rt.block_on(async {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(300)) // 5 minutes for file downloads
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+        
+        println!("📥 Downloading: {}", url);
+        
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| format!("Download request failed: {}", e))?;
+        
+        if !response.status().is_success() {
+            // Update progress with failed status
+            if let Ok(mut progress) = DOWNLOAD_PROGRESS.lock() {
+                progress.retain(|p| p.file_name != file_name);
+                progress.push(DownloadProgress {
+                    file_name: file_name.clone(),
+                    downloaded: 0,
+                    total: 0,
+                    percentage: 0.0,
+                    status: "failed".to_string(),
+                });
+            }
+            return Err(format!("Download failed with status: {}", response.status()));
+        }
+        
+        let total_size = response.content_length().unwrap_or(0);
+        
+        // Initialize progress
+        if let Ok(mut progress) = DOWNLOAD_PROGRESS.lock() {
+            progress.retain(|p| p.file_name != file_name);
+            progress.push(DownloadProgress {
+                file_name: file_name.clone(),
+                downloaded: 0,
+                total: total_size,
+                percentage: 0.0,
+                status: "downloading".to_string(),
+            });
+        }
+        
+        let file_contents = response
+            .bytes()
+            .await
+            .map_err(|e| {
+                // Update progress with failed status
+                if let Ok(mut progress) = DOWNLOAD_PROGRESS.lock() {
+                    progress.retain(|p| p.file_name != file_name);
+                    progress.push(DownloadProgress {
+                        file_name: file_name.clone(),
+                        downloaded: 0,
+                        total: total_size,
+                        percentage: 0.0,
+                        status: "failed".to_string(),
+                    });
+                }
+                format!("Failed to read download response: {}", e)
+            })?;
+        
+        // Update progress to verifying
+        if let Ok(mut progress) = DOWNLOAD_PROGRESS.lock() {
+            progress.retain(|p| p.file_name != file_name);
+            progress.push(DownloadProgress {
+                file_name: file_name.clone(),
+                downloaded: file_contents.len() as u64,
+                total: total_size,
+                percentage: 100.0,
+                status: "verifying".to_string(),
+            });
+        }
+        
+        // Verify MD5 before writing to disk
+        let actual_md5 = format!("{:x}", md5::compute(&file_contents));
+        
+        if actual_md5.to_uppercase() != expected_md5.to_uppercase() {
+            // Update progress with failed status
+            if let Ok(mut progress) = DOWNLOAD_PROGRESS.lock() {
+                progress.retain(|p| p.file_name != file_name);
+                progress.push(DownloadProgress {
+                    file_name: file_name.clone(),
+                    downloaded: file_contents.len() as u64,
+                    total: total_size,
+                    percentage: 100.0,
+                    status: "failed".to_string(),
+                });
+            }
+            return Err(format!(
+                "MD5 mismatch for {}: expected {}, got {}",
+                file_path.display(),
+                expected_md5,
+                actual_md5
+            ));
+        }
+        
+        // Write file to disk
+        fs::write(file_path, &file_contents)
+            .map_err(|e| {
+                // Update progress with failed status
+                if let Ok(mut progress) = DOWNLOAD_PROGRESS.lock() {
+                    progress.retain(|p| p.file_name != file_name);
+                    progress.push(DownloadProgress {
+                        file_name: file_name.clone(),
+                        downloaded: file_contents.len() as u64,
+                        total: total_size,
+                        percentage: 100.0,
+                        status: "failed".to_string(),
+                    });
+                }
+                format!("Failed to write file {}: {}", file_path.display(), e)
+            })?;
+        
+        // Update progress to completed
+        if let Ok(mut progress) = DOWNLOAD_PROGRESS.lock() {
+            progress.retain(|p| p.file_name != file_name);
+            progress.push(DownloadProgress {
+                file_name: file_name.clone(),
+                downloaded: file_contents.len() as u64,
+                total: total_size,
+                percentage: 100.0,
+                status: "completed".to_string(),
+            });
+        }
+        
+        println!("✅ Downloaded and verified: {}", file_path.display());
+        Ok(())
+    })
+}
+
+// Function to restore original files (unpatch)
+fn restore_original_files(patch_response: &PatchResponse, game_folder_path: &str) -> Result<String, String> {
+    let mut restored_files = Vec::new();
+    
+    for original_file in &patch_response.original {
+        let file_path = Path::new(game_folder_path).join(&original_file.location);
+        let patch_cache_path = format!("{}.patch", file_path.display());
+        
+        // If there's a patched file, rename it to .patch for future use
+        if file_path.exists() {
+            if let Err(e) = fs::rename(&file_path, &patch_cache_path) {
+                println!("⚠️ Warning: Failed to save patch file {}: {}", original_file.location, e);
+            } else {
+                println!("💾 Saved patch file: {}", original_file.location);
+            }
+        }
+        
+        // Download and restore original file
+        download_and_verify_file(&original_file.file, &file_path, &original_file.md5)?;
+        restored_files.push(original_file.location.clone());
+        println!("🔄 Restored: {}", original_file.location);
+    }
+    
+    Ok(format!("Successfully restored {} files", restored_files.len()))
+}
+
+// Function to restore from backup files
+fn restore_from_backups(game_folder_path: &str, file_locations: &[String]) -> Result<String, String> {
+    let mut restored_files = Vec::new();
+    
+    for location in file_locations {
+        let file_path = Path::new(game_folder_path).join(location);
+        let backup_path = format!("{}.backup", file_path.display());
+        let patch_cache_path = format!("{}.patch", file_path.display());
+        
+        if Path::new(&backup_path).exists() {
+            // If there's a patched file, rename it to .patch for future use
+            if file_path.exists() {
+                if let Err(e) = fs::rename(&file_path, &patch_cache_path) {
+                    println!("⚠️ Warning: Failed to save patch file {}: {}", location, e);
+                } else {
+                    println!("💾 Saved patch file: {}", location);
+                }
+            }
+            
+            fs::copy(&backup_path, &file_path)
+                .map_err(|e| format!("Failed to restore {} from backup: {}", location, e))?;
+            
+            // Remove backup file after successful restore
+            let _ = fs::remove_file(&backup_path);
+            restored_files.push(location.clone());
+            println!("🔄 Restored from backup: {}", location);
+        }
+    }
+    
+    Ok(format!("Successfully restored {} files from backup", restored_files.len()))
+}
+
+// Function to cleanup remaining patch files by renaming them to .patch extension
+fn cleanup_remaining_patches(game_folder_path: &str, patched_files: &[String]) -> Result<String, String> {
+    let mut cleaned_files = Vec::new();
+    
+    for location in patched_files {
+        let file_path = Path::new(game_folder_path).join(location);
+        let patch_cache_path = format!("{}.patch", file_path.display());
+        
+        // Check if the file exists and doesn't already have .patch extension
+        if file_path.exists() && !location.ends_with(".patch") {
+            // Only rename if the .patch file doesn't already exist
+            if !Path::new(&patch_cache_path).exists() {
+                match fs::rename(&file_path, &patch_cache_path) {
+                    Ok(_) => {
+                        cleaned_files.push(location.clone());
+                        println!("🧹 Cleaned up patch file: {} -> {}.patch", location, location);
+                    }
+                    Err(e) => {
+                        println!("⚠️ Warning: Failed to cleanup patch file {}: {}", location, e);
+                    }
+                }
+            } else {
+                // If .patch already exists, remove the current file
+                match fs::remove_file(&file_path) {
+                    Ok(_) => {
+                        cleaned_files.push(location.clone());
+                        println!("🧹 Removed duplicate patch file: {}", location);
+                    }
+                    Err(e) => {
+                        println!("⚠️ Warning: Failed to remove duplicate patch file {}: {}", location, e);
+                    }
+                }
+            }
+        }
+    }
+    
+    if cleaned_files.is_empty() {
+        Ok(String::new()) // Return empty string if no cleanup was needed
+    } else {
+        Ok(format!("Cleaned up {} patch files", cleaned_files.len()))
+    }
 }
 
 // Function to start monitoring a specific game
@@ -539,23 +1226,111 @@ fn start_game_monitor(game_id: Number) -> Result<String, String> {
                      consecutive_errors = 0; // Reset error counter on success
                      
                      if is_running != last_game_state {
-                         if is_running {
-                             // Game just started - start proxy if not already running
-                             if !proxy::is_proxy_running() {
-                                 match proxy::start_proxy() {
-                                     Ok(_) => {
-                                         proxy_started_by_us = true;
-                                         println!("🎮 Game {} started - Proxy activated automatically", game_id_clone);
+                             if is_running {
+                                 // Game just started - check if proxy should be started
+                                 let should_start_proxy = if let Ok(monitor_state) = GAME_MONITOR_STATE.lock() {
+                                     if let Some(handle) = monitor_state.as_ref() {
+                                         if let Ok(response) = handle.patch_response.lock() {
+                                             if let Some(ref resp) = *response {
+                                                 resp.proxy // Only start proxy if patch response allows it
+                                             } else {
+                                                 true // Default to true if no patch response
+                                             }
+                                         } else {
+                                             true
+                                         }
+                                     } else {
+                                         true
                                      }
-                                     Err(e) => {
-                                         eprintln!("⚠️ Failed to start proxy when game started: {}", e);
+                                 } else {
+                                     true
+                                 };
+                                 
+                                 if should_start_proxy {
+                                     if !proxy::is_proxy_running() {
+                                         match proxy::start_proxy() {
+                                             Ok(_) => {
+                                                 proxy_started_by_us = true;
+                                                 println!("🎮 Game {} started - Proxy activated automatically", game_id_clone);
+                                             }
+                                             Err(e) => {
+                                                 eprintln!("⚠️ Failed to start proxy when game started: {}", e);
+                                             }
+                                         }
+                                     } else {
+                                         println!("🎮 Game {} started - Proxy was already running", game_id_clone);
                                      }
+                                 } else {
+                                     println!("🎮 Game {} started - Proxy disabled by patch response", game_id_clone);
                                  }
-                             } else {
-                                 println!("🎮 Game {} started - Proxy was already running", game_id_clone);
-                             }
                          } else {
-                            // Game just stopped - force stop proxy regardless of who started it
+                            // Game just stopped - handle cleanup
+                            
+                            // First, restore patched files
+                            if let Ok(monitor_state) = GAME_MONITOR_STATE.lock() {
+                                if let Some(handle) = monitor_state.as_ref() {
+                                    // Get patched files list and patch response
+                                    let patched_files = if let Ok(files) = handle.patched_files.lock() {
+                                        files.clone()
+                                    } else {
+                                        Vec::new()
+                                    };
+                                    
+                                    let patch_response = if let Ok(response) = handle.patch_response.lock() {
+                                        response.clone()
+                                    } else {
+                                        None
+                                    };
+                                    
+                                    // Restore files if we have patch information
+                                    if !patched_files.is_empty() {
+                                        if let Some(response) = patch_response {
+                                            // Try API-based restoration first
+                                            match restore_original_files(&response, &handle.game_folder_path) {
+                                                Ok(message) => {
+                                                    println!("🔄 {}", message);
+                                                }
+                                                Err(e) => {
+                                                    println!("⚠️ API restoration failed: {}", e);
+                                                    // Fallback to backup restoration
+                                                    match restore_from_backups(&handle.game_folder_path, &patched_files) {
+                                                        Ok(message) => {
+                                                            println!("🔄 {}", message);
+                                                        }
+                                                        Err(e) => {
+                                                            println!("⚠️ Backup restoration also failed: {}", e);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            
+                                            // Additional cleanup: rename any remaining patched files to .patch
+                                            match cleanup_remaining_patches(&handle.game_folder_path, &patched_files) {
+                                                Ok(message) => {
+                                                    if !message.is_empty() {
+                                                        println!("🧹 {}", message);
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    println!("⚠️ Patch cleanup warning: {}", e);
+                                                }
+                                            }
+                                        } else {
+                                            // No patch response, try backup restoration
+                                            match restore_from_backups(&handle.game_folder_path, &patched_files) {
+                                                Ok(message) => {
+                                                    println!("🔄 {}", message);
+                                                }
+                                                Err(e) => {
+                                                    println!("⚠️ Backup restoration failed: {}", e);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Then stop proxy
                             if proxy::is_proxy_running() {
                                 match proxy::force_stop_proxy() {
                                     Ok(_) => {
@@ -639,6 +1414,13 @@ fn start_game_monitor(game_id: Number) -> Result<String, String> {
     *monitor_state = Some(GameMonitorHandle {
         should_stop,
         thread_handle: Some(thread_handle),
+        game_id: game_id.clone(),
+        version: String::new(),
+        channel: Number::from(0),
+        md5: String::new(),
+        game_folder_path: String::new(),
+        patched_files: Arc::new(Mutex::new(Vec::new())),
+        patch_response: Arc::new(Mutex::new(None)),
     });
     
     Ok(format!("Started monitoring game {} - proxy will auto-start/stop with game", game_id))
@@ -765,7 +1547,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_opener::init())
-    .invoke_handler(tauri::generate_handler![launch_game_with_engine, get_game_folder_path, show_game_folder, check_game_installed, check_game_running, start_game_monitor, stop_game_monitor, is_game_monitor_active, stop_game_process, stop_game, open_directory, start_proxy, stop_proxy, check_proxy_status, force_stop_proxy, check_and_disable_windows_proxy, install_ssl_certificate, install_ca_certificate, check_certificate_status, check_ssl_certificate_installed, check_admin_privileges, proxy::set_proxy_addr, proxy::get_proxy_addr, proxy::get_proxy_logs, proxy::clear_proxy_logs, proxy::get_proxy_domains, proxy::add_proxy_domain, proxy::remove_proxy_domain, proxy::set_proxy_port, proxy::get_proxy_port, proxy::find_available_port, proxy::start_proxy_with_port])
+    .invoke_handler(tauri::generate_handler![launch_game, get_game_folder_path, show_game_folder, check_game_installed, check_game_running, kill_game, start_game_monitor, stop_game_monitor, is_game_monitor_active, stop_game_process, stop_game, open_directory, start_proxy, stop_proxy, check_proxy_status, force_stop_proxy, check_and_disable_windows_proxy, install_ssl_certificate, install_ca_certificate, check_certificate_status, check_ssl_certificate_installed, check_admin_privileges, check_patch_status, restore_game_files, get_download_progress, clear_download_progress, proxy::set_proxy_addr, proxy::get_proxy_addr, proxy::get_proxy_logs, proxy::clear_proxy_logs, proxy::get_proxy_domains, proxy::add_proxy_domain, proxy::remove_proxy_domain, proxy::set_proxy_port, proxy::get_proxy_port, proxy::find_available_port, proxy::start_proxy_with_port])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
