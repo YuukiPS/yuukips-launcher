@@ -42,9 +42,35 @@ fn get_data_dir() -> Result<PathBuf, String> {
 use registry::{Data, Hive, Security};
 
 #[cfg(target_os = "linux")]
-use std::process::Command;
+use std::{fs::File, io::Write, collections::HashMap};
+
+// Linux-specific configuration structure
 #[cfg(target_os = "linux")]
-use std::{fs::File, io::Write, process::Command};
+#[derive(Debug, Clone)]
+struct GameConfig {
+    environment: HashMap<String, String>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone)]
+struct Config {
+    game: GameConfig,
+}
+
+#[cfg(target_os = "linux")]
+impl Config {
+    fn get() -> Result<Self, String> {
+        Ok(Config {
+            game: GameConfig {
+                environment: HashMap::new(),
+            },
+        })
+    }
+    
+    fn update(_config: Self) {
+        // TODO: Implement config persistence
+    }
+}
 
 // Global ver for getting server address.
 static SERVER: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("https://ps.yuuki.me".to_string()));

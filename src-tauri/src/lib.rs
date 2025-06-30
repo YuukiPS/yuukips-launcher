@@ -312,16 +312,16 @@ fn get_game_folder_path(game_id: Number, version: String) -> Result<String, Stri
 
 #[command]
 fn launch_game(
-    game_id: Number,    
-    version: String,
-    channel: Number,
+    _game_id: Number,    
+    _version: String,
+    _channel: Number,
     game_folder_path: String,
 ) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         // Use the provided game folder path from frontend settings
         if game_folder_path.is_empty() {
-            return Err(format!("Game folder path not set for {} version {}. Please configure it in game settings.", game_id, version));
+            return Err(format!("Game folder path not set for {} version {}. Please configure it in game settings.", _game_id, _version));
         }
         
         // Check if game folder exists
@@ -330,18 +330,18 @@ fn launch_game(
         }
         
         // Determine game executable name based on game ID
-        let game_exe_name = match game_id.as_u64() {
+        let game_exe_name = match _game_id.as_u64() {
             Some(1) => "GenshinImpact.exe",
             Some(2) => "StarRail.exe", // Common names: StarRail.exe, HonkaiStarRail.exe, or StarRail_Data.exe
             //Some(3) => "BlueArchive.exe",
-            _ => return Err(format!("Unsupported game ID: {}", game_id)),
+            _ => return Err(format!("Unsupported game ID: {}", _game_id)),
         };
 
         // Construct full path to game executable
         let game_exe_path = std::path::Path::new(&game_folder_path).join(game_exe_name);        
         // Check if game executable exists
         if !game_exe_path.exists() {
-            return Err(format!("Game executable not found: {} = {}. Please verify the game installation.", game_exe_path.display(),game_id));
+            return Err(format!("Game executable not found: {} = {}. Please verify the game installation.", game_exe_path.display(),_game_id));
         }
 
         // Check MD5 for game_exe_path
@@ -351,7 +351,7 @@ fn launch_game(
         let md5_str = format!("{:x}", md5);
 
         // Get patch info from API and apply patches if needed
-        let (patched_files, patch_response_data) = match check_and_apply_patches(game_id.clone(), version.clone(), channel.clone(), md5_str.clone(), game_folder_path.clone()) {
+        let (patched_files, patch_response_data) = match check_and_apply_patches(_game_id.clone(), _version.clone(), _channel.clone(), md5_str.clone(), game_folder_path.clone()) {
             Ok((patch_message, response, files)) => {
                 if !patch_message.is_empty() {
                     println!("🔧 Patch status: {}", patch_message);
@@ -382,15 +382,15 @@ fn launch_game(
         
         // Start game monitoring AFTER patching is complete
         // This ensures proxy is not started until patches are applied
-        if let Err(e) = start_game_monitor(game_id.clone()) {
+        if let Err(e) = start_game_monitor(_game_id.clone()) {
             return Err(format!("Failed to start game monitoring: {}", e));
         }
         
         // Update the game monitor with patching information
         if let Ok(mut monitor_state) = GAME_MONITOR_STATE.lock() {
             if let Some(handle) = monitor_state.as_mut() {
-                handle.version = version.clone();
-                handle.channel = channel.clone();
+                handle.version = _version.clone();
+                handle.channel = _channel.clone();
                 handle.md5 = md5_str.clone();
                 handle.game_folder_path = game_folder_path.clone();
                 
@@ -438,16 +438,16 @@ fn launch_game(
 }
 
 #[command]
-fn show_game_folder(game_id: Number) -> Result<String, String> {
+fn show_game_folder(_game_id: Number) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         // Open the game folder in Windows Explorer
-        let game_path = format!("C:\\Games\\{}", game_id); // Example path
+        let game_path = format!("C:\\Games\\{}", _game_id); // Example path
         match Command::new("explorer")
             .arg(&game_path)
             .spawn()
         {
-            Ok(_) => Ok(format!("Opened folder for {}", game_id)),
+            Ok(_) => Ok(format!("Opened folder for {}", _game_id)),
             Err(e) => Err(format!("Failed to open folder: {}", e)),
         }
     }
@@ -500,16 +500,16 @@ fn open_directory(path: String) -> Result<String, String> {
 }
 
 #[command]
-fn check_game_installed(_game_id: Number, _version: String, game_folder_path: String) -> bool {
+fn check_game_installed(_game_id: Number, _version: String, _game_folder_path: String) -> bool {
     #[cfg(target_os = "windows")]
     {
         // Check if game is installed by verifying the configured folder path exists
-        if game_folder_path.is_empty() {
+        if _game_folder_path.is_empty() {
             return false; // No path configured means not installed
         }
         
         // Check if the configured game folder exists
-        std::path::Path::new(&game_folder_path).exists()
+        std::path::Path::new(&_game_folder_path).exists()
     }
     
     #[cfg(not(target_os = "windows"))]
@@ -519,17 +519,17 @@ fn check_game_installed(_game_id: Number, _version: String, game_folder_path: St
 }
 
 // Internal function to check if a specific game is running
-fn check_game_running_internal(game_id: &Number) -> Result<bool, String> {
+fn check_game_running_internal(_game_id: &Number) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
         
         // Determine game executable names based on game ID
-        let game_exe_names = match game_id.as_u64() {
+        let game_exe_names = match _game_id.as_u64() {
             Some(1) => vec!["GenshinImpact.exe"],
             Some(2) => vec!["StarRail.exe"],
             //Some(3) => vec!["BlueArchive.exe"],
-            _ => return Err(format!("Unsupported game ID: {}", game_id)),
+            _ => return Err(format!("Unsupported game ID: {}", _game_id)),
         };
         
         // Check each possible executable name
@@ -570,17 +570,17 @@ fn check_game_running_internal(game_id: &Number) -> Result<bool, String> {
 }
 
 // Function to kill game processes if running
-fn kill_game_processes(game_id: &Number) -> Result<String, String> {
+fn kill_game_processes(_game_id: &Number) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
         
         // Determine game executable names based on game ID
-        let game_exe_names = match game_id.as_u64() {
+        let game_exe_names = match _game_id.as_u64() {
             Some(1) => vec!["GenshinImpact.exe"],
             Some(2) => vec!["StarRail.exe"],
             //Some(3) => vec!["BlueArchive.exe"],
-            _ => return Err(format!("Unsupported game ID: {}", game_id)),
+            _ => return Err(format!("Unsupported game ID: {}", _game_id)),
         };
         
         let mut killed_processes = Vec::new();
@@ -1433,37 +1433,37 @@ fn is_game_monitor_active() -> Result<bool, String> {
 }
 
 #[command]
-fn stop_game_process(process_id: u32) -> Result<String, String> {
+fn stop_game_process(_process_id: u32) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
         
         // First check if the process exists
         let check_output = Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {}", process_id)])
+            .args(["/FI", &format!("PID eq {}", _process_id)])
             .output()
             .map_err(|e| format!("Failed to check process existence: {}", e))?;
         
         if check_output.status.success() {
             let check_output_str = String::from_utf8_lossy(&check_output.stdout);
-            if !check_output_str.contains(&process_id.to_string()) {
-                return Ok(format!("Process with PID {} is not running (already terminated)", process_id));
+            if !check_output_str.contains(&_process_id.to_string()) {
+                return Ok(format!("Process with PID {} is not running (already terminated)", _process_id));
             }
         }
         
         // Use taskkill to terminate the process by PID
         let output = Command::new("taskkill")
-            .args(["/PID", &process_id.to_string(), "/F"])
+            .args(["/PID", &_process_id.to_string(), "/F"])
             .output()
             .map_err(|e| format!("Failed to execute taskkill: {}", e))?;
         
         if output.status.success() {
-            Ok(format!("Successfully terminated process with PID: {}", process_id))
+            Ok(format!("Successfully terminated process with PID: {}", _process_id))
         } else {
             let error_msg = String::from_utf8_lossy(&output.stderr);
             // Handle common error cases more gracefully
             if error_msg.contains("not found") || error_msg.contains("not running") {
-                Ok(format!("Process with PID {} was not running (already terminated)", process_id))
+                Ok(format!("Process with PID {} was not running (already terminated)", _process_id))
             } else {
                 Err(format!("Failed to terminate process: {}", error_msg))
             }
@@ -1477,17 +1477,17 @@ fn stop_game_process(process_id: u32) -> Result<String, String> {
 }
 
 #[command]
-fn stop_game(game_id: Number) -> Result<String, String> {
+fn stop_game(_game_id: Number) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
         
         // Determine game executable names based on game ID
-        let game_exe_names = match game_id.as_u64() {
+        let game_exe_names = match _game_id.as_u64() {
             Some(1) => vec!["GenshinImpact.exe"],
             Some(2) => vec!["StarRail.exe", "HonkaiStarRail.exe", "StarRail_Data.exe", "Game.exe"],
             Some(3) => vec!["BlueArchive.exe"],
-            _ => return Err(format!("Unsupported game ID: {}", game_id)),
+            _ => return Err(format!("Unsupported game ID: {}", _game_id)),
         };
         
         let mut terminated_processes = Vec::new();
