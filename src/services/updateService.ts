@@ -74,7 +74,7 @@ export class UpdateService {
   }
   
   /**
-   * Download and install update
+   * Download and install update with admin privileges
    */
   static async downloadAndInstallUpdate(
     downloadUrl: string,
@@ -87,6 +87,19 @@ export class UpdateService {
       });
     } catch (error) {
       console.error('Failed to download and install update:', error);
+      
+      // Check if the error is related to file access issues
+      const errorMessage = String(error);
+      if (errorMessage.includes('being used by another process') || 
+          errorMessage.includes('access is denied') ||
+          errorMessage.includes('os error 32')) {
+        throw new Error(
+          'Update installation requires administrator privileges. ' +
+          'The installer will request admin access to replace the application files. ' +
+          'Please approve the UAC prompt when it appears.'
+        );
+      }
+      
       throw new Error(`Update installation failed: ${error}`);
     }
   }
@@ -100,6 +113,19 @@ export class UpdateService {
     } catch (error) {
       console.error('Failed to restart application:', error);
       throw new Error(`Application restart failed: ${error}`);
+    }
+  }
+
+  /**
+   * Terminate the application to allow installer to replace files
+   * This is used when the installer needs to replace the running executable
+   */
+  static async terminateForUpdate(): Promise<void> {
+    try {
+      await invoke('terminate_for_update');
+    } catch (error) {
+      console.error('Failed to terminate application for update:', error);
+      throw new Error(`Application termination failed: ${error}`);
     }
   }
   

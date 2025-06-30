@@ -285,93 +285,198 @@ pub async fn download_and_install_update(
     Ok(())
 }
 
-/// Install the downloaded update using a delayed batch script to avoid file locking
+/// Install the downloaded update with admin privileges
 async fn install_update(file_path: &PathBuf) -> Result<(), String> {
     let file_name = file_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("");
     
-    println!("🔧 Preparing delayed installation: {}", file_name);
+    println!("🔧 Installing update: {}", file_name);
     
-    // Get current process ID
-    let current_pid = std::process::id();
-    
-    // Create batch file for delayed installation
-    let temp_dir = std::env::temp_dir();
-    let batch_file_path = temp_dir.join("yuukips_update_installer.bat");
-    
-    let installer_path = file_path.to_str().unwrap();
-    
-    let batch_content = if file_name.ends_with(".msi") {
-        format!(
-            r#"@echo off
-echo Waiting for launcher to close...
-timeout /t 3 /nobreak >nul
-echo Killing launcher process...
-taskkill /f /pid {} >nul 2>&1
-echo Installing update...
-msiexec /i "{}" /quiet /norestart
-if %ERRORLEVEL% EQU 0 (
-    echo Update installed successfully
-) else (
-    echo Update installation failed with error code %ERRORLEVEL%
-    pause
-)
-del "{}"
-del "%~f0"
-"#,
-            current_pid, installer_path, installer_path
-        )
+    // Try to install with admin privileges to handle file access issues
+    if file_name.ends_with(".msi") {
+        install_msi_with_admin(file_path).await
     } else if file_name.ends_with(".exe") {
-        format!(
-            r#"@echo off
-echo Waiting for launcher to close...
-timeout /t 3 /nobreak >nul
-echo Killing launcher process...
-taskkill /f /pid {} >nul 2>&1
-echo Installing update...
-"{}" /S
-if %ERRORLEVEL% EQU 0 (
-    echo Update installed successfully
-) else (
-    echo Update installation failed with error code %ERRORLEVEL%
-    pause
-)
-del "{}"
-del "%~f0"
-"#,
-            current_pid, installer_path, installer_path
-        )
+        install_exe_with_admin(file_path).await
     } else {
-        return Err("Unsupported update file format".to_string());
-    };
+        Err("Unsupported update file format".to_string())
+    }
+}
+
+/// Install MSI package with administrator privileges
+#[cfg(target_os = "windows")]
+async fn install_msi_with_admin(file_path: &PathBuf) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+    use winapi::um::shellapi::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+    use winapi::um::synchapi::WaitForSingleObject;
+    use winapi::um::winbase::INFINITE;
+    use winapi::um::handleapi::CloseHandle;
+    use winapi::um::processthreadsapi::GetExitCodeProcess;
     
-    // Write batch file
-    tokio::fs::write(&batch_file_path, batch_content)
-        .await
-        .map_err(|e| format!("Failed to create batch file: {}", e))?;
+    let file_path_str = file_path.to_str().ok_or("Invalid file path")?;
+    let parameters = format!("/i \"{}\" /quiet /norestart", file_path_str);
     
-    // Start the batch file in a detached process
-    std::process::Command::new("cmd")
-        .args(["/c", "start", "", batch_file_path.to_str().unwrap()])
-        .spawn()
-        .map_err(|e| format!("Failed to start installer batch: {}", e))?;
+    // Convert strings to wide strings for Windows API
+    let verb: Vec<u16> = OsStr::new("runas").encode_wide().chain(std::iter::once(0)).collect();
+    let file: Vec<u16> = OsStr::new("msiexec").encode_wide().chain(std::iter::once(0)).collect();
+    let params: Vec<u16> = OsStr::new(&parameters).encode_wide().chain(std::iter::once(0)).collect();
     
-    println!("✅ Delayed installation initiated. Application will close and update will install automatically.");
-    Ok(())
+    unsafe {
+        let mut sei = SHELLEXECUTEINFOW {
+            cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+            fMask: SEE_MASK_NOCLOSEPROCESS,
+            hwnd: ptr::null_mut(),
+            lpVerb: verb.as_ptr(),
+            lpFile: file.as_ptr(),
+            lpParameters: params.as_ptr(),
+            lpDirectory: ptr::null(),
+            nShow: 0, // SW_HIDE
+            hInstApp: ptr::null_mut(),
+            lpIDList: ptr::null_mut(),
+            lpClass: ptr::null(),
+            hkeyClass: ptr::null_mut(),
+            dwHotKey: 0,
+            hMonitor: ptr::null_mut(),
+            hProcess: ptr::null_mut(),
+        };
+        
+        if ShellExecuteExW(&mut sei) == 0 {
+            return Err("Failed to start MSI installer with admin privileges".to_string());
+        }
+        
+        if sei.hProcess.is_null() {
+            return Err("Failed to get installer process handle".to_string());
+        }
+        
+        // Wait for the installer to complete
+        WaitForSingleObject(sei.hProcess, INFINITE);
+        
+        // Check exit code
+        let mut exit_code: u32 = 0;
+        if GetExitCodeProcess(sei.hProcess, &mut exit_code) != 0 {
+            CloseHandle(sei.hProcess);
+            if exit_code == 0 {
+                println!("✅ MSI update installed successfully");
+                Ok(())
+            } else {
+                Err(format!("MSI installer failed with exit code: {}", exit_code))
+            }
+        } else {
+            CloseHandle(sei.hProcess);
+            Err("Failed to get installer exit code".to_string())
+        }
+    }
+}
+
+/// Install EXE package with administrator privileges
+#[cfg(target_os = "windows")]
+async fn install_exe_with_admin(file_path: &PathBuf) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+    use winapi::um::shellapi::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+    use winapi::um::synchapi::WaitForSingleObject;
+    use winapi::um::winbase::INFINITE;
+    use winapi::um::handleapi::CloseHandle;
+    use winapi::um::processthreadsapi::GetExitCodeProcess;
+    
+    let file_path_str = file_path.to_str().ok_or("Invalid file path")?;
+    let parameters = "/S"; // Silent install flag
+    
+    // Convert strings to wide strings for Windows API
+    let verb: Vec<u16> = OsStr::new("runas").encode_wide().chain(std::iter::once(0)).collect();
+    let file: Vec<u16> = OsStr::new(file_path_str).encode_wide().chain(std::iter::once(0)).collect();
+    let params: Vec<u16> = OsStr::new(parameters).encode_wide().chain(std::iter::once(0)).collect();
+    
+    unsafe {
+        let mut sei = SHELLEXECUTEINFOW {
+            cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+            fMask: SEE_MASK_NOCLOSEPROCESS,
+            hwnd: ptr::null_mut(),
+            lpVerb: verb.as_ptr(),
+            lpFile: file.as_ptr(),
+            lpParameters: params.as_ptr(),
+            lpDirectory: ptr::null(),
+            nShow: 0, // SW_HIDE
+            hInstApp: ptr::null_mut(),
+            lpIDList: ptr::null_mut(),
+            lpClass: ptr::null(),
+            hkeyClass: ptr::null_mut(),
+             dwHotKey: 0,
+             hMonitor: ptr::null_mut(),
+             hProcess: ptr::null_mut(),
+         };
+        
+        if ShellExecuteExW(&mut sei) == 0 {
+            return Err("Failed to start EXE installer with admin privileges".to_string());
+        }
+        
+        if sei.hProcess.is_null() {
+            return Err("Failed to get installer process handle".to_string());
+        }
+        
+        // Wait for the installer to complete
+        WaitForSingleObject(sei.hProcess, INFINITE);
+        
+        // Check exit code
+        let mut exit_code: u32 = 0;
+        if GetExitCodeProcess(sei.hProcess, &mut exit_code) != 0 {
+            CloseHandle(sei.hProcess);
+            if exit_code == 0 {
+                println!("✅ EXE update installed successfully");
+                Ok(())
+            } else {
+                Err(format!("EXE installer failed with exit code: {}", exit_code))
+            }
+        } else {
+            CloseHandle(sei.hProcess);
+            Err("Failed to get installer exit code".to_string())
+        }
+    }
+}
+
+/// Non-Windows fallback implementations
+#[cfg(not(target_os = "windows"))]
+async fn install_msi_with_admin(_file_path: &PathBuf) -> Result<(), String> {
+    Err("MSI installation is only supported on Windows".to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn install_exe_with_admin(_file_path: &PathBuf) -> Result<(), String> {
+    Err("EXE installation with admin privileges is only supported on Windows".to_string())
 }
 
 /// Restart the application
 #[command]
 pub async fn restart_application(app_handle: AppHandle) -> Result<(), String> {
-    println!("🔄 Closing application for update installation...");
+    println!("🔄 Restarting application...");
+    
+    // Give a small delay to ensure the response is sent
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    
+    app_handle.restart();
+    // Note: This function will never return as the app restarts
+}
+
+/// Terminate the current application process to allow installer to replace files
+#[command]
+pub async fn terminate_for_update() -> Result<(), String> {
+    println!("🔄 Terminating application for update installation...");
     
     // Give a small delay to ensure the response is sent
     tokio::time::sleep(Duration::from_millis(1000)).await;
     
-    // Exit the application cleanly to allow the batch installer to work
-    app_handle.exit(0);
-    // Note: This function will never return as the app exits, but we need to satisfy the return type
-    Ok(())
+    #[cfg(target_os = "windows")]
+    {
+        use std::process;
+        process::exit(0);
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::exit(0);
+    }
 }

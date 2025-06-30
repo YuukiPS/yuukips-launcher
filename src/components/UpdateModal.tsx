@@ -53,15 +53,23 @@ export function UpdateModal({ isOpen, onClose, updateInfo }: UpdateModalProps) {
         (progress) => setDownloadProgress(progress)
       );
       
-      // Show completion message before closing
-      setError('✅ Download complete! The application will close automatically and the update will install in the background.');
-      
-      // Wait a moment for user to read the message, then close the app
-      setTimeout(async () => {
-        await UpdateService.restartApplication();
-      }, 3000);
+      // After successful download and installation, restart the app
+      await UpdateService.restartApplication();
     } catch (err) {
-      setError(`Update failed: ${err}`);
+      const errorMessage = String(err);
+      
+      // Check if this is an admin privilege error
+      if (errorMessage.includes('administrator privileges') || 
+          errorMessage.includes('UAC prompt')) {
+        setError(
+          'The update requires administrator privileges to replace application files. ' +
+          'When you click "Update Now" again, please approve the UAC prompt that appears. ' +
+          'The installer will automatically handle closing and restarting the application.'
+        );
+      } else {
+        setError(`Update failed: ${err}`);
+      }
+      
       setIsDownloading(false);
     }
   };
@@ -171,13 +179,9 @@ export function UpdateModal({ isOpen, onClose, updateInfo }: UpdateModalProps) {
             </div>
           )}
           
-          {/* Status Message */}
+          {/* Error Message */}
           {error && (
-            <div className={`text-sm mb-4 p-2 rounded ${
-              error.startsWith('✅') 
-                ? 'text-green-400 bg-green-900 bg-opacity-20' 
-                : 'text-red-500 bg-red-900 bg-opacity-20'
-            }`}>
+            <div className="text-red-500 text-sm mb-4 p-2 bg-red-900 bg-opacity-20 rounded">
               {error}
             </div>
           )}

@@ -58,6 +58,7 @@ pub fn run() {
             fetch_latest_release,
             download_and_install_update,
             restart_application,
+            terminate_for_update,
             // Game functions
             get_game_folder_path,
             launch_game,

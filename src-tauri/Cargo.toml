@@ -1,6 +1,6 @@
 [package]
 name = "yuukips-launcher"
-version = "0.0.9"
+version = "0.0.10"
 description = "A launcher for YuukiPS"
 authors = ["yuuki"]
 license = "MIT"
@@ -43,6 +43,6 @@ scopeguard = "1.2"
 md5 = "0.7"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["processthreadsapi", "securitybaseapi", "winnt", "handleapi"] }
+winapi = { version = "0.3", features = ["processthreadsapi", "securitybaseapi", "winnt", "handleapi", "shellapi", "synchapi", "winbase"] }
 winreg = "0.52"
 registry = "1.2"
