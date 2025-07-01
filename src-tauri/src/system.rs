@@ -163,3 +163,81 @@ pub fn install_ssl_certificate(_cert_path: String) -> Result<String, String> {
         Err("SSL certificate installation is only supported on Windows".to_string())
     }
 }
+
+/// Open a directory in the system file explorer
+#[command]
+pub fn open_directory(path: String) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::path::Path;
+        
+        // Validate that the path exists
+        if !Path::new(&path).exists() {
+            return Err(format!("Directory does not exist: {}", path));
+        }
+        
+        // Use explorer.exe to open the directory
+        // Note: explorer.exe doesn't always return proper exit codes, so we use spawn instead of output
+        let result = create_hidden_command("explorer")
+            .arg(&path)
+            .spawn();
+        
+        match result {
+            Ok(_) => Ok(format!("Directory opened successfully: {}", path)),
+            Err(e) => Err(format!("Failed to open directory: {}", e))
+        }
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        use std::path::Path;
+        
+        if !Path::new(&path).exists() {
+            return Err(format!("Directory does not exist: {}", path));
+        }
+        
+        let output = create_hidden_command("open")
+            .arg(&path)
+            .output()
+            .map_err(|e| format!("Failed to open directory: {}", e))?;
+        
+        if output.status.success() {
+            Ok(format!("Directory opened successfully: {}", path))
+        } else {
+            let error_msg = String::from_utf8_lossy(&output.stderr);
+            Err(format!("Failed to open directory: {}", error_msg))
+        }
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        use std::path::Path;
+        
+        if !Path::new(&path).exists() {
+            return Err(format!("Directory does not exist: {}", path));
+        }
+        
+        // Try xdg-open first, then fallback to other common file managers
+        let commands = ["xdg-open", "nautilus", "dolphin", "thunar", "pcmanfm"];
+        
+        for cmd in &commands {
+            let output = create_hidden_command(cmd)
+                .arg(&path)
+                .output();
+                
+            match output {
+                Ok(result) if result.status.success() => {
+                    return Ok(format!("Directory opened successfully: {}", path));
+                }
+                _ => continue,
+            }
+        }
+        
+        Err("Failed to open directory: No suitable file manager found".to_string())
+    }
+    
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        Err("Opening directories is not supported on this platform".to_string())
+    }
+}

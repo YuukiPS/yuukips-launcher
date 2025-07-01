@@ -25,6 +25,7 @@ pub fn run() {
             is_admin,
             check_and_disable_windows_proxy,
             install_ssl_certificate,
+            open_directory,
             // Proxy functions
             proxy::get_proxy_addr,
             proxy::set_proxy_addr,
