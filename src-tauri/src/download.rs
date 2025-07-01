@@ -18,29 +18,43 @@ static DOWNLOAD_MANAGER: once_cell::sync::Lazy<Arc<Mutex<DownloadManager>>> =
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DownloadItem {
     pub id: String,
+    #[serde(rename = "fileName")]
     pub file_name: String,
+    #[serde(rename = "fileExtension")]
     pub file_extension: String,
+    #[serde(rename = "totalSize")]
     pub total_size: u64,
+    #[serde(rename = "downloadedSize")]
     pub downloaded_size: u64,
     pub progress: f64,
     pub speed: u64, // bytes per second
     pub status: DownloadStatus,
+    #[serde(rename = "timeRemaining")]
     pub time_remaining: u64, // seconds
     pub url: String,
+    #[serde(rename = "filePath")]
     pub file_path: String,
+    #[serde(rename = "startTime")]
     pub start_time: u64,
+    #[serde(rename = "endTime")]
     pub end_time: Option<u64>,
+    #[serde(rename = "errorMessage")]
     pub error_message: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DownloadHistory {
     pub id: String,
+    #[serde(rename = "fileName")]
     pub file_name: String,
+    #[serde(rename = "fileSize")]
     pub file_size: u64,
+    #[serde(rename = "downloadDate")]
     pub download_date: String,
     pub status: String,
+    #[serde(rename = "filePath")]
     pub file_path: String,
+    #[serde(rename = "errorMessage")]
     pub error_message: Option<String>,
 }
 
@@ -87,7 +101,7 @@ impl DownloadManager {
         let id = Uuid::new_v4().to_string();
         let path = Path::new(&file_path);
         let actual_file_name = file_name.unwrap_or_else(|| {
-            path.file_stem()
+            path.file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("download")
                 .to_string()
@@ -550,6 +564,7 @@ pub async fn validate_download_url_with_options(url: String, skip_head_check: bo
                         }
                     },
                     Err(e) => {
+                        let error_string = e.to_string();
                         let error_type = if e.is_timeout() {
                             "Timeout error"
                         } else if e.is_connect() {
@@ -557,18 +572,47 @@ pub async fn validate_download_url_with_options(url: String, skip_head_check: bo
                             "Connection error"
                         } else if e.is_request() {
                             "Request error"
+                        } else if error_string.contains("SSL") || error_string.contains("ssl") || error_string.contains("SSL_ERROR_SYSCALL") {
+                            "SSL error"
                         } else {
                             "Unknown error"
                         };
                         
                         println!("[Rust] URL validation error on attempt {}: {}: {}", attempt, error_type, e);
-                        last_error = Some((error_type, e.to_string()));
+                        last_error = Some((error_type, error_string));
                         
                         if attempt < max_retries {
                             println!("[Rust] Retrying in 1 second...");
                             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                         }
                     },
+                }
+            }
+            
+            // If HEAD requests failed, try a range request as fallback
+            if last_error.is_some() {
+                println!("[Rust] HEAD requests failed with SSL errors. Trying range request fallback (bytes=0-0)...");
+                
+                // Try a range request for bytes 0-0 (similar to curl -r 0-0)
+                match client.get(&url)
+                    .header("Range", "bytes=0-0")
+                    .send()
+                    .await {
+                    Ok(response) => {
+                        let status = response.status();
+                        println!("[Rust] Range request fallback response: status={}", status);
+                        
+                        // 206 Partial Content is the expected response for a successful range request
+                        if status == reqwest::StatusCode::PARTIAL_CONTENT || status.is_success() {
+                            println!("[Rust] URL validation successful via range request fallback: {}", url);
+                            return Ok(true);
+                        } else {
+                            println!("[Rust] URL validation failed via range request - HTTP status: {}", status);
+                        }
+                    },
+                    Err(e) => {
+                        println!("[Rust] Range request fallback also failed: {}", e);
+                    }
                 }
             }
             
@@ -590,18 +634,54 @@ pub async fn validate_download_url_with_options(url: String, skip_head_check: bo
 
 #[command]
 pub async fn get_file_size_from_url(url: String) -> Result<u64, String> {
-    let client = reqwest::Client::new();
-    let response = client.head(&url).send().await
-        .map_err(|e| format!("Failed to get file info: {}", e))?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
     
-    if let Some(content_length) = response.headers().get("content-length") {
-        let size_str = content_length.to_str()
-            .map_err(|e| format!("Invalid content-length header: {}", e))?;
-        let size = size_str.parse::<u64>()
-            .map_err(|e| format!("Failed to parse content-length: {}", e))?;
-        Ok(size)
-    } else {
-        Err("Content-Length header not found".to_string())
+    // Try HEAD request first
+    match client.head(&url).send().await {
+        Ok(response) => {
+            if let Some(content_length) = response.headers().get("content-length") {
+                let size_str = content_length.to_str()
+                    .map_err(|e| format!("Invalid content-length header: {}", e))?;
+                let size = size_str.parse::<u64>()
+                    .map_err(|e| format!("Failed to parse content-length: {}", e))?;
+                return Ok(size);
+            } else {
+                return Err("Content-Length header not found".to_string());
+            }
+        }
+        Err(e) => {
+             let error_string = e.to_string();
+             // If HEAD request failed, try range request fallback
+             println!("[Rust] HEAD request failed, trying range request fallback for file size");
+             
+             match client.get(&url)
+                 .header("Range", "bytes=0-0")
+                 .send()
+                 .await {
+                 Ok(response) => {
+                     // Look for Content-Range header which contains the total size
+                     if let Some(content_range) = response.headers().get("content-range") {
+                         let range_str = content_range.to_str()
+                             .map_err(|e| format!("Invalid content-range header: {}", e))?;
+                         
+                         // Parse "bytes 0-0/total_size" format
+                         if let Some(total_part) = range_str.split('/').nth(1) {
+                             let size = total_part.parse::<u64>()
+                                 .map_err(|e| format!("Failed to parse total size from content-range: {}", e))?;
+                             return Ok(size);
+                         }
+                     }
+                     return Err("Could not determine file size from range request".to_string());
+                 }
+                 Err(range_err) => {
+                     return Err(format!("Both HEAD and range requests failed: HEAD: {}, Range: {}", error_string, range_err));
+                 }
+             }
+        }
     }
 }
 

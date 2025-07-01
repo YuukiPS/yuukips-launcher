@@ -244,7 +244,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
 
 
   const formatFileSize = (bytes: number): string => {
-    if (bytes === 0) return '0 B';
+    if (bytes === 0 || isNaN(bytes) || bytes === undefined || bytes === null) return '0 B';
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -679,22 +679,45 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                       </div>
                       <div className="col-span-2 flex items-center">
                         <div>
-                          <div className="text-white">{formatFileSize(download.totalSize)}</div>
-                          <div className="text-gray-400 text-sm">{formatFileSize(download.downloadedSize)} downloaded</div>
+                          {download.totalSize > 0 ? (
+                            <>
+                              <div className="text-white">{formatFileSize(download.totalSize)}</div>
+                              <div className="text-gray-400 text-sm">{formatFileSize(download.downloadedSize)} downloaded</div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="text-white">Unknown size</div>
+                              <div className="text-gray-400 text-sm">{formatFileSize(download.downloadedSize)} downloaded</div>
+                            </>
+                          )}
                         </div>
                       </div>
                       <div className="col-span-2 flex items-center">
                         <div className="w-full">
-                          <div className="flex justify-between text-sm mb-1">
-                            <span className="text-white">{download.progress.toFixed(1)}%</span>
-                            <span className="text-gray-400">{formatTime(download.timeRemaining)}</span>
-                          </div>
-                          <div className="w-full bg-gray-600 rounded-full h-2">
-                            <div
-                              className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                              style={{ width: `${download.progress}%` }}
-                            />
-                          </div>
+                          {download.totalSize > 0 ? (
+                            <>
+                              <div className="flex justify-between text-sm mb-1">
+                                <span className="text-white">{download.progress.toFixed(1)}%</span>
+                                <span className="text-gray-400">{formatTime(download.timeRemaining)}</span>
+                              </div>
+                              <div className="w-full bg-gray-600 rounded-full h-2">
+                                <div
+                                  className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                                  style={{ width: `${download.progress}%` }}
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="flex justify-between text-sm mb-1">
+                                <span className="text-white">{formatFileSize(download.downloadedSize)}</span>
+                                <span className="text-gray-400">Unknown time</span>
+                              </div>
+                              <div className="w-full bg-gray-600 rounded-full h-2">
+                                <div className="bg-blue-500 h-2 rounded-full transition-all duration-300 animate-pulse" style={{ width: '100%' }} />
+                              </div>
+                            </>
+                          )}
                         </div>
                       </div>
                       <div className="col-span-2 flex items-center">
