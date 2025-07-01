@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "YuukiPS",
-  "version": "0.0.15",
+  "version": "0.0.16",
   "identifier": "com.yuukips.launcher",
   "build": {
     "frontendDist": "../dist",
@@ -38,6 +38,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
+        "label": "main",
         "title": "YuukiPS Launcher",
         "width": 1200,
         "height": 800,
@@ -46,7 +47,8 @@
         "resizable": true,
         "fullscreen": false,
         "decorations": false,
-        "transparent": true
+        "transparent": true,
+        "visible": false
       }
     ],
     "security": {

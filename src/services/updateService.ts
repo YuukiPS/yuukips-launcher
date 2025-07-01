@@ -30,12 +30,31 @@ export interface DownloadProgress {
 
 export class UpdateService {
   private static readonly GITHUB_API_URL = 'https://book-api.yuuki.me/app/yuukips-launcher/latest';
+  private static updateCheckPromise: Promise<UpdateInfo> | null = null;
   
   /**
    * Check for available updates
    * @param force - If true, bypasses version comparison and always returns update info
    */
   static async checkForUpdates(force: boolean = false): Promise<UpdateInfo> {
+    // If there's already a pending request and not forcing, return it
+    if (this.updateCheckPromise && !force) {
+      return this.updateCheckPromise;
+    }
+    
+    // Create and store the promise
+    this.updateCheckPromise = this.performUpdateCheck(force);
+    
+    try {
+      const result = await this.updateCheckPromise;
+      return result;
+    } finally {
+      // Clear the promise after completion (success or failure)
+      this.updateCheckPromise = null;
+    }
+  }
+  
+  private static async performUpdateCheck(force: boolean = false): Promise<UpdateInfo> {
     try {
       // Get current version from package.json
       const currentVersion = await invoke('get_current_version') as string;

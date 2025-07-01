@@ -55,11 +55,31 @@ export const startProxyWithSSLCheck = async (): Promise<{ success: boolean; mess
 };
 
 export class GameApiService {
+  private static fetchPromise: Promise<Game[]> | null = null;
+  
   static async fetchGames(): Promise<Game[]> {
+    // If there's already a pending request, return it
+    if (this.fetchPromise) {
+      return this.fetchPromise;
+    }
+    
+    // Create and store the promise
+    this.fetchPromise = this.performFetch();
+    
     try {
-      const randomTime = Date.now();
+      const result = await this.fetchPromise;
+      return result;
+    } finally {
+      // Clear the promise after completion (success or failure)
+      this.fetchPromise = null;
+    }
+  }
+  
+  private static async performFetch(): Promise<Game[]> {
+    try {
+      const timestamp = Date.now();
       const responseText = await invoke('fetch_api_data', { 
-        url: `https://ps.yuuki.me/json/game_all.json?time=${randomTime}` 
+        url: `https://ps.yuuki.me/json/game_all.json?time=${timestamp}` 
       }) as string;
       
       const games: Game[] = JSON.parse(responseText);

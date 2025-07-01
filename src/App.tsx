@@ -38,9 +38,8 @@ function App() {
 
   const selectedGame = games.find(game => game.id === selectedGameId) || null;
 
-  const loadGames = useCallback(async (forceRefresh: boolean = false) => {
-    // Only fetch games once per session unless forced to refresh
-    if (gamesLoadedRef.current && !forceRefresh) {
+  const loadGames = useCallback(async () => {
+    if (gamesLoadedRef.current) {
       return;
     }
     
@@ -51,39 +50,42 @@ function App() {
       setGames(apiGames);
       gamesLoadedRef.current = true;
       
-      // Set the first game as selected if no game is currently selected
-      if (selectedGameId === null && apiGames.length > 0) {
-        setSelectedGameId(apiGames[0].id);
-      }
-    } catch (err) {
-      console.error('Failed to load games from API:', err);
+      // Auto-select first game if none selected
+      setSelectedGameId(prev => prev || (apiGames.length > 0 ? apiGames[0].id : null));
+    } catch (error) {
+      console.error('Failed to load games:', error);
       setGames([]);
     } finally {
       setIsLoading(false);
+      
+      // Hide the initial loading screen once the app data is loaded
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((window as any).hideInitialLoading) {
+        setTimeout(() => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (window as any).hideInitialLoading();
+        }, 100);
+      }
     }
-  }, [selectedGameId]);
+  }, []);
 
   // Check for updates on startup
   const checkForUpdates = useCallback(async (showErrorToUser: boolean = false) => {
     if (updateCheckCompleted && !showErrorToUser) return;
     
     try {
-      console.log('🔍 Checking for updates...');
       const updateInfo = await UpdateService.checkForUpdates();
       
       if (updateInfo.available) {
-        console.log('✅ Update available:', updateInfo.latestVersion);
         setUpdateInfo(updateInfo);
         setShowUpdateModal(true);
         setUpdateCheckError(null);
         setShowUpdateError(false);
       } else {
-        console.log('✅ No updates available');
         setUpdateCheckError(null);
         setShowUpdateError(false);
       }
     } catch (error) {
-      console.error('❌ Update check failed:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       setUpdateCheckError(errorMessage);
       
@@ -100,13 +102,7 @@ function App() {
   // Function to manually refresh games list and check for updates on startup
   useEffect(() => {
     loadGames();
-    
-    // Check for updates after a short delay to ensure proxy is disabled first
-    const updateCheckTimer = setTimeout(() => {
-      checkForUpdates(false); // Don't show errors to user on startup
-    }, 2000); // 2 second delay
-    
-    return () => clearTimeout(updateCheckTimer);
+    checkForUpdates();
   }, [loadGames, checkForUpdates]);
 
   const handleGameUpdate = (updatedGame: Game) => {

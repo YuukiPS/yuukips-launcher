@@ -1,6 +1,8 @@
 //! YuukiPS Launcher - Main Library
 //! This is the main entry point for the Tauri application backend.
 
+use tauri::Manager;
+
 // Import all modules
 mod game;
 mod http;
@@ -102,6 +104,11 @@ pub fn run() {
                 Ok(message) => println!("🔧 Startup proxy check: {}", message),
                 Err(e) => eprintln!("⚠️ Startup proxy check failed: {}", e),
             }
+            
+            // Show the main window after initialization
+            let main_window = app.get_webview_window("main").unwrap();
+            main_window.show().unwrap();
+            
             Ok(())
         })
         .run(tauri::generate_context!())
