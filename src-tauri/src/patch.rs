@@ -262,12 +262,13 @@ async fn apply_file_patches(
         let mut use_cached = false;
         if cache_file_path.exists() {
             match calculate_md5(&cache_file_path) {
-                Ok(cached_md5) if cached_md5 == patch_file.md5 => {
+                Ok(cached_md5) if cached_md5.to_uppercase() == patch_file.md5.to_uppercase() => {
                     println!("📦 Using cached patch for: {}", patch_file.location);
                     use_cached = true;
                 }
                 Ok(_) => {
-                    println!("🔄 Cache MD5 mismatch for {}, re-downloading", patch_file.location);
+                    println!("🔄 Cache MD5 mismatch for {}, expected {} but got {}", 
+                        patch_file.location, patch_file.md5.to_uppercase(), calculate_md5(&cache_file_path).unwrap_or_default());
                 }
                 Err(e) => {
                     println!("⚠️ Failed to verify cached file {}: {}", patch_file.location, e);
@@ -277,7 +278,7 @@ async fn apply_file_patches(
         
         if !use_cached {
             // Download the patch file
-            download_and_verify_file(&patch_file.file, &cache_file_path, &patch_file.md5).await
+            download_and_verify_file(&patch_file.file, &cache_file_path, &patch_file.md5.to_uppercase()).await
                 .map_err(|e| format!("Failed to download patch for {}: {}", patch_file.location, e))?;
         }
         
