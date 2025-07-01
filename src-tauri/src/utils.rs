@@ -3,7 +3,25 @@
 
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 use serde_json::Number;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+/// Create a command with hidden window on Windows
+pub fn create_hidden_command(program: &str) -> Command {
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = Command::new(program);
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        cmd
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new(program)
+    }
+}
 
 /// Calculate MD5 hash of a file
 pub fn calculate_md5(file_path: &Path) -> Result<String, String> {

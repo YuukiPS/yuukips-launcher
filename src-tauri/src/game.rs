@@ -10,8 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
+
 use tauri::command;
 
 use crate::patch::{
@@ -21,18 +20,7 @@ use crate::patch::{
 use crate::proxy;
 use crate::utils::get_game_executable_names;
 
-/// Helper function to create a Command with hidden window on Windows
-#[cfg(target_os = "windows")]
-fn create_hidden_command(program: &str) -> Command {
-    let mut cmd = Command::new(program);
-    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    cmd
-}
-
-#[cfg(not(target_os = "windows"))]
-fn create_hidden_command(program: &str) -> Command {
-    Command::new(program)
-}
+use crate::utils::create_hidden_command;
 
 // Global game monitoring state
 static GAME_MONITOR_STATE: once_cell::sync::Lazy<Arc<Mutex<Option<GameMonitorHandle>>>> =
@@ -71,9 +59,9 @@ pub fn get_game_folder_path(game_id: Number, version: String) -> Result<String, 
 /// Launch a game with the specified parameters
 #[command]
 pub fn launch_game(
-    game_id: Number,
-    version: String,
-    channel: Number,
+    _game_id: Number,
+    _version: String,
+    _channel: Number,
     game_folder_path: String,
 ) -> Result<String, String> {
     #[cfg(target_os = "windows")]
@@ -82,7 +70,7 @@ pub fn launch_game(
         if game_folder_path.is_empty() {
             return Err(format!(
                 "Game folder path not set for {} version {}. Please configure it in game settings.",
-                game_id, version
+                _game_id, _version
             ));
         }
 
@@ -95,7 +83,7 @@ pub fn launch_game(
         }
 
         // Get game executable name
-        let game_exe_names = get_game_executable_names(&game_id)?;
+        let game_exe_names = get_game_executable_names(&_game_id)?;
         let game_exe_name = game_exe_names[0]; // Use first executable name
 
         // Construct full path to game executable
@@ -106,7 +94,7 @@ pub fn launch_game(
             return Err(format!(
                 "Game executable not found: {} = {}. Please verify the game installation.",
                 game_exe_path.display(),
-                game_id
+                _game_id
             ));
         }
 
@@ -118,9 +106,9 @@ pub fn launch_game(
 
         // Apply patches if needed
         let (patched_files, patch_response_data) = match check_and_apply_patches(
-            game_id.clone(),
-            version.clone(),
-            channel.clone(),
+            _game_id.clone(),
+            _version.clone(),
+            _channel.clone(),
             md5_str.clone(),
             game_folder_path.clone(),
         ) {
@@ -150,15 +138,15 @@ pub fn launch_game(
         };
 
         // Start game monitoring AFTER patching is complete
-        if let Err(e) = start_game_monitor(game_id.clone()) {
+        if let Err(e) = start_game_monitor(_game_id.clone()) {
             return Err(format!("Failed to start game monitoring: {}", e));
         }
 
         // Update the game monitor with patching information
         if let Ok(mut monitor_state) = GAME_MONITOR_STATE.lock() {
             if let Some(handle) = monitor_state.as_mut() {
-                handle.version = version.clone();
-                handle.channel = channel.clone();
+                handle.version = _version.clone();
+                handle.channel = _channel.clone();
                 handle.md5 = md5_str.clone();
                 handle.game_folder_path = game_folder_path.clone();
 
@@ -211,16 +199,16 @@ pub fn launch_game(
 
 /// Check if a game is installed
 #[command]
-pub fn check_game_installed(_game_id: Number, _version: String, game_folder_path: String) -> bool {
+pub fn check_game_installed(_game_id: Number, _version: String, _game_folder_path: String) -> bool {
     #[cfg(target_os = "windows")]
     {
         // Check if game is installed by verifying the configured folder path exists
-        if game_folder_path.is_empty() {
+        if _game_folder_path.is_empty() {
             return false; // No path configured means not installed
         }
 
         // Check if the configured game folder exists
-        Path::new(&game_folder_path).exists()
+        Path::new(&_game_folder_path).exists()
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -230,10 +218,10 @@ pub fn check_game_installed(_game_id: Number, _version: String, game_folder_path
 }
 
 /// Internal function to check if a specific game is running
-pub fn check_game_running_internal(game_id: &Number) -> Result<bool, String> {
+pub fn check_game_running_internal(_game_id: &Number) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
-        let game_exe_names = get_game_executable_names(game_id)?;
+        let game_exe_names = get_game_executable_names(_game_id)?;
 
         // Check each possible executable name
         for game_exe_name in game_exe_names {
@@ -286,10 +274,10 @@ pub fn check_game_running(game_id: Number) -> Result<bool, String> {
 }
 
 /// Kill game processes if running
-pub fn kill_game_processes(game_id: &Number) -> Result<String, String> {
+pub fn kill_game_processes(_game_id: &Number) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        let game_exe_names = get_game_executable_names(game_id)?;
+        let game_exe_names = get_game_executable_names(_game_id)?;
         let mut killed_processes = Vec::new();
 
         // Kill each possible executable
@@ -753,35 +741,35 @@ pub fn force_stop_game_monitor() -> Result<String, String> {
 
 /// Stop a game process by PID
 #[command]
-pub fn stop_game_process(process_id: u32) -> Result<String, String> {
+pub fn stop_game_process(_process_id: u32) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         // First check if the process exists
         let check_output = create_hidden_command("tasklist")
-            .args(["/FI", &format!("PID eq {}", process_id)])
+            .args(["/FI", &format!("PID eq {}", _process_id)])
             .output()
             .map_err(|e| format!("Failed to check process existence: {}", e))?;
 
         if check_output.status.success() {
             let check_output_str = String::from_utf8_lossy(&check_output.stdout);
-            if !check_output_str.contains(&process_id.to_string()) {
+            if !check_output_str.contains(&_process_id.to_string()) {
                 return Ok(format!(
                     "Process with PID {} is not running (already terminated)",
-                    process_id
+                    _process_id
                 ));
             }
         }
 
         // Use taskkill to terminate the process by PID
         let output = create_hidden_command("taskkill")
-            .args(["/PID", &process_id.to_string(), "/F"])
+            .args(["/PID", &_process_id.to_string(), "/F"])
             .output()
             .map_err(|e| format!("Failed to execute taskkill: {}", e))?;
 
         if output.status.success() {
             Ok(format!(
                 "Successfully terminated process with PID: {}",
-                process_id
+                _process_id
             ))
         } else {
             let error_msg = String::from_utf8_lossy(&output.stderr);
@@ -789,7 +777,7 @@ pub fn stop_game_process(process_id: u32) -> Result<String, String> {
             if error_msg.contains("not found") || error_msg.contains("not running") {
                 Ok(format!(
                     "Process with PID {} was not running (already terminated)",
-                    process_id
+                    _process_id
                 ))
             } else {
                 Err(format!("Failed to terminate process: {}", error_msg))
@@ -805,10 +793,10 @@ pub fn stop_game_process(process_id: u32) -> Result<String, String> {
 
 /// Stop a game by game ID
 #[command]
-pub fn stop_game(game_id: Number) -> Result<String, String> {
+pub fn stop_game(_game_id: Number) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        let game_exe_names = get_game_executable_names(&game_id)?;
+        let game_exe_names = get_game_executable_names(&_game_id)?;
         let mut terminated_processes = Vec::new();
         let mut last_error = None;
 

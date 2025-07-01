@@ -1,24 +1,9 @@
 //! System utilities module
 //! Handles Windows-specific operations like admin privileges, certificates, and proxy settings
 
-use std::process::Command;
 use tauri::command;
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
-/// Helper function to create a Command with hidden window on Windows
-#[cfg(target_os = "windows")]
-fn create_hidden_command(program: &str) -> Command {
-    let mut cmd = Command::new(program);
-    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    cmd
-}
-
-#[cfg(not(target_os = "windows"))]
-fn create_hidden_command(program: &str) -> Command {
-    Command::new(program)
-}
+use crate::utils::create_hidden_command;
 
 /// Check if the application is running with administrator privileges
 #[cfg(target_os = "windows")]
@@ -52,6 +37,16 @@ pub fn is_running_as_admin() -> bool {
         CloseHandle(token);
 
         result != 0 && elevation.TokenIsElevated != 0
+    }
+}
+
+/// Check if the application is running with administrator privileges (non-Windows)
+#[cfg(not(target_os = "windows"))]
+pub fn is_running_as_admin() -> bool {
+    // On non-Windows systems, we assume the user has appropriate permissions
+    // or we can check if running as root
+    unsafe {
+        libc::geteuid() == 0
     }
 }
 
@@ -123,16 +118,16 @@ pub fn check_and_disable_windows_proxy() -> Result<String, String> {
 
 /// Install SSL certificate
 #[command]
-pub fn install_ssl_certificate(cert_path: String) -> Result<String, String> {
+pub fn install_ssl_certificate(_cert_path: String) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        if !std::path::Path::new(&cert_path).exists() {
-            return Err(format!("Certificate file not found: {}", cert_path));
+        if !std::path::Path::new(&_cert_path).exists() {
+            return Err(format!("Certificate file not found: {}", _cert_path));
         }
 
         // Use certutil to install the certificate
         let output = create_hidden_command("certutil")
-            .args(["-addstore", "Root", &cert_path])
+            .args(["-addstore", "Root", &_cert_path])
             .output()
             .map_err(|e| format!("Failed to execute certutil: {}", e))?;
 
@@ -141,14 +136,14 @@ pub fn install_ssl_certificate(cert_path: String) -> Result<String, String> {
             if output_str.contains("completed successfully") {
                 Ok(format!(
                     "SSL certificate installed successfully: {}",
-                    cert_path
+                    _cert_path
                 ))
             } else {
                 // Check if certificate is already installed
                 if output_str.contains("already exists") || output_str.contains("duplicate") {
                     Ok(format!(
                         "SSL certificate is already installed: {}",
-                        cert_path
+                        _cert_path
                     ))
                 } else {
                     Err(format!(

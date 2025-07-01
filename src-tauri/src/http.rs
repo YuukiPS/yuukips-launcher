@@ -7,20 +7,7 @@ use tauri::{command, AppHandle, Emitter};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
-use std::process::Command;
-
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
-/// Create a command with hidden window on Windows
-fn create_hidden_command(program: &str) -> Command {
-    let mut cmd = Command::new(program);
-    #[cfg(target_os = "windows")]
-    {
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
-    cmd
-}
+use crate::utils::create_hidden_command;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GitHubRelease {

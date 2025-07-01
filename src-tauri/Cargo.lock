@@ -6477,13 +6477,14 @@ dependencies = [
 
 [[package]]
 name = "yuukips-launcher"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "async-trait",
  "chrono",
  "futures-util",
  "hudsucker",
  "hyper-rustls",
+ "libc",
  "log",
  "md5",
  "once_cell",

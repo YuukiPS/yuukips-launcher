@@ -22,25 +22,12 @@ use rcgen::{
 use std::fs;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::process::Command;
 
 use hudsucker::hyper::Uri;
 use rustls_pemfile as pemfile;
 
 use std::env;
-
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
-/// Create a command with hidden window on Windows
-fn create_hidden_command(program: &str) -> Command {
-    let mut cmd = Command::new(program);
-    #[cfg(target_os = "windows")]
-    {
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-    }
-    cmd
-}
+use crate::utils::create_hidden_command;
 
 // Helper function to get data directory
 fn get_data_dir() -> Result<PathBuf, String> {
