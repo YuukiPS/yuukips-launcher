@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Download,
   Pause,
@@ -16,6 +16,8 @@ import {
   Plus
 } from 'lucide-react';
 import { DownloadItem, DownloadHistory, DownloadStats } from '../types';
+import { DownloadService } from '../services/downloadService';
+import { open } from '@tauri-apps/plugin-dialog';
 
 interface DownloadManagerProps {
   isOpen: boolean;
@@ -50,74 +52,46 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   const [urlError, setUrlError] = useState('');
   const [folderError, setFolderError] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [skipUrlCheck, setSkipUrlCheck] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
-      // Initialize with empty state
-      setDownloads([]);
-      setHistory([]);
-      setStats({
-        totalDownloads: 0,
-        activeDownloads: 0,
-        completedDownloads: 0,
-        totalDownloadedSize: 0,
-        averageSpeed: 0
-      });
+      loadData();
       loadDefaultDownloadFolder();
+      
+      // Set up polling for download updates
+      const interval = setInterval(loadData, 1000);
+      return () => clearInterval(interval);
     }
   }, [isOpen]);
 
-  const loadDefaultDownloadFolder = async () => {
+  const loadData = async () => {
     try {
-      // This would typically get the default download folder from settings
-      setNewDownloadFolder('C:\\Downloads');
+      const [activeDownloads, downloadHistory, downloadStats] = await Promise.all([
+        DownloadService.getActiveDownloads(),
+        DownloadService.getDownloadHistory(),
+        DownloadService.getDownloadStats()
+      ]);
+      
+      setDownloads(activeDownloads);
+      setHistory(downloadHistory);
+      setStats(downloadStats);
     } catch (error) {
-      console.error('Failed to load default download folder:', error);
+      console.error('Failed to load download data:', error);
     }
   };
 
-  const simulateDownloadProgress = (downloadId: string) => {
-    const interval = setInterval(() => {
-      setDownloads(prev => {
-        const updatedDownloads = prev.map(download => {
-          if (download.id === downloadId && download.status === 'downloading') {
-            const newProgress = Math.min(download.progress + Math.random() * 10, 100);
-            const newDownloadedSize = Math.floor((newProgress / 100) * download.totalSize);
-            const isCompleted = newProgress >= 100;
-
-            const updatedDownload = {
-              ...download,
-              progress: newProgress,
-              downloadedSize: newDownloadedSize,
-              speed: isCompleted ? 0 : Math.random() * 5242880, // Random speed up to 5MB/s
-              status: isCompleted ? 'completed' as const : download.status,
-              timeRemaining: isCompleted ? 0 : Math.floor(Math.random() * 120),
-              endTime: isCompleted ? Date.now() : undefined
-            };
-
-            // Add to history when completed
-            if (isCompleted) {
-              setHistory(prevHistory => [{
-                id: download.id,
-                fileName: download.fileName + download.fileExtension,
-                fileSize: download.totalSize,
-                downloadDate: new Date().toISOString().split('T')[0],
-                status: 'completed',
-                filePath: download.filePath
-              }, ...prevHistory]);
-              clearInterval(interval);
-            }
-
-            return updatedDownload;
-          }
-          return download;
-        });
-
-        updateStats(updatedDownloads);
-        return updatedDownloads;
-      });
-    }, 1000);
+  const loadDefaultDownloadFolder = async () => {
+    try {
+      const defaultFolder = await DownloadService.getDownloadDirectory();
+      setNewDownloadFolder(defaultFolder);
+    } catch (error) {
+      console.error('Failed to load default download folder:', error);
+      setNewDownloadFolder('C:\\Downloads');
+    }
   };
+
+
 
   const validateUrl = (url: string): boolean => {
     try {
@@ -129,107 +103,145 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   };
 
   const handleAddDownload = async () => {
+    console.log('[DownloadManager] Starting add download process', {
+      url: newDownloadUrl,
+      folder: newDownloadFolder
+    });
+    
     setUrlError('');
     setFolderError('');
 
     // Validate URL
     if (!newDownloadUrl.trim()) {
+      console.log('[DownloadManager] URL validation failed: empty URL');
       setUrlError('URL is required');
       return;
     }
 
     if (!validateUrl(newDownloadUrl)) {
+      console.log('[DownloadManager] URL validation failed: invalid format');
       setUrlError('Please enter a valid HTTP/HTTPS URL');
       return;
     }
 
     // Validate folder
     if (!newDownloadFolder.trim()) {
+      console.log('[DownloadManager] Folder validation failed: empty folder');
       setFolderError('Destination folder is required');
       return;
     }
 
     setIsAddingDownload(true);
+    console.log('[DownloadManager] Starting backend validation and download process');
 
     try {
+      // Validate URL with backend (with skip option)
+      console.log('[DownloadManager] Validating URL with backend:', newDownloadUrl, 'skipUrlCheck:', skipUrlCheck);
+      
+      if (skipUrlCheck) {
+        console.log('[DownloadManager] Skipping URL validation as requested by user');
+      } else {
+        try {
+          const isValidUrl = await DownloadService.validateDownloadUrlWithOptions(newDownloadUrl, false);
+          console.log('[DownloadManager] Backend URL validation result:', isValidUrl);
+          
+          if (!isValidUrl) {
+            console.log('[DownloadManager] Backend validation failed - URL not accessible');
+            setUrlError('URL is not accessible or invalid. You can try enabling "Skip URL Check" if you\'re sure the URL is correct.');
+            setIsAddingDownload(false);
+            return;
+          }
+        } catch (error) {
+          console.log('[DownloadManager] URL validation failed with error:', error);
+          // If validation fails with connection error, suggest skipping
+          if (error instanceof Error && error.message.includes('Connection failed')) {
+            setUrlError(error.message);
+          } else {
+            setUrlError('URL validation failed. You can try enabling "Skip URL Check" if you\'re sure the URL is correct.');
+          }
+          setIsAddingDownload(false);
+          return;
+        }
+      }
+
       // Extract filename from URL
       const urlObj = new URL(newDownloadUrl);
       const fileName = urlObj.pathname.split('/').pop() || 'download';
-      const fileExtension = fileName.includes('.') ? '.' + fileName.split('.').pop() : '';
       const filePath = `${newDownloadFolder}\\${fileName}`;
+      console.log('[DownloadManager] Extracted filename:', fileName, 'Full path:', filePath);
 
-      // Create new download item with realistic file size
-      const estimatedSize = Math.floor(Math.random() * 500 * 1024 * 1024) + 10 * 1024 * 1024; // 10MB to 510MB
-      const newDownload: DownloadItem = {
-        id: Date.now().toString(),
-        fileName: fileName.replace(fileExtension, ''),
-        fileExtension,
-        totalSize: estimatedSize,
-        downloadedSize: 0,
-        progress: 0,
-        speed: 0,
-        status: 'downloading',
-        timeRemaining: 0,
-        url: newDownloadUrl,
-        filePath,
-        startTime: Date.now()
-      };
+      // Check if file already exists
+      console.log('[DownloadManager] Checking if file exists:', filePath);
+      const fileExists = await DownloadService.checkFileExists(filePath);
+      console.log('[DownloadManager] File exists check result:', fileExists);
+      
+      if (fileExists) {
+        const overwrite = confirm(`File ${fileName} already exists. Do you want to overwrite it?`);
+        console.log('[DownloadManager] User overwrite decision:', overwrite);
+        if (!overwrite) {
+          console.log('[DownloadManager] User cancelled overwrite - aborting download');
+          setIsAddingDownload(false);
+          return;
+        }
+      }
 
-      setDownloads(prev => {
-        const updatedDownloads = [...prev, newDownload];
-        updateStats(updatedDownloads);
-        return updatedDownloads;
-      });
+      // Start the actual download
+      console.log('[DownloadManager] Starting download with backend');
+      const downloadId = await DownloadService.startDownload(newDownloadUrl, filePath, fileName);
+      console.log('[DownloadManager] Download started successfully with ID:', downloadId);
 
-      // Simulate download progress (in a real app, this would be handled by the backend)
-      simulateDownloadProgress(newDownload.id);
-
-      // Clear form
+      // Only clear form and close modal if download started successfully
       setNewDownloadUrl('');
+      setShowAddModal(false);
+      console.log('[DownloadManager] Modal closed, download initiated successfully');
+      
+      // Refresh data to show new download
+      await loadData();
+      console.log('[DownloadManager] Download data refreshed');
 
     } catch (error) {
-      console.error('Failed to start download:', error);
-      setUrlError('Failed to start download. Please try again.');
+      console.error('[DownloadManager] Failed to start download:', error);
+      
+      // Extract meaningful error message
+      let errorMessage = 'Failed to start download. Please try again.';
+      if (error instanceof Error) {
+        if (error.message.includes('validate')) {
+          errorMessage = 'Unable to validate the download URL. Please check the URL and your internet connection.';
+        } else if (error.message.includes('network') || error.message.includes('fetch')) {
+          errorMessage = 'Network error occurred. Please check your internet connection and try again.';
+        } else if (error.message.includes('permission') || error.message.includes('access')) {
+          errorMessage = 'Permission denied. Please check folder permissions and try again.';
+        } else {
+          errorMessage = `Download failed: ${error.message}`;
+        }
+      }
+      
+      setUrlError(errorMessage);
+      console.log('[DownloadManager] Error message set:', errorMessage);
     } finally {
       setIsAddingDownload(false);
+      console.log('[DownloadManager] Add download process completed');
     }
   };
 
   const selectDownloadFolder = async () => {
     try {
-      // This would typically open a folder selection dialog
-      // For now, we'll use a simple prompt as a placeholder
-      const folder = prompt('Enter download folder path:', newDownloadFolder);
-      if (folder) {
-        setNewDownloadFolder(folder);
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: newDownloadFolder
+      });
+      
+      if (selected && typeof selected === 'string') {
+        setNewDownloadFolder(selected);
+        // Update the default download directory
+        await DownloadService.setDownloadDirectory(selected);
       }
     } catch (error) {
       console.error('Failed to select folder:', error);
     }
   };
 
-  const updateStats = useCallback((downloadList: DownloadItem[]) => {
-    const activeDownloads = downloadList.filter(d => d.status === 'downloading' || d.status === 'paused').length;
-    const completedDownloads = downloadList.filter(d => d.status === 'completed').length;
-    const totalDownloadedSize = downloadList
-      .filter(d => d.status === 'completed')
-      .reduce((sum, d) => sum + d.totalSize, 0);
-
-    const activeDownloadSpeeds = downloadList
-      .filter(d => d.status === 'downloading')
-      .map(d => d.speed);
-    const averageSpeed = activeDownloadSpeeds.length > 0
-      ? activeDownloadSpeeds.reduce((sum, speed) => sum + speed, 0) / activeDownloadSpeeds.length
-      : 0;
-
-    setStats({
-      totalDownloads: downloadList.length,
-      activeDownloads,
-      completedDownloads,
-      totalDownloadedSize,
-      averageSpeed
-    });
-  }, []);
 
   const formatFileSize = (bytes: number): string => {
     if (bytes === 0) return '0 B';
@@ -259,7 +271,9 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   };
 
   const getFileIcon = (extension: string) => {
-    switch (extension.toLowerCase()) {
+    // Add null/undefined check for extension
+    const ext = extension || '';
+    switch (ext.toLowerCase()) {
       case '.zip':
       case '.rar':
       case '.7z':
@@ -300,47 +314,60 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
     }
   };
 
-  const handlePauseResume = (id: string) => {
-    setDownloads(prev => prev.map(download => {
-      if (download.id === id) {
-        const newStatus = download.status === 'downloading' ? 'paused' : 'downloading';
-        return { ...download, status: newStatus };
+  const handlePauseResume = async (id: string) => {
+    try {
+      const download = downloads.find(d => d.id === id);
+      if (!download) return;
+
+      if (download.status === 'downloading') {
+        await DownloadService.pauseDownload(id);
+      } else if (download.status === 'paused') {
+        await DownloadService.resumeDownload(id);
       }
-      return download;
-    }));
+      
+      // Refresh data to show updated status
+      await loadData();
+    } catch (error) {
+      console.error('Failed to pause/resume download:', error);
+    }
   };
 
-  const handleCancel = (id: string) => {
-    setDownloads(prev => prev.map(download => {
-      if (download.id === id) {
-        return { ...download, status: 'cancelled' as const, speed: 0 };
-      }
-      return download;
-    }));
+  const handleCancel = async (id: string) => {
+    try {
+      await DownloadService.cancelDownload(id);
+      // Refresh data to show updated status
+      await loadData();
+    } catch (error) {
+      console.error('Failed to cancel download:', error);
+    }
   };
 
-  const handleRestart = (id: string) => {
-    setDownloads(prev => prev.map(download => {
-      if (download.id === id && (download.status === 'error' || download.status === 'cancelled')) {
-        return {
-          ...download,
-          status: 'downloading' as const,
-          downloadedSize: 0,
-          progress: 0,
-          startTime: Date.now()
-        };
-      }
-      return download;
-    }));
+  const handleRestart = async (id: string) => {
+    try {
+      await DownloadService.restartDownload(id);
+      // Refresh data to show updated status
+      await loadData();
+    } catch (error) {
+      console.error('Failed to restart download:', error);
+    }
   };
 
-  const handleClearCompleted = () => {
-    setDownloads(prev => prev.filter(download => download.status !== 'completed'));
+  const handleClearCompleted = async () => {
+    try {
+      await DownloadService.clearCompletedDownloads();
+      // Refresh data to show updated list
+      await loadData();
+    } catch (error) {
+      console.error('Failed to clear completed downloads:', error);
+    }
   };
 
-  const handleOpenLocation = (filePath: string) => {
-    // This would call a Tauri command to open the file location
-    console.log('Opening location:', filePath);
+  const handleOpenLocation = async (filePath: string) => {
+    try {
+      await DownloadService.openDownloadLocation(filePath);
+    } catch (error) {
+      console.error('Failed to open download location:', error);
+    }
   };
 
   const handleSort = (field: SortField) => {
@@ -372,29 +399,36 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
     }
   };
 
-  const handleBulkAction = (action: 'pause' | 'resume' | 'cancel') => {
-    setDownloads(prev => prev.map(download => {
-      if (selectedDownloads.has(download.id)) {
-        switch (action) {
-          case 'pause':
-            return download.status === 'downloading' ? { ...download, status: 'paused' as const } : download;
-          case 'resume':
-            return download.status === 'paused' ? { ...download, status: 'downloading' as const } : download;
-          case 'cancel':
-            return { ...download, status: 'cancelled' as const, speed: 0 };
-          default:
-            return download;
-        }
+  const handleBulkAction = async (action: 'pause' | 'resume' | 'cancel') => {
+    try {
+      const downloadIds = Array.from(selectedDownloads);
+      
+      switch (action) {
+        case 'pause':
+          await DownloadService.bulkPauseDownloads(downloadIds);
+          break;
+        case 'resume':
+          await DownloadService.bulkResumeDownloads(downloadIds);
+          break;
+        case 'cancel':
+          await DownloadService.bulkCancelDownloads(downloadIds);
+          break;
       }
-      return download;
-    }));
-    setSelectedDownloads(new Set());
+      
+      setSelectedDownloads(new Set());
+      // Refresh data to show updated statuses
+      await loadData();
+    } catch (error) {
+      console.error('Failed to perform bulk action:', error);
+    }
   };
 
   // Filter and sort downloads
   const filteredDownloads = downloads
     .filter(download => {
-      const matchesSearch = download.fileName.toLowerCase().includes(searchTerm.toLowerCase());
+      // Add null/undefined checks for fileName
+      const fileName = download.fileName || '';
+      const matchesSearch = fileName.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesFilter = filterStatus === 'all' || download.status === filterStatus;
       return matchesSearch && matchesFilter;
     })
@@ -404,8 +438,8 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
 
       switch (sortField) {
         case 'fileName':
-          aValue = a.fileName.toLowerCase();
-          bValue = b.fileName.toLowerCase();
+          aValue = (a.fileName || '').toLowerCase();
+          bValue = (b.fileName || '').toLowerCase();
           break;
         case 'progress':
           aValue = a.progress;
@@ -640,7 +674,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                         <span className="text-2xl">{getFileIcon(download.fileExtension)}</span>
                         <div>
                           <div className="text-white font-medium truncate">{download.fileName}</div>
-                          <div className="text-gray-400 text-sm">{download.fileExtension}</div>
+                          <div className="text-gray-400 text-sm">{download.fileExtension || 'Unknown'}</div>
                         </div>
                       </div>
                       <div className="col-span-2 flex items-center">
@@ -855,6 +889,24 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                   )}
                 </div>
 
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    id="skipUrlCheck"
+                    checked={skipUrlCheck}
+                    onChange={(e) => setSkipUrlCheck(e.target.checked)}
+                    className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
+                  />
+                  <label htmlFor="skipUrlCheck" className="text-sm text-gray-300 cursor-pointer">
+                    Skip URL validation (use if URL validation fails due to connection issues)
+                  </label>
+                </div>
+                <div className="text-xs text-gray-400 bg-gray-700 p-3 rounded-lg">
+                  <strong>Note:</strong> Enabling "Skip URL validation" will bypass the initial URL accessibility check. 
+                  Use this option if you're experiencing connection issues during validation but are confident the URL is correct. 
+                  The download will still fail if the URL is actually invalid.
+                </div>
+
 
               </div>
             </div>
@@ -868,20 +920,14 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                   setNewDownloadFolder('');
                   setUrlError('');
                   setFolderError('');
+                  setSkipUrlCheck(false);
                 }}
                 className="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition-colors"
               >
                 Cancel
               </button>
               <button
-                onClick={() => {
-                  handleAddDownload();
-                  if (!urlError && !folderError) {
-                    setShowAddModal(false);
-                    setNewDownloadUrl('');
-                    setNewDownloadFolder('');
-                  }
-                }}
+                onClick={handleAddDownload}
                 disabled={isAddingDownload || !newDownloadUrl.trim() || !newDownloadFolder.trim()}
                 className="px-6 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center gap-2"
               >

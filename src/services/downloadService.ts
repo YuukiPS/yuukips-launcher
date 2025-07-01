@@ -9,14 +9,17 @@ export class DownloadService {
    * Start a new download
    */
   static async startDownload(url: string, filePath: string, fileName?: string): Promise<string> {
+    console.log('[DownloadService] Starting download:', { url, filePath, fileName });
     try {
       const downloadId = await invoke<string>('start_download', {
         url,
         filePath,
         fileName
       });
+      console.log('[DownloadService] Download started successfully with ID:', downloadId);
       return downloadId;
     } catch (error) {
+      console.error('[DownloadService] Failed to start download:', error);
       throw new Error(`Failed to start download: ${error}`);
     }
   }
@@ -25,9 +28,12 @@ export class DownloadService {
    * Pause a download
    */
   static async pauseDownload(downloadId: string): Promise<void> {
+    console.log('[DownloadService] Pausing download:', downloadId);
     try {
       await invoke('pause_download', { downloadId });
+      console.log('[DownloadService] Download paused successfully:', downloadId);
     } catch (error) {
+      console.error('[DownloadService] Failed to pause download:', downloadId, error);
       throw new Error(`Failed to pause download: ${error}`);
     }
   }
@@ -36,10 +42,27 @@ export class DownloadService {
    * Resume a paused download
    */
   static async resumeDownload(downloadId: string): Promise<void> {
+    console.log('[DownloadService] Resuming download:', downloadId);
     try {
       await invoke('resume_download', { downloadId });
+      console.log('[DownloadService] Download resumed successfully:', downloadId);
     } catch (error) {
+      console.error('[DownloadService] Failed to resume download:', downloadId, error);
       throw new Error(`Failed to resume download: ${error}`);
+    }
+  }
+
+  /**
+   * Restart a download
+   */
+  static async restartDownload(downloadId: string): Promise<void> {
+    console.log('[DownloadService] Restarting download:', downloadId);
+    try {
+      await invoke('restart_download', { downloadId });
+      console.log('[DownloadService] Download restarted successfully:', downloadId);
+    } catch (error) {
+      console.error('[DownloadService] Failed to restart download:', downloadId, error);
+      throw new Error(`Failed to restart download: ${error}`);
     }
   }
 
@@ -47,21 +70,27 @@ export class DownloadService {
    * Cancel a download
    */
   static async cancelDownload(downloadId: string): Promise<void> {
+    console.log('[DownloadService] Cancelling download:', downloadId);
     try {
       await invoke('cancel_download', { downloadId });
+      console.log('[DownloadService] Download cancelled successfully:', downloadId);
     } catch (error) {
+      console.error('[DownloadService] Failed to cancel download:', downloadId, error);
       throw new Error(`Failed to cancel download: ${error}`);
     }
   }
 
   /**
-   * Restart a failed download
+   * Remove a download
    */
-  static async restartDownload(downloadId: string): Promise<void> {
+  static async removeDownload(downloadId: string): Promise<void> {
+    console.log('[DownloadService] Removing download:', downloadId);
     try {
-      await invoke('restart_download', { downloadId });
+      await invoke('remove_download', { downloadId });
+      console.log('[DownloadService] Download removed successfully:', downloadId);
     } catch (error) {
-      throw new Error(`Failed to restart download: ${error}`);
+      console.error('[DownloadService] Failed to remove download:', downloadId, error);
+      throw new Error(`Failed to remove download: ${error}`);
     }
   }
 
@@ -69,10 +98,13 @@ export class DownloadService {
    * Get all active downloads
    */
   static async getActiveDownloads(): Promise<DownloadItem[]> {
+    console.log('[DownloadService] Getting active downloads');
     try {
       const downloads = await invoke<DownloadItem[]>('get_active_downloads');
+      console.log('[DownloadService] Retrieved active downloads count:', downloads.length);
       return downloads;
     } catch (error) {
+      console.error('[DownloadService] Failed to get active downloads:', error);
       throw new Error(`Failed to get active downloads: ${error}`);
     }
   }
@@ -81,10 +113,13 @@ export class DownloadService {
    * Get download status for a specific download
    */
   static async getDownloadStatus(downloadId: string): Promise<DownloadItem> {
+    console.log('[DownloadService] Getting download status for:', downloadId);
     try {
       const download = await invoke<DownloadItem>('get_download_status', { downloadId });
+      console.log('[DownloadService] Download status retrieved:', downloadId, download.status);
       return download;
     } catch (error) {
+      console.error('[DownloadService] Failed to get download status:', downloadId, error);
       throw new Error(`Failed to get download status: ${error}`);
     }
   }
@@ -105,9 +140,12 @@ export class DownloadService {
    * Clear completed downloads
    */
   static async clearCompletedDownloads(): Promise<void> {
+    console.log('[DownloadService] Clearing completed downloads');
     try {
       await invoke('clear_completed_downloads');
+      console.log('[DownloadService] Completed downloads cleared successfully');
     } catch (error) {
+      console.error('[DownloadService] Failed to clear completed downloads:', error);
       throw new Error(`Failed to clear completed downloads: ${error}`);
     }
   }
@@ -252,10 +290,31 @@ export class DownloadService {
    * Validate download URL
    */
   static async validateDownloadUrl(url: string): Promise<boolean> {
+    console.log('[DownloadService] Validating download URL:', url);
     try {
       const isValid = await invoke<boolean>('validate_download_url', { url });
+      console.log('[DownloadService] URL validation result:', isValid);
       return isValid;
     } catch (error) {
+      console.error('[DownloadService] URL validation error:', error);
+      throw new Error(`Failed to validate download URL: ${error}`);
+    }
+  }
+
+  /**
+   * Validate download URL with options
+   */
+  static async validateDownloadUrlWithOptions(url: string, skipHeadCheck: boolean = false): Promise<boolean> {
+    console.log('[DownloadService] Validating download URL with options:', { url, skipHeadCheck });
+    try {
+      const isValid = await invoke<boolean>('validate_download_url_with_options', { 
+        url, 
+        skipHeadCheck 
+      });
+      console.log('[DownloadService] URL validation result:', isValid);
+      return isValid;
+    } catch (error) {
+      console.error('[DownloadService] URL validation error:', error);
       throw new Error(`Failed to validate download URL: ${error}`);
     }
   }

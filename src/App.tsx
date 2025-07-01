@@ -6,6 +6,7 @@ import { GameDetails } from './components/GameDetails';
 import { NewsPanel } from './components/NewsPanel';
 import { UpdateModal } from './components/UpdateModal';
 import { UpdateErrorModal } from './components/UpdateErrorModal';
+import ErrorBoundary from './components/ErrorBoundary';
 import { newsItems } from './data/news';
 import { socialLinks } from './data/socialLinks';
 import { Game } from './types';
@@ -205,7 +206,9 @@ function App() {
   if (isLoading) {
     return (
       <div className="h-screen bg-gray-900 flex flex-col overflow-hidden">
-        <Header onForceUpdate={handleForceUpdate} />
+        <ErrorBoundary>
+          <Header onForceUpdate={handleForceUpdate} />
+        </ErrorBoundary>
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <Loader className="w-12 h-12 text-purple-500 animate-spin mx-auto mb-4" />
@@ -218,7 +221,9 @@ function App() {
 
   return (
     <div className="h-screen bg-gray-900 flex flex-col overflow-hidden">
-      <Header onForceUpdate={handleForceUpdate} />
+      <ErrorBoundary>
+        <Header onForceUpdate={handleForceUpdate} />
+      </ErrorBoundary>
       
       <div className="flex-1 flex overflow-hidden relative">
         <Sidebar 
