@@ -1,9 +1,20 @@
 //! System utilities module
 //! Handles Windows-specific operations like admin privileges, certificates, and proxy settings
 
+use std::env;
+use std::path::PathBuf;
 use tauri::command;
 
 use crate::utils::create_hidden_command;
+
+// Helper function to get data directory
+fn get_data_dir() -> Result<PathBuf, String> {
+    if let Some(home) = env::var_os("USERPROFILE") {
+        Ok(PathBuf::from(home).join("AppData").join("Local"))
+    } else {
+        Err("Could not determine data directory".to_string())
+    }
+}
 
 /// Check if the application is running with administrator privileges
 #[cfg(target_os = "windows")]
@@ -118,16 +129,24 @@ pub fn check_and_disable_windows_proxy() -> Result<String, String> {
 
 /// Install SSL certificate
 #[command]
-pub fn install_ssl_certificate(_cert_path: String) -> Result<String, String> {
+pub fn install_ssl_certificate() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        if !std::path::Path::new(&_cert_path).exists() {
-            return Err(format!("Certificate file not found: {}", _cert_path));
+        // Get the certificate path from the data directory
+        let cert_path = get_data_dir()?
+            .join("yuukips")
+            .join("ca")
+            .join("cert.crt");
+
+        if !cert_path.exists() {
+            return Err(format!("Certificate file not found: {}. Please ensure the proxy has been started at least once to generate the certificate.", cert_path.display()));
         }
 
+        let cert_path_str = cert_path.to_string_lossy();
+        
         // Use certutil to install the certificate
         let output = create_hidden_command("certutil")
-            .args(["-addstore", "Root", &_cert_path])
+            .args(["-addstore", "Root", &cert_path_str])
             .output()
             .map_err(|e| format!("Failed to execute certutil: {}", e))?;
 
@@ -136,14 +155,14 @@ pub fn install_ssl_certificate(_cert_path: String) -> Result<String, String> {
             if output_str.contains("completed successfully") {
                 Ok(format!(
                     "SSL certificate installed successfully: {}",
-                    _cert_path
+                    cert_path.display()
                 ))
             } else {
                 // Check if certificate is already installed
                 if output_str.contains("already exists") || output_str.contains("duplicate") {
                     Ok(format!(
                         "SSL certificate is already installed: {}",
-                        _cert_path
+                        cert_path.display()
                     ))
                 } else {
                     Err(format!(
@@ -239,5 +258,33 @@ pub fn open_directory(path: String) -> Result<String, String> {
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         Err("Opening directories is not supported on this platform".to_string())
+    }
+}
+
+/// Check if SSL certificate is installed
+#[command]
+pub fn check_ssl_certificate_installed() -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let output = create_hidden_command("certutil")
+            .args(["-store", "Root"])
+            .output()
+            .map_err(|e| format!("Failed to execute certutil: {}", e))?;
+
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            // Check if the YuukiPS certificate is found in the Root store
+            Ok(output_str
+                .to_lowercase()
+                .contains("yuukips"))
+        } else {
+            // If certutil fails, assume certificate is not installed
+            Ok(false)
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(false)
     }
 }

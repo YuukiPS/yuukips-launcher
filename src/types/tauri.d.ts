@@ -48,7 +48,6 @@ export interface TauriCommands {
     gameFolderPath: string
   ): Promise<string>;
   get_game_folder_path(gameId: number, version: string): Promise<string>;
-  show_game_folder(gameId: number): Promise<string>;
   check_game_installed(gameId: number, version: string, gameFolderPath: string): Promise<boolean>;
   open_directory(path: string): Promise<string>;
   start_game_monitor(gameId: number): Promise<string>;
