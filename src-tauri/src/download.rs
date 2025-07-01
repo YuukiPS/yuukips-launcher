@@ -99,6 +99,11 @@ impl DownloadManager {
 
     fn add_download(&mut self, url: String, file_path: String, file_name: Option<String>) -> String {
         let id = Uuid::new_v4().to_string();
+        
+        // Clean the URL by trimming whitespace and removing trailing commas/semicolons
+        let cleaned_url = url.trim().trim_end_matches(',').trim_end_matches(';').to_string();
+        println!("[Rust] Cleaned URL from '{}' to '{}'", url, cleaned_url);
+        
         let path = Path::new(&file_path);
         let actual_file_name = file_name.unwrap_or_else(|| {
             path.file_name()
@@ -121,7 +126,7 @@ impl DownloadManager {
             speed: 0,
             status: DownloadStatus::Downloading,
             time_remaining: 0,
-            url,
+            url: cleaned_url,
             file_path,
             start_time: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -535,11 +540,13 @@ pub async fn validate_download_url(url: String) -> Result<bool, String> {
 /// Enhanced URL validation with option to skip HEAD request
 #[command]
 pub async fn validate_download_url_with_options(url: String, skip_head_check: bool) -> Result<bool, String> {
-    println!("[Rust] Validating download URL: {} (skip_head_check: {})", url, skip_head_check);
+    // Clean the URL by trimming whitespace and removing trailing commas/semicolons
+    let cleaned_url = url.trim().trim_end_matches(',').trim_end_matches(';');
+    println!("[Rust] Validating download URL: {} -> {} (skip_head_check: {})", url, cleaned_url, skip_head_check);
     
     // First validate URL format
-    if url::Url::parse(&url).is_ok() {
-        println!("[Rust] URL format validation passed: {}", url);
+    if url::Url::parse(cleaned_url).is_ok() {
+        println!("[Rust] URL format validation passed: {}", cleaned_url);
             
             if skip_head_check {
                 println!("[Rust] Skipping HEAD request validation as requested");
@@ -563,7 +570,7 @@ pub async fn validate_download_url_with_options(url: String, skip_head_check: bo
             for attempt in 1..=max_retries {
                 println!("[Rust] HEAD request attempt {} of {}", attempt, max_retries);
                 
-                match client.head(&url).send().await {
+                match client.head(cleaned_url).send().await {
                     Ok(response) => {
                         let status = response.status();
                         let is_success = status.is_success();
@@ -574,7 +581,7 @@ pub async fn validate_download_url_with_options(url: String, skip_head_check: bo
                         println!("[Rust] Response headers: {:?}", response.headers());
                         
                         if is_success {
-                            println!("[Rust] URL validation successful on attempt {}: {}", attempt, url);
+                            println!("[Rust] URL validation successful on attempt {}: {}", attempt, cleaned_url);
                             return Ok(true);
                         } else {
                             println!("[Rust] URL validation failed - HTTP status: {} on attempt {}", status, attempt);
@@ -614,7 +621,7 @@ pub async fn validate_download_url_with_options(url: String, skip_head_check: bo
                 println!("[Rust] HEAD requests failed with SSL errors. Trying range request fallback (bytes=0-0)...");
                 
                 // Try a range request for bytes 0-0 (similar to curl -r 0-0)
-                match client.get(&url)
+                match client.get(cleaned_url)
                     .header("Range", "bytes=0-0")
                     .send()
                     .await {
@@ -624,7 +631,7 @@ pub async fn validate_download_url_with_options(url: String, skip_head_check: bo
                         
                         // 206 Partial Content is the expected response for a successful range request
                         if status == reqwest::StatusCode::PARTIAL_CONTENT || status.is_success() {
-                            println!("[Rust] URL validation successful via range request fallback: {}", url);
+                            println!("[Rust] URL validation successful via range request fallback: {}", cleaned_url);
                             return Ok(true);
                         } else {
                             println!("[Rust] URL validation failed via range request - HTTP status: {}", status);
@@ -654,6 +661,10 @@ pub async fn validate_download_url_with_options(url: String, skip_head_check: bo
 
 #[command]
 pub async fn get_file_size_from_url(url: String) -> Result<u64, String> {
+    // Clean the URL by trimming whitespace and removing trailing commas/semicolons
+    let cleaned_url = url.trim().trim_end_matches(',').trim_end_matches(';');
+    println!("[Rust] Getting file size from URL: {} -> {}", url, cleaned_url);
+    
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .connect_timeout(std::time::Duration::from_secs(5))
@@ -661,7 +672,7 @@ pub async fn get_file_size_from_url(url: String) -> Result<u64, String> {
         .unwrap_or_else(|_| reqwest::Client::new());
     
     // Try HEAD request first
-    match client.head(&url).send().await {
+    match client.head(cleaned_url).send().await {
         Ok(response) => {
             if let Some(content_length) = response.headers().get("content-length") {
                 let size_str = content_length.to_str()
@@ -678,7 +689,7 @@ pub async fn get_file_size_from_url(url: String) -> Result<u64, String> {
              // If HEAD request failed, try range request fallback
              println!("[Rust] HEAD request failed, trying range request fallback for file size");
              
-             match client.get(&url)
+             match client.get(cleaned_url)
                  .header("Range", "bytes=0-0")
                  .send()
                  .await {
@@ -842,6 +853,12 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
         let mut last_progress_time = std::time::Instant::now();
         let progress_timeout = std::time::Duration::from_secs(30);
         
+        // Check if file already exists (for resume functionality)
+        if let Ok(metadata) = std::fs::metadata(&file_path_clone) {
+            downloaded = metadata.len();
+            println!("[Rust] Found existing file for ID {}: {} bytes already downloaded", download_id_clone2, downloaded);
+        }
+        
         // Get file size with HEAD request
         match client.head(&url_clone).send().await {
             Ok(response) => {
@@ -886,16 +903,14 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
              }
              
              // Create range request for resumable download
-             let range_header = if downloaded > 0 {
-                 format!("bytes={}-", downloaded)
-             } else {
-                 String::new()
-             };
-             
              let mut request = client.get(&url_clone);
-             if !range_header.is_empty() {
-                 request = request.header("Range", range_header);
-             }
+             if downloaded > 0 {
+                  let range_header = format!("bytes={}-", downloaded);
+                  request = request.header("Range", &range_header);
+                  println!("[Rust] Using range request for resume: {} for ID {}", range_header, download_id_clone2);
+              } else {
+                  println!("[Rust] Starting fresh download for ID {}", download_id_clone2);
+              }
             
             match request.send().await {
                 Ok(mut response) => {
@@ -914,17 +929,38 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                      // Reset error counter on successful response
                      consecutive_errors = 0;
                      
-                     // Update total size if we didn't get it from HEAD request
+                     // Handle total size for both fresh downloads and resumes
                      if total_size == 0 {
-                         if let Some(content_length) = response.content_length() {
-                             total_size = content_length;
-                             println!("[Rust] File size determined from GET response for ID {}: {} bytes", download_id_clone2, total_size);
-                             
-                             // Update the download manager with the new total size
-                             let mut manager = DOWNLOAD_MANAGER.lock().unwrap();
-                             manager.update_download_progress(&download_id_clone2, downloaded, total_size, 0);
+                         if response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
+                             // For partial content, check Content-Range header for total size
+                             if let Some(content_range) = response.headers().get("content-range") {
+                                 if let Ok(range_str) = content_range.to_str() {
+                                     // Parse "bytes start-end/total" format
+                                     if let Some(total_part) = range_str.split('/').nth(1) {
+                                         if let Ok(parsed_total) = total_part.parse::<u64>() {
+                                             total_size = parsed_total;
+                                             println!("[Rust] Total file size from Content-Range for ID {}: {} bytes", download_id_clone2, total_size);
+                                         }
+                                     }
+                                 }
+                             }
+                         } else if let Some(content_length) = response.content_length() {
+                             // For fresh downloads, use Content-Length
+                             total_size = if downloaded > 0 {
+                                 // If we're resuming, add the already downloaded bytes
+                                 content_length + downloaded
+                             } else {
+                                 content_length
+                             };
+                             println!("[Rust] File size determined from GET response for ID {}: {} bytes (downloaded: {})", download_id_clone2, total_size, downloaded);
                          } else {
                              println!("[Rust] Content-Length not available for ID {}. Download size will be unknown.", download_id_clone2);
+                         }
+                         
+                         // Update the download manager with the new total size
+                         if total_size > 0 {
+                             let mut manager = DOWNLOAD_MANAGER.lock().unwrap();
+                             manager.update_download_progress(&download_id_clone2, downloaded, total_size, 0);
                          }
                      }
                     
