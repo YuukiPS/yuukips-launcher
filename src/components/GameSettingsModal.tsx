@@ -844,9 +844,9 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                   </div>
                 </div>
 
-                {/* Proxy Address Configuration */}
+                {/* Proxy Address (Private Server) Configuration */}
                 <div className="bg-gray-800/50 rounded-lg p-4">
-                  <h4 className="text-white font-semibold mb-3">Proxy Server Address</h4>
+                  <h4 className="text-white font-semibold mb-3">Private Server Address</h4>
                   <div className="space-y-4">
                     {/* Current Server Status */}
                     <div className="flex items-center space-x-2 p-3 bg-gray-700/50 rounded-lg">
@@ -914,7 +914,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                     </div>
 
                     <p className="text-gray-400 text-sm">
-                      Manage your proxy servers. Click 'Set' to switch between saved servers or add new ones.
+                      Manage your private server. Click 'Set' to switch between saved servers or add new ones.
                     </p>
                   </div>
                 </div>

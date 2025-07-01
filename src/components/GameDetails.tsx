@@ -4,6 +4,7 @@ import { Play, Settings, Download, Clock, Square } from 'lucide-react';
 import { GameSettingsModal } from './GameSettingsModal';
 import { EngineSelectionModal } from './EngineSelectionModal';
 import { SSLCertificateModal } from './SSLCertificateModal';
+import { PatchErrorInfo, PatchErrorModal } from './PatchErrorModal';
 import { invoke } from '@tauri-apps/api/core';
 // Removed startProxyWithSSLCheck import - proxy is now managed by backend after patching
 
@@ -21,6 +22,8 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
   const [showSettings, setShowSettings] = useState(false);
   const [showEngineSelection, setShowEngineSelection] = useState(false);
   const [showSSLModal, setShowSSLModal] = useState(false);
+  const [showPatchError, setShowPatchError] = useState(false);
+  const [patchErrorInfo, setPatchErrorInfo] = useState<PatchErrorInfo | null>(null);
   const [isLaunching, setIsLaunching] = useState(false);
   const [isGameRunning, setIsGameRunning] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
@@ -107,8 +110,9 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
 
       const gameFolderPath = getGameFolderPath(version, channel);      
       if (!gameFolderPath) {
-        alert(`Game folder path not configured for ${game.title} version ${version} (Channel ${channel}). Please set it in game settings.`);
+        alert(`Game folder path not configured for ${game.title} version ${version} (Channel ${channel}). Opening game settings to configure the path.`);
         setIsLaunching(false);
+        setShowSettings(true);
         return;
       }
 
@@ -148,7 +152,22 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
       onGameRunningStatusChange(game.id, true);
     } catch (error) {
       console.error('Error launching game:', error);
-      alert(`Failed to launch ${game.title} with ${engine.name}: ${error}`);
+      
+      // Check if this is a patch 404 error
+      const errorString = String(error);
+      if (errorString.includes('PATCH_ERROR_404:')) {
+        try {
+          const errorJson = errorString.split('PATCH_ERROR_404:')[1];
+          const patchError = JSON.parse(errorJson);
+          setPatchErrorInfo(patchError);
+          setShowPatchError(true);
+        } catch (parseError) {
+          console.error('Failed to parse patch error info:', parseError);
+          alert(`Failed to launch ${game.title} with ${engine.name}: ${error}`);
+        }
+      } else {
+        alert(`Failed to launch ${game.title} with ${engine.name}: ${error}`);
+      }
     } finally {
       setIsLaunching(false);
     }
@@ -427,6 +446,13 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
         onClose={handleSSLModalClose}
         onCancel={handleSSLModalCancel}
         onInstallComplete={handleSSLInstallComplete}
+      />
+      
+      <PatchErrorModal
+        isOpen={showPatchError}
+        onClose={() => setShowPatchError(false)}
+        errorInfo={patchErrorInfo}
+        gameTitle={game.title}
       />
     </>
   );

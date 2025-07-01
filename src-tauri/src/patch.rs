@@ -172,6 +172,17 @@ pub fn check_and_apply_patches(
     })
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PatchErrorInfo {
+    pub game_id: String,
+    pub version: String,
+    pub channel: String,
+    pub md5: String,
+    pub url: String,
+    pub status_code: u16,
+    pub error_type: String,
+}
+
 /// Fetch patch information from API
 async fn fetch_patch_info(
     game_id: Number,
@@ -194,6 +205,26 @@ async fn fetch_patch_info(
         .map_err(|e| format!("Failed to fetch patch info: {}", e))?;
     
     if !response.status().is_success() {
+        let status_code = response.status().as_u16();
+        
+        // For 404 errors, create detailed error info for frontend popup
+        if status_code == 404 {
+            let error_info = PatchErrorInfo {
+                game_id: game_id.to_string(),
+                version: version.clone(),
+                channel: channel.to_string(),
+                md5: md5.clone(),
+                url: url.clone(),
+                status_code,
+                error_type: "PATCH_NOT_FOUND".to_string(),
+            };
+            
+            let error_json = serde_json::to_string(&error_info)
+                .unwrap_or_else(|_| "Failed to serialize error info".to_string());
+            
+            return Err(format!("PATCH_ERROR_404:{}", error_json));
+        }
+        
         return Err(format!("Patch API returned error: {}", response.status()));
     }
     
