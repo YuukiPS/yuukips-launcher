@@ -184,7 +184,7 @@ pub struct PatchErrorInfo {
 }
 
 /// Fetch patch information from API
-async fn fetch_patch_info(
+pub async fn fetch_patch_info(
     game_id: Number,
     version: String,
     channel: Number,

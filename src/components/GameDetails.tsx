@@ -5,6 +5,7 @@ import { GameSettingsModal } from './GameSettingsModal';
 import { EngineSelectionModal } from './EngineSelectionModal';
 import { SSLCertificateModal } from './SSLCertificateModal';
 import { PatchErrorInfo, PatchErrorModal } from './PatchErrorModal';
+import { PatchMessageModal, shouldIgnoreMessage } from './PatchMessageModal';
 import { invoke } from '@tauri-apps/api/core';
 // Removed startProxyWithSSLCheck import - proxy is now managed by backend after patching
 
@@ -23,11 +24,14 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
   const [showEngineSelection, setShowEngineSelection] = useState(false);
   const [showSSLModal, setShowSSLModal] = useState(false);
   const [showPatchError, setShowPatchError] = useState(false);
+  const [showPatchMessage, setShowPatchMessage] = useState(false);
   const [patchErrorInfo, setPatchErrorInfo] = useState<PatchErrorInfo | null>(null);
+  const [patchMessage, setPatchMessage] = useState<string>('');
   const [isLaunching, setIsLaunching] = useState(false);
   const [isGameRunning, setIsGameRunning] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
   const [pendingLaunch, setPendingLaunch] = useState<{ engine?: GameEngine; version?: string; channel?: number } | null>(null);
+  const [pendingPatchLaunch, setPendingPatchLaunch] = useState<{ engine?: GameEngine; version?: string; channel?: number } | null>(null);
   const [gameProcessId, setGameProcessId] = useState<number | null>(null);
   const [monitorInterval, setMonitorInterval] = useState<NodeJS.Timeout | null>(null);
 
@@ -60,6 +64,18 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
       setMonitorInterval(null);
     }
   }, [monitorInterval]);
+
+  // Unified function to validate game folder path
+  const validateGameFolderPath = useCallback((version: string, channel: number): string | null => {
+    const gameFolderPath = getGameFolderPath(version, channel);
+    if (!gameFolderPath) {
+      alert(`Game folder path not configured for ${game.title} version ${version} (Channel ${channel}). Opening game settings to configure the path.`);
+      setIsLaunching(false);
+      setShowSettings(true);
+      return null;
+    }
+    return gameFolderPath;
+  }, [getGameFolderPath, game.title]);
 
   const handleGameStopped = useCallback(async () => {
     setIsGameRunning(false);
@@ -107,12 +123,8 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
 
   const launchGameWithEngine = useCallback(async (engine: GameEngine, version: string, channel: number) => {
     try {
-
-      const gameFolderPath = getGameFolderPath(version, channel);      
+      const gameFolderPath = validateGameFolderPath(version, channel);
       if (!gameFolderPath) {
-        alert(`Game folder path not configured for ${game.title} version ${version} (Channel ${channel}). Opening game settings to configure the path.`);
-        setIsLaunching(false);
-        setShowSettings(true);
         return;
       }
 
@@ -171,7 +183,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
     } finally {
       setIsLaunching(false);
     }
-  }, [game, getGameFolderPath, onGameUpdate, startGameMonitoring, onGameRunningStatusChange]);
+  }, [game, validateGameFolderPath, onGameUpdate, startGameMonitoring, onGameRunningStatusChange]);
 
   const checkGameInstallation = useCallback(async () => {
     try {
@@ -197,7 +209,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
     };
   }, [monitorInterval]);
 
-  const handleStopGame = useCallback(async () => {
+  const stopGame = useCallback(async () => {
     try {
       // Force stop the game monitor for clean shutdown
       await invoke('force_stop_game_monitor');
@@ -228,10 +240,10 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
     }
   }, [gameProcessId, game.id, game.title, handleGameStopped]);
 
-  const handlePlay = useCallback(async () => {
+  const onPlayButtonClick = useCallback(async () => {
     if (isGameRunning) {
       // Stop the game if it's running
-      await handleStopGame();
+      await stopGame();
     } else {
       // Check if game has engines (API games) or is a legacy game
       if (game.engine && game.engine.length > 0) {
@@ -242,11 +254,41 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
         alert(`No Game?`);
       }
     }
-  }, [isGameRunning, game.engine, handleStopGame]);
+  }, [isGameRunning, game.engine, stopGame]);
 
   const handleEngineLaunch = useCallback(async (engine: GameEngine, version: string, channel: number) => {
     setIsLaunching(true);
     try {
+      // First validate game folder path
+      const gameFolderPath = validateGameFolderPath(version, channel);
+      if (!gameFolderPath) {
+        return;
+      }
+
+      // Check for patch messages
+      const patchCheckResult = await invoke('check_patch_message', {
+        gameId: game.id,
+        version: version,
+        channel: channel,
+        gameFolderPath: gameFolderPath
+      });
+
+      if (typeof patchCheckResult === 'string') {
+        const checkResult = JSON.parse(patchCheckResult);
+        
+        if (checkResult.has_message && checkResult.message) {
+          // Check if this message should be ignored
+          if (!shouldIgnoreMessage(checkResult.message)) {
+            // Store the pending launch details and show patch message modal
+            setPendingPatchLaunch({ engine, version, channel });
+            setPatchMessage(checkResult.message);
+            setShowPatchMessage(true);
+            setIsLaunching(false);
+            return;
+          }
+        }
+      }
+      
       // Check SSL certificate status before launching
       const sslInstalled = await invoke('check_ssl_certificate_installed');
       
@@ -258,62 +300,103 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
         return;
       }
       
-      // Proceed with game launch - proxy will be started after patching in backend
+      // Proceed with actual game launch
       await launchGameWithEngine(engine, version, channel);
     } catch (error) {
       console.error('Error in pre-launch checks:', error);
       // Continue with launch even if SSL check fails
       await launchGameWithEngine(engine, version, channel);
     }
+  }, [launchGameWithEngine, validateGameFolderPath, game.id]);
+
+  // Unified function to resume launch with SSL check
+  const resumeLaunchWithSSLCheck = useCallback(async (engine: GameEngine, version: string, channel: number) => {
+    setIsLaunching(true);
+    try {
+      const sslInstalled = await invoke('check_ssl_certificate_installed');
+      
+      if (!sslInstalled) {
+        setPendingLaunch({ engine, version, channel });
+        setShowSSLModal(true);
+        setIsLaunching(false);
+        return;
+      }
+      
+      await launchGameWithEngine(engine, version, channel);
+    } catch (error) {
+      console.error('Error in SSL check during launch:', error);
+      await launchGameWithEngine(engine, version, channel);
+    }
   }, [launchGameWithEngine]);
 
-  const handleSSLInstallComplete = useCallback(() => {
-    // Resume the pending launch after SSL installation
+  // Unified function to cancel any pending launch
+  const cancelPendingLaunch = useCallback((type: 'ssl' | 'patch') => {
+    if (type === 'ssl') {
+      setShowSSLModal(false);
+      setPendingLaunch(null);
+    } else {
+      setShowPatchMessage(false);
+      setPendingPatchLaunch(null);
+    }
+  }, []);
+
+  // SSL Modal Handlers
+  const onSSLInstallComplete = useCallback(() => {
     if (pendingLaunch) {
       const { engine, version, channel } = pendingLaunch;
       setPendingLaunch(null);
+      setShowSSLModal(false);
       if (engine && version && channel) {
         setIsLaunching(true);
-        // Proxy will be started after patching in backend
         launchGameWithEngine(engine, version, channel);
       }
     }
   }, [pendingLaunch, launchGameWithEngine]);
 
-  const handleSSLModalClose = useCallback(() => {
-    setShowSSLModal(false);
-    // If user closes modal without installing, still allow launch but warn
+  const onSSLModalClose = useCallback(() => {
     if (pendingLaunch) {
       const { engine, version, channel } = pendingLaunch;
-      setPendingLaunch(null);
+      const proceed = confirm(
+        'SSL certificate is not installed. HTTPS game traffic may not work properly. Do you want to continue anyway?'
+      );
+      if (proceed && engine && version && channel) {
+        setPendingLaunch(null);
+        setShowSSLModal(false);
+        setIsLaunching(true);
+        launchGameWithEngine(engine, version, channel);
+      } else {
+        cancelPendingLaunch('ssl');
+      }
+    } else {
+      cancelPendingLaunch('ssl');
+    }
+  }, [pendingLaunch, launchGameWithEngine, cancelPendingLaunch]);
+
+  const onSSLModalCancel = useCallback(() => {
+    cancelPendingLaunch('ssl');
+  }, [cancelPendingLaunch]);
+
+  // Patch Message Modal Handlers
+  const onPatchMessageContinue = useCallback(async () => {
+    if (pendingPatchLaunch) {
+      const { engine, version, channel } = pendingPatchLaunch;
+      setPendingPatchLaunch(null);
+      setShowPatchMessage(false);
       if (engine && version && channel) {
-        const proceed = confirm(
-          'SSL certificate is not installed. HTTPS game traffic may not work properly. Do you want to continue anyway?'
-        );
-        if (proceed) {
-          setIsLaunching(true);
-          // Proxy will be started after patching in backend
-          launchGameWithEngine(engine, version, channel);
-        }
+        await resumeLaunchWithSSLCheck(engine, version, channel);
       }
     }
-  }, [pendingLaunch, launchGameWithEngine]);
+  }, [pendingPatchLaunch, resumeLaunchWithSSLCheck]);
 
-  const handleSSLModalCancel = useCallback(() => {
-    setShowSSLModal(false);
-    // Cancel the pending launch completely
-    if (pendingLaunch) {
-      setPendingLaunch(null);
-    }
-  }, [pendingLaunch]);
+  const onPatchMessageClose = useCallback(() => {
+    cancelPendingLaunch('patch');
+  }, [cancelPendingLaunch]);
 
-
-
-  const handleSettings = useCallback(() => {
+  const openSettings = useCallback(() => {
     setShowSettings(true);
   }, []);
 
-  const handleVersionChange = useCallback((_gameId: number, newVersion: string) => {
+  const onVersionChange = useCallback((_gameId: number, newVersion: string) => {
     const updatedGame = { ...game, version: newVersion };
     onGameUpdate(updatedGame);
   }, [game, onGameUpdate]);
@@ -390,7 +473,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
           <div className="p-8 bg-gradient-to-t from-gray-900/95 to-transparent">
             <div className="flex items-center space-x-4">
               <button
-                onClick={handlePlay}
+                onClick={onPlayButtonClick}
                 disabled={isLaunching}
                 className={buttonStyles}
               >
@@ -399,7 +482,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
               </button>
               
               <button
-                onClick={handleSettings}
+                onClick={openSettings}
                 className="flex items-center space-x-2 bg-gray-800/80 hover:bg-gray-700/80 text-white px-6 py-4 rounded-xl transition-all duration-200 backdrop-blur-sm border border-gray-600/50 hover:border-gray-500/50"
               >
                 <Settings className="w-5 h-5" />
@@ -430,7 +513,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
         game={game}
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
-        onVersionChange={handleVersionChange}
+        onVersionChange={onVersionChange}
         isGameRunning={isGameRunning}
       />
       
@@ -443,9 +526,9 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
       
       <SSLCertificateModal
         isOpen={showSSLModal}
-        onClose={handleSSLModalClose}
-        onCancel={handleSSLModalCancel}
-        onInstallComplete={handleSSLInstallComplete}
+        onClose={onSSLModalClose}
+        onCancel={onSSLModalCancel}
+        onInstallComplete={onSSLInstallComplete}
       />
       
       <PatchErrorModal
@@ -453,6 +536,14 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
         onClose={() => setShowPatchError(false)}
         errorInfo={patchErrorInfo}
         gameTitle={game.title}
+      />
+      
+      <PatchMessageModal
+        isOpen={showPatchMessage}
+        message={patchMessage}
+        gameTitle={game.title}
+        onContinue={onPatchMessageContinue}
+        onClose={onPatchMessageClose}
       />
     </>
   );

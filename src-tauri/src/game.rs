@@ -29,7 +29,7 @@ static GAME_MONITOR_STATE: once_cell::sync::Lazy<Arc<Mutex<Option<GameMonitorHan
 struct GameMonitorHandle {
     should_stop: Arc<Mutex<bool>>,
     thread_handle: Option<thread::JoinHandle<()>>,
-   //game_id: Number,
+    game_id: Number,
     version: String,
     channel: Number,
     md5: String,
@@ -43,6 +43,104 @@ pub struct LaunchResult {
     pub message: String,
     #[serde(rename = "processId")]
     pub process_id: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PatchCheckResult {
+    pub has_message: bool,
+    pub message: String,
+    pub can_proceed: bool,
+}
+
+/// Check for patch messages before launching
+#[command]
+pub fn check_patch_message(
+    _game_id: Number,
+    _version: String,
+    _channel: Number,
+    game_folder_path: String,
+) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        // Validate game folder path
+        if game_folder_path.is_empty() {
+            return Err(format!(
+                "Game folder path not set for {} version {}. Please configure it in game settings.",
+                _game_id, _version
+            ));
+        }
+
+        // Check if game folder exists
+        if !Path::new(&game_folder_path).exists() {
+            return Err(format!(
+                "Game folder not found: {}. Please verify the path in game settings.",
+                game_folder_path
+            ));
+        }
+
+        // Get game executable name
+        let game_exe_names = get_game_executable_names(&_game_id)?;
+        let game_exe_name = game_exe_names[0]; // Use first executable name
+
+        // Construct full path to game executable
+        let game_exe_path = Path::new(&game_folder_path).join(game_exe_name);
+
+        // Check if game executable exists
+        if !game_exe_path.exists() {
+            return Err(format!(
+                "Game executable not found: {} = {}. Please verify the game installation.",
+                game_exe_path.display(),
+                _game_id
+            ));
+        }
+
+        // Calculate MD5 for game executable
+        let file_contents = std::fs::read(&game_exe_path)
+            .map_err(|e| format!("Failed to read game executable for MD5 calculation: {}", e))?;
+        let md5 = md5::compute(&file_contents);
+        let md5_str = format!("{:x}", md5);
+
+        // Check patches to get message without applying them
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| format!("Failed to create async runtime: {}", e))?;
+        
+        let result = rt.block_on(async {
+            match crate::patch::fetch_patch_info(_game_id.clone(), _version.clone(), _channel.clone(), md5_str.clone()).await {
+                Ok(patch_response) => {
+                    if !patch_response.message.is_empty() {
+                        PatchCheckResult {
+                            has_message: true,
+                            message: patch_response.message.clone(),
+                            can_proceed: true,
+                        }
+                    } else {
+                        PatchCheckResult {
+                            has_message: false,
+                            message: String::new(),
+                            can_proceed: true,
+                        }
+                    }
+                }
+                Err(_) => {
+                    PatchCheckResult {
+                        has_message: false,
+                        message: String::new(),
+                        can_proceed: true,
+                    }
+                }
+            }
+        });
+        
+        match serde_json::to_string(&result) {
+            Ok(json) => Ok(json),
+            Err(e) => Err(format!("Failed to serialize patch check result: {}", e)),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Patch checking is only supported on Windows".to_string())
+    }
 }
 
 /// Get the configured game folder path
@@ -121,7 +219,7 @@ pub fn launch_game(
                 // Check if we need to show a message to user before proceeding
                 if let Some(ref resp) = response {
                     if !resp.message.is_empty() {
-                        println!("📢 Important message: {}", resp.message);
+                        //println!("📢 Important message: {}", resp.message);
                     }
 
                     // Check if proxy should be skipped
@@ -382,7 +480,19 @@ pub fn kill_game_processes(_game_id: &Number) -> Result<String, String> {
 /// Kill a specific game
 #[command]
 pub fn kill_game(game_id: Number) -> Result<String, String> {
-    kill_game_processes(&game_id)
+    // Stop the monitor first - this will handle cleanup automatically
+    if let Ok(monitor_state) = GAME_MONITOR_STATE.lock() {
+        if let Some(handle) = monitor_state.as_ref() {
+            if handle.game_id == game_id {
+                drop(monitor_state); // Release lock before calling stop_game_monitor
+                let _ = stop_game_monitor();
+            }
+        }
+    }
+    
+    let result = kill_game_processes(&game_id);
+    
+    result
 }
 
 /// Start monitoring a specific game - Single source of truth for game monitoring
@@ -500,10 +610,26 @@ pub fn start_game_monitor(game_id: Number) -> Result<String, String> {
 
                     if !is_running {
                         // Game has stopped - handle cleanup in separate thread to avoid blocking
-                        let game_id_for_cleanup = game_id_clone.clone();
-                        thread::spawn(move || {
-                            handle_game_stopped_cleanup(&game_id_for_cleanup);
-                        });
+                        if let Ok(monitor_state) = GAME_MONITOR_STATE.lock() {
+                            if let Some(handle) = monitor_state.as_ref() {
+                                // Clone the handle data for cleanup
+                                let handle_clone = GameMonitorHandle {
+                                    should_stop: Arc::clone(&handle.should_stop),
+                                    thread_handle: None,
+                                    game_id: handle.game_id.clone(),
+                                    version: handle.version.clone(),
+                                    channel: handle.channel.clone(),
+                                    md5: handle.md5.clone(),
+                                    game_folder_path: handle.game_folder_path.clone(),
+                                    patched_files: Arc::clone(&handle.patched_files),
+                                    patch_response: Arc::clone(&handle.patch_response),
+                                };
+                                
+                                thread::spawn(move || {
+                                    handle_game_stopped_cleanup_with_handle(&handle_clone);
+                                });
+                            }
+                        }
 
                         // Stop proxy without blocking
                         if proxy::is_proxy_running() && proxy_started_by_us {
@@ -602,7 +728,7 @@ pub fn start_game_monitor(game_id: Number) -> Result<String, String> {
     *monitor_state = Some(GameMonitorHandle {
         should_stop,
         thread_handle: Some(thread_handle),
-        //game_id: game_id.clone(),
+        game_id: game_id.clone(),
         version: String::new(),
         channel: Number::from(0),
         md5: String::new(),
@@ -618,69 +744,70 @@ pub fn start_game_monitor(game_id: Number) -> Result<String, String> {
 }
 
 /// Handle cleanup when game stops
-fn handle_game_stopped_cleanup(_game_id: &Number) {
-    // First, restore patched files
-    if let Ok(monitor_state) = GAME_MONITOR_STATE.lock() {
-        if let Some(handle) = monitor_state.as_ref() {
-            // Get patched files list and patch response
-            let patched_files = if let Ok(files) = handle.patched_files.lock() {
-                files.clone()
-            } else {
-                Vec::new()
-            };
+fn handle_game_stopped_cleanup_with_handle(handle: &GameMonitorHandle) {
+    // Get patched files list and patch response
+    let patched_files = if let Ok(files) = handle.patched_files.lock() {
+        files.clone()
+    } else {
+        Vec::new()
+    };
 
-            let patch_response = if let Ok(response) = handle.patch_response.lock() {
-                response.clone()
-            } else {
-                None
-            };
+    let patch_response = if let Ok(response) = handle.patch_response.lock() {
+        response.clone()
+    } else {
+        None
+    };
 
-            // Restore files if we have patch information
-            if !patched_files.is_empty() {
-                if let Some(response) = patch_response {
-                    // Try API-based restoration first
-                    match restore_original_files(&response, &handle.game_folder_path) {
-                        Ok(message) => {
-                            println!("🔄 {}", message);
-                        }
-                        Err(e) => {
-                            println!("⚠️ API restoration failed: {}", e);
-                            // Fallback to backup restoration
-                            match restore_from_backups(&handle.game_folder_path, &patched_files) {
-                                Ok(message) => {
-                                    println!("🔄 {}", message);
-                                }
-                                Err(e) => {
-                                    println!("⚠️ Backup restoration also failed: {}", e);
-                                }
-                            }
-                        }
-                    }
-
-                    // Additional cleanup: rename any remaining patched files to .patch
-                    match cleanup_remaining_patches(&handle.game_folder_path, &patched_files) {
-                        Ok(message) => {
-                            if !message.is_empty() {
-                                println!("🧹 {}", message);
-                            }
-                        }
-                        Err(e) => {
-                            println!("⚠️ Patch cleanup warning: {}", e);
-                        }
-                    }
-                } else {
-                    // No patch response, try backup restoration
+    // Restore files if we have patch information
+    if !patched_files.is_empty() {
+        println!("🔄 Starting cleanup for {} patched files...", patched_files.len());
+        
+        if let Some(response) = patch_response {
+            // Try API-based restoration first
+            match restore_original_files(&response, &handle.game_folder_path) {
+                Ok(message) => {
+                    println!("🔄 {}", message);
+                }
+                Err(e) => {
+                    println!("⚠️ API restoration failed: {}", e);
+                    // Fallback to backup restoration
                     match restore_from_backups(&handle.game_folder_path, &patched_files) {
                         Ok(message) => {
                             println!("🔄 {}", message);
                         }
                         Err(e) => {
-                            println!("⚠️ Backup restoration failed: {}", e);
+                            println!("⚠️ Backup restoration also failed: {}", e);
                         }
                     }
                 }
             }
+
+            // Additional cleanup: rename any remaining patched files to .patch
+            match cleanup_remaining_patches(&handle.game_folder_path, &patched_files) {
+                Ok(message) => {
+                    if !message.is_empty() {
+                        println!("🧹 {}", message);
+                    }
+                }
+                Err(e) => {
+                    println!("⚠️ Patch cleanup warning: {}", e);
+                }
+            }
+        } else {
+            // No patch response, try backup restoration
+            match restore_from_backups(&handle.game_folder_path, &patched_files) {
+                Ok(message) => {
+                    println!("🔄 {}", message);
+                }
+                Err(e) => {
+                    println!("⚠️ Backup restoration failed: {}", e);
+                }
+            }
         }
+        
+        println!("✅ Cleanup completed");
+    } else {
+        println!("ℹ️ No patched files to clean up");
     }
 }
 
@@ -692,8 +819,26 @@ pub fn stop_game_monitor() -> Result<String, String> {
         .map_err(|e| format!("Failed to lock monitor state: {}", e))?;
 
     if let Some(mut handle) = monitor_state.take() {
-        // Signal the thread to stop
+        // Signal the thread to stop first
         *handle.should_stop.lock().unwrap() = true;
+        
+        // Perform cleanup in a separate thread to avoid blocking the UI
+        // We need to clone the handle data before moving it
+        let handle_clone = GameMonitorHandle {
+            should_stop: Arc::clone(&handle.should_stop),
+            thread_handle: None, // We don't need the thread handle for cleanup
+            game_id: handle.game_id.clone(),
+            version: handle.version.clone(),
+            channel: handle.channel.clone(),
+            md5: handle.md5.clone(),
+            game_folder_path: handle.game_folder_path.clone(),
+            patched_files: Arc::clone(&handle.patched_files),
+            patch_response: Arc::clone(&handle.patch_response),
+        };
+        
+        thread::spawn(move || {
+            handle_game_stopped_cleanup_with_handle(&handle_clone);
+        });
         
         // Don't wait for thread to join - just detach it
         // The thread will clean itself up when it detects the stop signal
@@ -725,8 +870,26 @@ pub fn force_stop_game_monitor() -> Result<String, String> {
         .map_err(|e| format!("Failed to lock monitor state: {}", e))?;
     
     if let Some(mut handle) = monitor_state.take() {
-        // Signal the thread to stop
+        // Signal the thread to stop first
         *handle.should_stop.lock().unwrap() = true;
+        
+        // Perform cleanup in a separate thread to avoid blocking the UI
+        // We need to clone the handle data before moving it
+        let handle_clone = GameMonitorHandle {
+            should_stop: Arc::clone(&handle.should_stop),
+            thread_handle: None, // We don't need the thread handle for cleanup
+            game_id: handle.game_id.clone(),
+            version: handle.version.clone(),
+            channel: handle.channel.clone(),
+            md5: handle.md5.clone(),
+            game_folder_path: handle.game_folder_path.clone(),
+            patched_files: Arc::clone(&handle.patched_files),
+            patch_response: Arc::clone(&handle.patch_response),
+        };
+        
+        thread::spawn(move || {
+            handle_game_stopped_cleanup_with_handle(&handle_clone);
+        });
         
         // Don't wait for thread to join - just detach it
         if let Some(_thread_handle) = handle.thread_handle.take() {
@@ -796,6 +959,16 @@ pub fn stop_game_process(_process_id: u32) -> Result<String, String> {
 pub fn stop_game(_game_id: Number) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
+        // Stop the monitor first - this will handle cleanup automatically
+        if let Ok(monitor_state) = GAME_MONITOR_STATE.lock() {
+            if let Some(handle) = monitor_state.as_ref() {
+                if handle.game_id == _game_id {
+                    drop(monitor_state); // Release lock before calling stop_game_monitor
+                    let _ = stop_game_monitor();
+                }
+            }
+        }
+        
         let game_exe_names = get_game_executable_names(&_game_id)?;
         let mut terminated_processes = Vec::new();
         let mut last_error = None;
@@ -820,6 +993,9 @@ pub fn stop_game(_game_id: Number) -> Result<String, String> {
                 }
             }
         }
+        
+        // Stop the monitor after terminating the game
+        let _ = stop_game_monitor();
 
         if !terminated_processes.is_empty() {
             Ok(format!(

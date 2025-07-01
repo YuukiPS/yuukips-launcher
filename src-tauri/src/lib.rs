@@ -58,6 +58,7 @@ pub fn run() {
             // Game functions
             get_game_folder_path,
             launch_game,
+            check_patch_message,
             check_game_installed,
             check_game_running,
             kill_game,
