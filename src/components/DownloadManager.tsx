@@ -697,13 +697,13 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                           {download.totalSize > 0 ? (
                             <>
                               <div className="flex justify-between text-sm mb-1">
-                                <span className="text-white">{download.progress.toFixed(1)}%</span>
+                                <span className="text-white">{download.status === 'completed' ? '100.0' : download.progress.toFixed(1)}%</span>
                                 <span className="text-gray-400">{formatTime(download.timeRemaining)}</span>
                               </div>
                               <div className="w-full bg-gray-600 rounded-full h-2">
                                 <div
                                   className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                                  style={{ width: `${download.progress}%` }}
+                                  style={{ width: `${download.status === 'completed' ? 100 : download.progress}%` }}
                                 />
                               </div>
                             </>
