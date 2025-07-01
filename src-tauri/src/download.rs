@@ -258,7 +258,7 @@ pub async fn start_download(
     let file_path_clone = file_path.clone();
     
     println!("[Rust] Spawning background task for download ID: {}", download_id);
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         println!("[Rust] Background task started for download ID: {}", download_id_clone);
         if let Err(e) = perform_download(download_id_clone.clone(), url_clone, file_path_clone).await {
             println!("[Rust] Download failed for ID {}: {}", download_id_clone, e);
@@ -296,27 +296,37 @@ pub fn pause_download(download_id: String) -> Result<(), String> {
 
 /// Resume a paused download
 #[command]
-pub fn resume_download(download_id: String) -> Result<(), String> {
-    let mut manager = DOWNLOAD_MANAGER.lock()
-        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
-    
-    if let Some(download) = manager.downloads.get(&download_id) {
-        if download.status == DownloadStatus::Paused {
-            let url = download.url.clone();
-            let file_path = download.file_path.clone();
-            let download_id_clone = download_id.clone();
-            
-            // Remove old cancellation token and set status to downloading
-            manager.cancellation_tokens.remove(&download_id);
-            manager.set_download_status_no_cleanup(&download_id, DownloadStatus::Downloading, None);
-            
-            // Restart the download
-            tokio::spawn(async move {
-                if let Err(e) = perform_download(download_id_clone, url, file_path).await {
-                    eprintln!("Resume download failed: {}", e);
-                }
-            });
+pub async fn resume_download(download_id: String) -> Result<(), String> {
+    let download_info = {
+        let mut manager = DOWNLOAD_MANAGER.lock()
+            .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+        
+        if let Some(download) = manager.downloads.get(&download_id) {
+            if download.status == DownloadStatus::Paused {
+                let url = download.url.clone();
+                let file_path = download.file_path.clone();
+                
+                // Remove old cancellation token and set status to downloading
+                manager.cancellation_tokens.remove(&download_id);
+                manager.set_download_status_no_cleanup(&download_id, DownloadStatus::Downloading, None);
+                
+                Some((url, file_path))
+            } else {
+                None
+            }
+        } else {
+            None
         }
+    };
+    
+    // If we have download info, perform the download outside the lock
+    if let Some((url, file_path)) = download_info {
+        // Use a separate task with tauri's async runtime
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = perform_download(download_id.clone(), url, file_path).await {
+                eprintln!("Resume download failed: {}", e);
+            }
+        });
     }
     
     Ok(())
@@ -339,31 +349,41 @@ pub fn cancel_download(download_id: String) -> Result<(), String> {
 
 /// Restart a failed download
 #[command]
-pub fn restart_download(download_id: String) -> Result<(), String> {
-    let mut manager = DOWNLOAD_MANAGER.lock()
-        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
-    
-    if let Some(download) = manager.downloads.get(&download_id) {
-        if matches!(download.status, DownloadStatus::Error | DownloadStatus::Cancelled) {
-            let total_size = download.total_size;
-            let url = download.url.clone();
-            let file_path = download.file_path.clone();
-            let download_id_clone = download_id.clone();
-            
-            // Clean up any existing cancellation token and set status
-            manager.cancellation_tokens.remove(&download_id);
-            manager.set_download_status_no_cleanup(&download_id, DownloadStatus::Downloading, None);
-            
-            // Reset progress
-            manager.update_download_progress(&download_id, 0, total_size, 0);
-            
-            // Restart the download
-            tokio::spawn(async move {
-                if let Err(e) = perform_download(download_id_clone, url, file_path).await {
-                    eprintln!("Restart download failed: {}", e);
-                }
-            });
+pub async fn restart_download(download_id: String) -> Result<(), String> {
+    let download_info = {
+        let mut manager = DOWNLOAD_MANAGER.lock()
+            .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+        
+        if let Some(download) = manager.downloads.get(&download_id) {
+            if matches!(download.status, DownloadStatus::Error | DownloadStatus::Cancelled) {
+                let total_size = download.total_size;
+                let url = download.url.clone();
+                let file_path = download.file_path.clone();
+                
+                // Clean up any existing cancellation token and set status
+                manager.cancellation_tokens.remove(&download_id);
+                manager.set_download_status_no_cleanup(&download_id, DownloadStatus::Downloading, None);
+                
+                // Reset progress
+                manager.update_download_progress(&download_id, 0, total_size, 0);
+                
+                Some((url, file_path))
+            } else {
+                None
+            }
+        } else {
+            None
         }
+    };
+    
+    // If we have download info, perform the download outside the lock
+    if let Some((url, file_path)) = download_info {
+        // Use a separate task with tauri's async runtime
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = perform_download(download_id.clone(), url, file_path).await {
+                eprintln!("Restart download failed: {}", e);
+            }
+        });
     }
     
     Ok(())
@@ -491,9 +511,9 @@ pub fn bulk_pause_downloads(download_ids: Vec<String>) -> Result<(), String> {
 }
 
 #[command]
-pub fn bulk_resume_downloads(download_ids: Vec<String>) -> Result<(), String> {
+pub async fn bulk_resume_downloads(download_ids: Vec<String>) -> Result<(), String> {
     for id in download_ids {
-        resume_download(id)?;
+        resume_download(id).await?;
     }
     Ok(())
 }
@@ -806,7 +826,7 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
      let file_path_clone = file_path.clone();
      let cancellation_token_clone2 = cancellation_token.clone();
      
-     let custom_result = tokio::spawn(async move {
+     let custom_result = tauri::async_runtime::spawn(async move {
          let client = reqwest::Client::builder()
              .timeout(std::time::Duration::from_secs(60))
             .connect_timeout(std::time::Duration::from_secs(10))
