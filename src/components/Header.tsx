@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Gamepad2, Settings, User, Bell } from 'lucide-react';
+import { Gamepad2, Settings, User, Bell, Download } from 'lucide-react';
 import { WindowControls } from './WindowControls';
 import { DebugSettingsModal } from './DebugSettingsModal';
+import { DownloadManager } from './DownloadManager';
 import packageJson from '../../package.json';
 
 interface HeaderProps {
@@ -11,6 +12,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({ onForceUpdate }) => {
   const [isTauri, setIsTauri] = useState(false);
   const [isDebugSettingsOpen, setIsDebugSettingsOpen] = useState(false);
+  const [isDownloadManagerOpen, setIsDownloadManagerOpen] = useState(false);
 
   useEffect(() => {
     setIsTauri(window.__TAURI__ !== undefined);
@@ -35,6 +37,13 @@ export const Header: React.FC<HeaderProps> = ({ onForceUpdate }) => {
               <Bell className="w-5 h-5" />
             </button>
             <button 
+              onClick={() => setIsDownloadManagerOpen(true)}
+              className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors duration-200"
+              title="Downloads"
+            >
+              <Download className="w-5 h-5" />
+            </button>
+            <button 
               onClick={() => setIsDebugSettingsOpen(true)}
               className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors duration-200"
               title="Debug Settings"
@@ -53,6 +62,11 @@ export const Header: React.FC<HeaderProps> = ({ onForceUpdate }) => {
         isOpen={isDebugSettingsOpen}
         onClose={() => setIsDebugSettingsOpen(false)}
         onForceUpdate={onForceUpdate}
+      />
+      
+      <DownloadManager
+        isOpen={isDownloadManagerOpen}
+        onClose={() => setIsDownloadManagerOpen(false)}
       />
      </>
   );

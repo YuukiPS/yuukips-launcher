@@ -4,6 +4,7 @@
 use tauri::Manager;
 
 // Import all modules
+mod download;
 mod game;
 mod http;
 mod patch;
@@ -12,6 +13,7 @@ mod system;
 mod utils;
 
 // Re-export commonly used functions for easier access
+pub use download::*;
 pub use game::*;
 pub use http::*;
 pub use patch::*;
@@ -29,6 +31,28 @@ pub fn run() {
             install_ssl_certificate,
             check_ssl_certificate_installed,
             open_directory,
+            // Download functions
+            download::start_download,
+            download::pause_download,
+            download::resume_download,
+            download::cancel_download,
+            download::restart_download,
+            download::get_active_downloads,
+            download::get_download_status,
+            download::get_download_history,
+            download::clear_completed_downloads,
+            download::clear_download_history,
+            download::get_download_stats,
+            download::open_download_location,
+            download::set_download_directory,
+            download::get_download_directory,
+            download::bulk_pause_downloads,
+            download::bulk_resume_downloads,
+            download::bulk_cancel_downloads,
+            download::validate_download_url,
+            download::get_file_size_from_url,
+            download::check_file_exists,
+            download::get_available_disk_space,
             // Proxy functions
             proxy::get_proxy_addr,
             proxy::set_proxy_addr,

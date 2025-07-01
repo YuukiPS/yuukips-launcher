@@ -77,3 +77,39 @@ export enum channelType {
   CN = 2,
   JP = 3 // Ba/Hi3
 }
+
+// Download Manager Types
+export interface DownloadItem {
+  id: string;
+  fileName: string;
+  fileExtension: string;
+  totalSize: number;
+  downloadedSize: number;
+  progress: number;
+  speed: number; // bytes per second
+  status: 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled';
+  timeRemaining: number; // seconds
+  url: string;
+  filePath: string;
+  startTime: number;
+  endTime?: number;
+  errorMessage?: string;
+}
+
+export interface DownloadHistory {
+  id: string;
+  fileName: string;
+  fileSize: number;
+  downloadDate: string;
+  status: 'completed' | 'cancelled' | 'error';
+  filePath: string;
+  errorMessage?: string;
+}
+
+export interface DownloadStats {
+  totalDownloads: number;
+  activeDownloads: number;
+  completedDownloads: number;
+  totalDownloadedSize: number;
+  averageSpeed: number;
+}

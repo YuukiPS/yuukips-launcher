@@ -41,6 +41,8 @@ rustls-pemfile = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 scopeguard = "1.2"
 md5 = "0.7"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+dirs = "5.0"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["processthreadsapi", "securitybaseapi", "winnt", "handleapi", "shellapi", "synchapi", "winbase"] }
