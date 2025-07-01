@@ -34,7 +34,9 @@ export const DebugSettingsModal: React.FC<DebugSettingsModalProps> = ({
     setTestResult('');
     
     try {
-      const result = await invoke('test_proxy_bypass') as string;
+      const result = await invoke('test_proxy_bypass', {
+        url: 'https://httpbin.org/get'
+      }) as string;
       setTestResult(`✅ Success: ${result}`);
     } catch (error) {
       setTestResult(`❌ Error: ${error}`);
