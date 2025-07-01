@@ -1,7 +1,5 @@
 //! Download management module
-//! Handles file downloads with progress tracking, pause/resume functionality, and download history
-//! Uses Trauma library for robust download management
-
+//! 
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tauri::command;
 use uuid::Uuid;
-use trauma::{download::Download};
+use url;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::AsyncWriteExt;
 
@@ -505,10 +503,9 @@ pub async fn validate_download_url(url: String) -> Result<bool, String> {
 pub async fn validate_download_url_with_options(url: String, skip_head_check: bool) -> Result<bool, String> {
     println!("[Rust] Validating download URL: {} (skip_head_check: {})", url, skip_head_check);
     
-    // First validate URL format using Trauma
-    match Download::try_from(url.as_str()) {
-        Ok(download) => {
-            println!("[Rust] URL format validation passed: {}", download.url);
+    // First validate URL format
+    if url::Url::parse(&url).is_ok() {
+        println!("[Rust] URL format validation passed: {}", url);
             
             if skip_head_check {
                 println!("[Rust] Skipping HEAD request validation as requested");
@@ -583,13 +580,11 @@ pub async fn validate_download_url_with_options(url: String, skip_head_check: bo
                     println!("[Rust] All attempts failed with connection errors. Consider using skip_head_check=true for this URL.");
                     return Err(format!("Connection failed: {}. You can try skipping URL validation by enabling 'Skip URL Check' option.", error_msg));
                 }
-            }
-            Ok(false)
-        },
-        Err(e) => {
-            println!("[Rust] URL format validation failed: {}", e);
-            Ok(false)
-        },
+        }
+        Ok(false)
+    } else {
+        println!("[Rust] URL format validation failed: invalid URL format");
+        Ok(false)
     }
 }
 
@@ -725,19 +720,21 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
         println!("[Rust] Parent directories created successfully for ID: {}", download_id);
     }
 
-    // Start download with progress monitoring
-    let download_id_clone = download_id.clone();
-    let cancellation_token_clone = cancellation_token.clone();
-    
-    // Create a custom download implementation with progress tracking and robust error handling
-    let result = tokio::spawn(async move {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
+     // Use custom implementation for download
+     let download_id_clone2 = download_id.clone();
+     let url_clone = url.clone();
+     let file_path_clone = file_path.clone();
+     let cancellation_token_clone2 = cancellation_token.clone();
+     
+     let custom_result = tokio::spawn(async move {
+         let client = reqwest::Client::builder()
+             .timeout(std::time::Duration::from_secs(60))
             .connect_timeout(std::time::Duration::from_secs(10))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
             
         let mut downloaded = 0u64;
+        let mut total_size = 0u64;
         let mut last_update = std::time::Instant::now();
         let mut last_downloaded = 0u64;
         let mut consecutive_errors = 0u32;
@@ -745,111 +742,126 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
         let mut last_progress_time = std::time::Instant::now();
         let progress_timeout = std::time::Duration::from_secs(30);
         
+        // Get file size with HEAD request
+        match client.head(&url_clone).send().await {
+            Ok(response) => {
+                if let Some(content_length) = response.content_length() {
+                    total_size = content_length;
+                    println!("[Rust] File size determined from HEAD request for ID {}: {} bytes", download_id_clone2, total_size);
+                } else {
+                    println!("[Rust] Content-Length not available from HEAD request for ID {}", download_id_clone2);
+                }
+            }
+            Err(e) => {
+                println!("[Rust] HEAD request failed for ID {}: {}", download_id_clone2, e);
+            }
+        }
+        
         loop {
-            // Check for cancellation
-            if cancellation_token_clone.load(Ordering::Relaxed) {
-                println!("[Rust] Download cancellation detected for ID: {}", download_id_clone);
-                break;
-            }
+             // Check for cancellation
+             if cancellation_token_clone2.load(Ordering::Relaxed) {
+                 println!("[Rust] Download cancellation detected for ID: {}", download_id_clone2);
+                 break;
+             }
 
-            // Check if download should be paused or cancelled
-            let should_continue = {
-                let manager = DOWNLOAD_MANAGER.lock()
-                    .map_err(|e| format!("Failed to lock download manager: {}", e))?;
-                manager.downloads.get(&download_id_clone)
-                    .map(|d| matches!(d.status, DownloadStatus::Downloading))
-                    .unwrap_or(false)
-            };
+             // Check if download should be paused or cancelled
+             let should_continue = {
+                 let manager = DOWNLOAD_MANAGER.lock()
+                     .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+                 manager.downloads.get(&download_id_clone2)
+                     .map(|d| matches!(d.status, DownloadStatus::Downloading))
+                     .unwrap_or(false)
+             };
 
-            if !should_continue {
-                println!("[Rust] Download should not continue for ID: {}", download_id_clone);
-                break;
-            }
+             if !should_continue {
+                 println!("[Rust] Download should not continue for ID: {}", download_id_clone2);
+                 break;
+             }
             
             // Check for progress timeout
-            if last_progress_time.elapsed() > progress_timeout {
-                let error_msg = format!("Download timeout: No progress for {} seconds", progress_timeout.as_secs());
-                println!("[Rust] Download timeout for ID {}: {}", download_id_clone, error_msg);
-                return Err(error_msg);
-            }
-            
-            // Create range request for resumable download
-            let range_header = if downloaded > 0 {
-                format!("bytes={}-", downloaded)
-            } else {
-                String::new()
-            };
-            
-            let mut request = client.get(&url);
-            if !range_header.is_empty() {
-                request = request.header("Range", range_header);
-            }
+             if last_progress_time.elapsed() > progress_timeout {
+                 let error_msg = format!("Download timeout: No progress for {} seconds", progress_timeout.as_secs());
+                 println!("[Rust] Download timeout for ID {}: {}", download_id_clone2, error_msg);
+                 return Err(error_msg);
+             }
+             
+             // Create range request for resumable download
+             let range_header = if downloaded > 0 {
+                 format!("bytes={}-", downloaded)
+             } else {
+                 String::new()
+             };
+             
+             let mut request = client.get(&url_clone);
+             if !range_header.is_empty() {
+                 request = request.header("Range", range_header);
+             }
             
             match request.send().await {
                 Ok(mut response) => {
-                    if !response.status().is_success() && response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
-                        consecutive_errors += 1;
-                        println!("[Rust] HTTP error {} for ID {}: attempt {}", response.status(), download_id_clone, consecutive_errors);
-                        
-                        if consecutive_errors >= max_consecutive_errors {
-                            return Err(format!("HTTP error after {} attempts: {}", max_consecutive_errors, response.status()));
-                        }
-                        
-                        tokio::time::sleep(std::time::Duration::from_millis(1000 * consecutive_errors as u64)).await;
-                        continue;
-                    }
-                    
-                    // Reset error counter on successful response
-                    consecutive_errors = 0;
-                    
-                    // Update total size if we didn't get it from HEAD request
-                    if total_size == 0 {
-                        if let Some(content_length) = response.content_length() {
-                            total_size = content_length;
-                            println!("[Rust] File size determined from GET response for ID {}: {} bytes", download_id_clone, total_size);
-                            
-                            // Update the download manager with the new total size
-                            let mut manager = DOWNLOAD_MANAGER.lock().unwrap();
-                            manager.update_download_progress(&download_id_clone, downloaded, total_size, 0);
-                        } else {
-                            println!("[Rust] Content-Length not available for ID {}. Download size will be unknown.", download_id_clone);
-                        }
-                    }
+                     if !response.status().is_success() && response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+                         consecutive_errors += 1;
+                         println!("[Rust] HTTP error {} for ID {}: attempt {}", response.status(), download_id_clone2, consecutive_errors);
+                         
+                         if consecutive_errors >= max_consecutive_errors {
+                             return Err(format!("HTTP error after {} attempts: {}", max_consecutive_errors, response.status()));
+                         }
+                         
+                         tokio::time::sleep(std::time::Duration::from_millis(1000 * consecutive_errors as u64)).await;
+                         continue;
+                     }
+                     
+                     // Reset error counter on successful response
+                     consecutive_errors = 0;
+                     
+                     // Update total size if we didn't get it from HEAD request
+                     if total_size == 0 {
+                         if let Some(content_length) = response.content_length() {
+                             total_size = content_length;
+                             println!("[Rust] File size determined from GET response for ID {}: {} bytes", download_id_clone2, total_size);
+                             
+                             // Update the download manager with the new total size
+                             let mut manager = DOWNLOAD_MANAGER.lock().unwrap();
+                             manager.update_download_progress(&download_id_clone2, downloaded, total_size, 0);
+                         } else {
+                             println!("[Rust] Content-Length not available for ID {}. Download size will be unknown.", download_id_clone2);
+                         }
+                     }
                     
                     // Open/create file for writing
-                    let mut file = if downloaded > 0 {
-                        tokio::fs::OpenOptions::new()
-                            .write(true)
-                            .append(true)
-                            .open(&file_path)
-                            .await
-                            .map_err(|e| format!("Failed to open file for append: {}", e))?
-                    } else {
-                        tokio::fs::File::create(&file_path).await
-                            .map_err(|e| format!("Failed to create file: {}", e))?
-                    };
+                     let mut file = if downloaded > 0 {
+                         tokio::fs::OpenOptions::new()
+                             .write(true)
+                             .append(true)
+                             .open(&file_path_clone)
+                             .await
+                             .map_err(|e| format!("Failed to open file for append: {}", e))?
+                     } else {
+                         tokio::fs::File::create(&file_path_clone).await
+                             .map_err(|e| format!("Failed to create file: {}", e))?
+                     };
                     
                     // Download chunks
-                    while let Some(chunk_result) = response.chunk().await.transpose() {
-                        // Check for cancellation
-                        if cancellation_token_clone.load(Ordering::Relaxed) {
-                            println!("[Rust] Download cancellation detected during chunk read for ID: {}", download_id_clone);
-                            return Ok(());
-                        }
-                        
-                        // Check if download should continue
-                        let should_continue = {
-                            let manager = DOWNLOAD_MANAGER.lock()
-                                .map_err(|e| format!("Failed to lock download manager: {}", e))?;
-                            manager.downloads.get(&download_id_clone)
-                                .map(|d| matches!(d.status, DownloadStatus::Downloading))
-                                .unwrap_or(false)
-                        };
+                     while let Some(chunk_result) = response.chunk().await.transpose() {
+                         // Check for cancellation
+                         if cancellation_token_clone2.load(Ordering::Relaxed) {
+                             println!("[Rust] Download cancellation detected during chunk read for ID: {}", download_id_clone2);
+                             return Ok(());
+                         }
+                         
+                         // Check if download should continue
+                         let should_continue = {
+                             let manager = DOWNLOAD_MANAGER.lock()
+                                 .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+                             manager.downloads.get(&download_id_clone2)
+                                 .map(|d| matches!(d.status, DownloadStatus::Downloading))
+                                 .unwrap_or(false)
+                         };
 
-                        if !should_continue {
-                            println!("[Rust] Download should not continue during chunk read for ID: {}", download_id_clone);
-                            return Ok(());
-                        }
+                         if !should_continue {
+                             println!("[Rust] Download should not continue during chunk read for ID: {}", download_id_clone2);
+                             return Ok(());
+                         }
                         
                         match chunk_result {
                             Ok(chunk) => {
@@ -872,23 +884,23 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                                     };
                                     
                                     let mut manager = DOWNLOAD_MANAGER.lock().unwrap();
-                                    manager.update_download_progress(&download_id_clone, downloaded, total_size, speed);
-                                    
-                                    last_update = now;
-                                    last_downloaded = downloaded;
-                                }
-                                
-                                // Check if download is complete
-                                if total_size > 0 && downloaded >= total_size {
-                                    println!("[Rust] Download completed: {} bytes for ID: {}", downloaded, download_id_clone);
-                                    file.flush().await
-                                        .map_err(|e| format!("Failed to flush file: {}", e))?;
-                                    return Ok(());
-                                }
-                            }
-                            Err(e) => {
-                                consecutive_errors += 1;
-                                println!("[Rust] Chunk read error {} for ID {}: {}", consecutive_errors, download_id_clone, e);
+                                     manager.update_download_progress(&download_id_clone2, downloaded, total_size, speed);
+                                     
+                                     last_update = now;
+                                     last_downloaded = downloaded;
+                                 }
+                                 
+                                 // Check if download is complete
+                                 if total_size > 0 && downloaded >= total_size {
+                                     println!("[Rust] Download completed: {} bytes for ID: {}", downloaded, download_id_clone2);
+                                     file.flush().await
+                                         .map_err(|e| format!("Failed to flush file: {}", e))?;
+                                     return Ok(());
+                                 }
+                             }
+                             Err(e) => {
+                                 consecutive_errors += 1;
+                                 println!("[Rust] Chunk read error {} for ID {}: {}", consecutive_errors, download_id_clone2, e);
                                 
                                 if consecutive_errors >= max_consecutive_errors {
                                     return Err(format!("Download failed after {} consecutive chunk errors: {}", max_consecutive_errors, e));
@@ -901,16 +913,16 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                     }
                     
                     // If we reach here and total_size is 0 or unknown, consider download complete
-                    if total_size == 0 {
-                        println!("[Rust] Download completed (unknown size): {} bytes for ID: {}", downloaded, download_id_clone);
-                        file.flush().await
-                            .map_err(|e| format!("Failed to flush file: {}", e))?;
-                        return Ok(());
-                    }
-                }
-                Err(e) => {
-                    consecutive_errors += 1;
-                    println!("[Rust] Request error {} for ID {}: {}", consecutive_errors, download_id_clone, e);
+                     if total_size == 0 {
+                         println!("[Rust] Download completed (unknown size): {} bytes for ID: {}", downloaded, download_id_clone2);
+                         file.flush().await
+                             .map_err(|e| format!("Failed to flush file: {}", e))?;
+                         return Ok(());
+                     }
+                 }
+                 Err(e) => {
+                     consecutive_errors += 1;
+                     println!("[Rust] Request error {} for ID {}: {}", consecutive_errors, download_id_clone2, e);
                     
                     if consecutive_errors >= max_consecutive_errors {
                         return Err(format!("Download failed after {} consecutive request errors: {}", max_consecutive_errors, e));
@@ -925,13 +937,13 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
         Ok::<(), String>(())
     }).await;
 
-    // Clean up cancellation token
-    {
-        let mut manager = DOWNLOAD_MANAGER.lock().unwrap();
-        manager.cancellation_tokens.remove(&download_id);
-    }
+     // Clean up cancellation token
+     {
+         let mut manager = DOWNLOAD_MANAGER.lock().unwrap();
+         manager.cancellation_tokens.remove(&download_id);
+     }
 
-    match result {
+     match custom_result {
         Ok(Ok(())) => {
             // Check final status
             let final_status = {

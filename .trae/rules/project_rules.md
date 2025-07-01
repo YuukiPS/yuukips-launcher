@@ -1,0 +1,1 @@
+- Don't use the internet / search on the internet, use the doc that I provide more importantly.
