@@ -1,6 +1,6 @@
 [package]
 name = "yuukips-launcher"
-version = "0.0.16"
+version = "0.0.17"
 description = "A launcher for YuukiPS"
 authors = ["yuuki"]
 license = "MIT"
