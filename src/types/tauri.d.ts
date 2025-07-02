@@ -41,6 +41,7 @@ export interface TauriCommands {
   check_and_disable_windows_proxy(): Promise<string>;
   install_ssl_certificate(): Promise<string>;
   check_ssl_certificate_installed(): Promise<boolean>;
+  generate_ca_files(path: string): Promise<void>;
   launch_game(
     gameId: number,
     version: string,

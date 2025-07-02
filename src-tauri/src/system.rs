@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use tauri::command;
 
 use crate::utils::create_hidden_command;
+use crate::proxy::generate_ca_files;
 
 // Helper function to get data directory
 fn get_data_dir() -> Result<PathBuf, String> {
@@ -139,7 +140,15 @@ pub fn install_ssl_certificate() -> Result<String, String> {
             .join("cert.crt");
 
         if !cert_path.exists() {
-            return Err(format!("Certificate file not found: {}. Please ensure the proxy has been started at least once to generate the certificate.", cert_path.display()));
+            // Generate CA files if they don't exist
+            let yuukips_dir = get_data_dir()?.join("yuukips");
+            println!("Certificate file not found, generating CA files at: {}", yuukips_dir.display());
+            generate_ca_files(&yuukips_dir);
+            
+            // Check again if the certificate was created
+            if !cert_path.exists() {
+                return Err(format!("Failed to generate certificate file: {}. Certificate generation may have failed.", cert_path.display()));
+            }
         }
 
         let cert_path_str = cert_path.to_string_lossy();

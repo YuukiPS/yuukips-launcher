@@ -75,6 +75,7 @@ pub fn run() {
             proxy::get_active_proxy_domains,
             proxy::get_proxy_status_with_domains,
             proxy::initialize_user_domains_if_empty,
+            proxy::generate_ca_files,
             // HTTP functions
             test_proxy_bypass,
             fetch_api_data,
