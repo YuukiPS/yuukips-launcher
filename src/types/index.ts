@@ -107,9 +107,9 @@ export interface DownloadHistory {
 }
 
 export interface DownloadStats {
-  totalDownloads: number;
-  activeDownloads: number;
-  completedDownloads: number;
-  totalDownloadedSize: number;
-  averageSpeed: number;
+  total_downloads: number;
+  active_downloads: number;
+  completed_downloads: number;
+  total_downloaded_size: number;
+  average_speed: number;
 }

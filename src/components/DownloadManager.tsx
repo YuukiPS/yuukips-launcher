@@ -24,7 +24,7 @@ interface DownloadManagerProps {
   onClose: () => void;
 }
 
-type SortField = 'fileName' | 'progress' | 'size' | 'speed' | 'status';
+type SortField = 'fileName' | 'progress' | 'size' | 'speed' | 'status' | 'startTime';
 type SortDirection = 'asc' | 'desc';
 type FilterStatus = 'all' | 'downloading' | 'paused' | 'completed' | 'error';
 
@@ -32,11 +32,11 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const [history, setHistory] = useState<DownloadHistory[]>([]);
   const [stats, setStats] = useState<DownloadStats>({
-    totalDownloads: 0,
-    activeDownloads: 0,
-    completedDownloads: 0,
-    totalDownloadedSize: 0,
-    averageSpeed: 0
+    total_downloads: 0,
+    active_downloads: 0,
+    completed_downloads: 0,
+    total_downloaded_size: 0,
+    average_speed: 0
   });
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
@@ -53,6 +53,20 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   const [folderError, setFolderError] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [skipUrlCheck, setSkipUrlCheck] = useState(false);
+
+  // Column width customization state
+  const [columnWidths, setColumnWidths] = useState({
+    checkbox: '40px',
+    fileName: '2fr',
+    size: '120px',
+    progress: '200px',
+    speed: '100px',
+    status: '120px',
+    started: '140px',
+    actions: '120px'
+  });
+  const [isResizing, setIsResizing] = useState(false);
+  const [resizingColumn, setResizingColumn] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -89,6 +103,73 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
       console.error('Failed to load default download folder:', error);
       setNewDownloadFolder('C:\\Downloads');
     }
+  };
+
+  // Column resizing functions
+  const getGridTemplateColumns = () => {
+    return `${columnWidths.checkbox} ${columnWidths.fileName} ${columnWidths.size} ${columnWidths.progress} ${columnWidths.speed} ${columnWidths.status} ${columnWidths.started} ${columnWidths.actions}`;
+  };
+
+  const handleColumnResize = (columnKey: string, newWidth: string) => {
+    setColumnWidths(prev => ({
+      ...prev,
+      [columnKey]: newWidth
+    }));
+  };
+
+  const resetColumnWidths = () => {
+    setColumnWidths({
+      checkbox: '40px',
+      fileName: '2fr',
+      size: '120px',
+      progress: '200px',
+      speed: '100px',
+      status: '120px',
+      started: '140px',
+      actions: '120px'
+    });
+  };
+
+  const handleMouseDown = (e: React.MouseEvent, columnKey: string) => {
+    e.preventDefault();
+    e.stopPropagation(); // Prevent sorting when resizing
+    setIsResizing(true);
+    setResizingColumn(columnKey);
+    
+    const startX = e.clientX;
+    const currentWidth = columnWidths[columnKey as keyof typeof columnWidths];
+    
+    // Parse current width (handle both px and fr units)
+    let startWidth: number;
+    if (currentWidth.includes('fr')) {
+      startWidth = parseFloat(currentWidth.replace('fr', '')) * 100; // Convert fr to approximate px for calculation
+    } else {
+      startWidth = parseInt(currentWidth.replace('px', ''));
+    }
+    
+    const handleMouseMove = (e: MouseEvent) => {
+      const deltaX = e.clientX - startX;
+      const newWidth = Math.max(50, startWidth + deltaX); // Minimum width of 50px
+      
+      if (columnKey === 'fileName') {
+        // For fileName, use fractional units to maintain flexibility
+        const frValue = Math.max(0.5, newWidth / 100);
+        handleColumnResize(columnKey, `${frValue}fr`);
+      } else {
+        // For other columns, use fixed pixel widths
+        handleColumnResize(columnKey, `${newWidth}px`);
+      }
+    };
+    
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      setResizingColumn(null);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
   };
 
 
@@ -457,6 +538,10 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
           aValue = a.status;
           bValue = b.status;
           break;
+        case 'startTime':
+          aValue = a.startTime;
+          bValue = b.startTime;
+          break;
         default:
           return 0;
       }
@@ -469,7 +554,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-gray-900 z-50">
+    <div className={`fixed inset-0 bg-gray-900 z-50 ${isResizing ? 'cursor-col-resize' : ''}`}>
       <div className="w-full h-full flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-700" data-tauri-drag-region>
@@ -485,26 +570,28 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
           </button>
         </div>
 
-
-
         {/* Stats */}
         <div className="p-6 border-b border-gray-700">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-5">
             <div className="bg-gray-700 rounded-lg p-3">
               <div className="text-sm text-gray-400">Total Downloads</div>
-              <div className="text-lg font-bold text-white">{stats.totalDownloads}</div>
+              <div className="text-lg font-bold text-white">{stats.total_downloads}</div>
             </div>
             <div className="bg-gray-700 rounded-lg p-3">
               <div className="text-sm text-gray-400">Completed</div>
-              <div className="text-lg font-bold text-green-400">{stats.completedDownloads}</div>
+              <div className="text-lg font-bold text-green-400">{stats.completed_downloads}</div>
             </div>
             <div className="bg-gray-700 rounded-lg p-3">
               <div className="text-sm text-gray-400">Active</div>
-              <div className="text-lg font-bold text-blue-400">{stats.activeDownloads}</div>
+              <div className="text-lg font-bold text-blue-400">{stats.active_downloads}</div>
             </div>
             <div className="bg-gray-700 rounded-lg p-3">
               <div className="text-sm text-gray-400">Total Downloaded</div>
-              <div className="text-lg font-bold text-white">{formatFileSize(stats.totalDownloadedSize)}</div>
+              <div className="text-lg font-bold text-white">{formatFileSize(stats.total_downloaded_size)}</div>
+            </div>
+            <div className="bg-gray-700 rounded-lg p-3">
+              <div className="text-sm text-gray-400">Average Speed</div>
+              <div className="text-lg font-bold text-white">{formatSpeed(stats.average_speed)}</div>
             </div>
           </div>
         </div>
@@ -616,8 +703,22 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
             <div className="h-full flex flex-col">
               {/* Table Header */}
               <div className="bg-gray-700 border-b border-gray-600">
-                <div className="grid grid-cols-12 gap-4 p-4 text-sm font-medium text-gray-300">
-                  <div className="col-span-1 flex items-center">
+                {/* Column Width Reset Button */}
+                <div className="px-4 pt-2 pb-1 border-b border-gray-600">
+                  <button
+                    onClick={resetColumnWidths}
+                    className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                    title="Reset column widths to default"
+                  >
+                    Reset Column Widths
+                  </button>
+                </div>
+                <div className="grid gap-4 p-4 text-sm font-medium text-gray-300 relative" style={{gridTemplateColumns: getGridTemplateColumns()}}>
+                  {/* Resizing indicator */}
+                  {isResizing && resizingColumn && (
+                    <div className="absolute top-0 left-0 right-0 bottom-0 bg-blue-500 bg-opacity-10 pointer-events-none" />
+                  )}
+                  <div className="flex items-center">
                     <input
                       type="checkbox"
                       checked={selectedDownloads.size === filteredDownloads.length && filteredDownloads.length > 0}
@@ -625,27 +726,61 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                       className="w-4 h-4 text-blue-600 bg-gray-600 border-gray-500 rounded focus:ring-blue-500"
                     />
                   </div>
-                  <div className="col-span-3 flex items-center gap-2 cursor-pointer" onClick={() => handleSort('fileName')}>
+                  <div className="flex items-center gap-2 cursor-pointer relative" onClick={() => handleSort('fileName')}>
                     File Name
                     <ArrowUpDown className="w-3 h-3" />
+                    <div 
+                      className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 transition-colors"
+                      onMouseDown={(e) => handleMouseDown(e, 'fileName')}
+                      title="Drag to resize column"
+                    />
                   </div>
-                  <div className="col-span-2 flex items-center gap-2 cursor-pointer" onClick={() => handleSort('size')}>
+                  <div className="flex items-center gap-2 cursor-pointer relative" onClick={() => handleSort('size')}>
                     Size
                     <ArrowUpDown className="w-3 h-3" />
+                    <div 
+                      className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 transition-colors"
+                      onMouseDown={(e) => handleMouseDown(e, 'size')}
+                      title="Drag to resize column"
+                    />
                   </div>
-                  <div className="col-span-2 flex items-center gap-2 cursor-pointer" onClick={() => handleSort('progress')}>
+                  <div className="flex items-center gap-2 cursor-pointer relative" onClick={() => handleSort('progress')}>
                     Progress
                     <ArrowUpDown className="w-3 h-3" />
+                    <div 
+                      className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 transition-colors"
+                      onMouseDown={(e) => handleMouseDown(e, 'progress')}
+                      title="Drag to resize column"
+                    />
                   </div>
-                  <div className="col-span-2 flex items-center gap-2 cursor-pointer" onClick={() => handleSort('speed')}>
+                  <div className="flex items-center gap-2 cursor-pointer relative" onClick={() => handleSort('speed')}>
                     Speed
                     <ArrowUpDown className="w-3 h-3" />
+                    <div 
+                      className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 transition-colors"
+                      onMouseDown={(e) => handleMouseDown(e, 'speed')}
+                      title="Drag to resize column"
+                    />
                   </div>
-                  <div className="col-span-1 flex items-center gap-2 cursor-pointer" onClick={() => handleSort('status')}>
+                  <div className="flex items-center gap-2 cursor-pointer relative" onClick={() => handleSort('status')}>
                     Status
                     <ArrowUpDown className="w-3 h-3" />
+                    <div 
+                      className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 transition-colors"
+                      onMouseDown={(e) => handleMouseDown(e, 'status')}
+                      title="Drag to resize column"
+                    />
                   </div>
-                  <div className="col-span-1">Actions</div>
+                  <div className="flex items-center gap-2 cursor-pointer relative" onClick={() => handleSort('startTime')}>
+                    Started
+                    <ArrowUpDown className="w-3 h-3" />
+                    <div 
+                      className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 transition-colors"
+                      onMouseDown={(e) => handleMouseDown(e, 'started')}
+                      title="Drag to resize column"
+                    />
+                  </div>
+                  <div>Actions</div>
                 </div>
               </div>
 
@@ -661,8 +796,8 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                   </div>
                 ) : (
                   filteredDownloads.map((download) => (
-                    <div key={download.id} className="grid grid-cols-12 gap-4 p-4 border-b border-gray-700 hover:bg-gray-750 transition-colors">
-                      <div className="col-span-1 flex items-center">
+                    <div key={download.id} className="grid gap-4 p-4 border-b border-gray-700 hover:bg-gray-750 transition-colors" style={{gridTemplateColumns: getGridTemplateColumns()}}>
+                      <div className="flex items-center">
                         <input
                           type="checkbox"
                           checked={selectedDownloads.has(download.id)}
@@ -670,14 +805,14 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                           className="w-4 h-4 text-blue-600 bg-gray-600 border-gray-500 rounded focus:ring-blue-500"
                         />
                       </div>
-                      <div className="col-span-3 flex items-center gap-3">
+                      <div className="flex items-center gap-3">
                         <span className="text-2xl">{getFileIcon(download.fileExtension)}</span>
                         <div>
                           <div className="text-white font-medium truncate">{download.fileName}</div>
                           <div className="text-gray-400 text-sm">{download.fileExtension || 'Unknown'}</div>
                         </div>
                       </div>
-                      <div className="col-span-2 flex items-center">
+                      <div className="flex items-center">
                         <div>
                           {download.totalSize > 0 ? (
                             <>
@@ -692,7 +827,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                           )}
                         </div>
                       </div>
-                      <div className="col-span-2 flex items-center">
+                      <div className="flex items-center">
                         <div className="w-full">
                           {download.totalSize > 0 ? (
                             <>
@@ -720,16 +855,22 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                           )}
                         </div>
                       </div>
-                      <div className="col-span-2 flex items-center">
+                      <div className="flex items-center">
                         <div className="text-white">{formatSpeed(download.speed)}</div>
                       </div>
-                      <div className="col-span-1 flex items-center">
+                      <div className="flex items-center">
                         <div className="flex items-center gap-2">
                           {getStatusIcon(download.status)}
                           <span className="text-sm text-gray-300 capitalize">{download.status}</span>
                         </div>
                       </div>
-                      <div className="col-span-1 flex items-center gap-1">
+                      <div className="flex items-center">
+                        <div>
+                          <div className="text-white text-sm">{download.startTime ? new Date(download.startTime * 1000).toLocaleDateString() : 'Unknown'}</div>
+                          <div className="text-gray-400 text-xs">{download.startTime ? new Date(download.startTime * 1000).toLocaleTimeString() : '--'}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
                         {download.status === 'downloading' && (
                           <button
                             onClick={() => handlePauseResume(download.id)}

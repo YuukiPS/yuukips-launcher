@@ -179,7 +179,7 @@ impl DownloadManager {
                     id: download.id.clone(),
                     file_name: download.file_name.clone(),
                     file_size: download.total_size,
-                    download_date: chrono::Utc::now().format("%Y-%m-%d").to_string(),
+                    download_date: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
                     status: match status {
                         DownloadStatus::Completed => "completed".to_string(),
                         DownloadStatus::Error => "error".to_string(),
