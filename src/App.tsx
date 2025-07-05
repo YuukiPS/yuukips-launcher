@@ -18,6 +18,7 @@ function App() {
   const [games, setGames] = useState<Game[]>([]);
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null);
   const [runningGameId, setRunningGameId] = useState<number | null>(null);
+  const [gameLoadError, setGameLoadError] = useState<string | null>(null);
   const gamesLoadedRef = useRef(false);
   
   // Update-related state
@@ -50,11 +51,14 @@ function App() {
       const apiGames = await GameApiService.fetchGames();
       setGames(apiGames);
       gamesLoadedRef.current = true;
+      setGameLoadError(null); // Clear any previous errors
       
       // Auto-select first game if none selected
       setSelectedGameId(prev => prev || (apiGames.length > 0 ? apiGames[0].id : null));
     } catch (error) {
       console.error('Failed to load games:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      setGameLoadError(errorMessage);
       setGames([]);
     } finally {
       setIsLoading(false);
@@ -226,12 +230,15 @@ function App() {
       </ErrorBoundary>
       
       <div className="flex-1 flex overflow-hidden relative">
-        <Sidebar 
-          games={games} 
-          selectedGameId={selectedGameId} 
-          onGameSelect={handleGameSelect}
-          runningGameId={runningGameId}
-        />
+        {/* Sidebar - Hidden when there's a game load error */}
+        {!gameLoadError && (
+          <Sidebar 
+            games={games} 
+            selectedGameId={selectedGameId} 
+            onGameSelect={handleGameSelect}
+            runningGameId={runningGameId}
+          />
+        )}
         
         {selectedGame ? (
           <GameDetails 
@@ -242,37 +249,75 @@ function App() {
           />
         ) : (
           <div className="flex-1 flex items-center justify-center bg-gray-800">
-            <div className="text-center">
-              <p className="text-white text-lg mb-2">No game selected</p>
-              <p className="text-gray-400">Please select a game from the sidebar</p>
+            <div className="text-center max-w-md mx-auto px-6">
+              {gameLoadError ? (
+                <>
+                  <div className="mb-4">
+                    <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <svg className="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                      </svg>
+                    </div>
+                  </div>
+                  <h3 className="text-white text-xl font-semibold mb-3">Failed to Load Games</h3>
+                  <div className="bg-gray-700/50 rounded-lg p-4 mb-4 text-left">
+                    <p className="text-red-400 text-sm font-medium mb-2">Error Details:</p>
+                    <p className="text-gray-300 text-sm break-words">{gameLoadError}</p>
+                  </div>
+                  <div className="space-y-2">
+                    <button
+                      onClick={() => {
+                        setGameLoadError(null);
+                        gamesLoadedRef.current = false;
+                        loadGames();
+                      }}
+                      className="w-full px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors duration-200"
+                    >
+                      Retry Loading Games
+                    </button>
+                    <p className="text-gray-400 text-xs">
+                      Check your internet connection and try again. If the problem persists, the game server may be temporarily unavailable.
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-white text-lg mb-2">No game selected</p>
+                  <p className="text-gray-400">Please select a game from the sidebar</p>
+                </>
+              )}
             </div>
           </div>
         )}
 
-        {/* Floating Social Media Icons */}
-        <div className="absolute top-6 right-6 flex space-x-3 z-40">
-          {socialLinks.map((link) => (
-            <button
-              key={link.platform}
-              onClick={() => handleSocialClick(link.url, link.platform)}
-              className={`p-3 text-white rounded-full shadow-lg transition-all duration-200 hover:scale-110 ${getSocialColor(link.platform)}`}
-              title={link.platform}
-            >
-              {getSocialIcon(link.icon)}
-            </button>
-          ))}
-        </div>
+        {/* Floating Social Media Icons - Hidden when there's a game load error */}
+        {!gameLoadError && (
+          <div className="absolute top-6 right-6 flex space-x-3 z-40">
+            {socialLinks.map((link) => (
+              <button
+                key={link.platform}
+                onClick={() => handleSocialClick(link.url, link.platform)}
+                className={`p-3 text-white rounded-full shadow-lg transition-all duration-200 hover:scale-110 ${getSocialColor(link.platform)}`}
+                title={link.platform}
+              >
+                {getSocialIcon(link.icon)}
+              </button>
+            ))}
+          </div>
+        )}
 
-        {/* Floating News Button */}
-        <div className="absolute bottom-6 right-6 z-40">
-          <button
-            onClick={() => setShowNews(!showNews)}
-            className="p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg hover:shadow-blue-500/25 transition-all duration-200 hover:scale-110"
-            title="Latest News"
-          >
-            <Megaphone className="w-6 h-6" />
-          </button>
-        </div>
+        {/* Floating News Button - Hidden when there's a game load error */}
+        {!gameLoadError && (
+          <div className="absolute bottom-6 right-6 z-40">
+            <button
+              onClick={() => setShowNews(!showNews)}
+              className="p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg hover:shadow-blue-500/25 transition-all duration-200 hover:scale-110"
+              title="Latest News"
+            >
+              <Megaphone className="w-6 h-6" />
+            </button>
+          </div>
+        )}
 
         <NewsPanel 
           news={newsItems}

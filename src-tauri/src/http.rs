@@ -291,7 +291,8 @@ fn create_tls_aware_http_client(use_proxy: bool) -> Result<reqwest::Client, Stri
         .tcp_keepalive(std::time::Duration::from_secs(60))
         .pool_idle_timeout(std::time::Duration::from_secs(90))
         .pool_max_idle_per_host(10)
-        .min_tls_version(reqwest::tls::Version::TLS_1_2); // Ensure minimum TLS 1.2
+        .min_tls_version(reqwest::tls::Version::TLS_1_0) // Use TLS 1.0 minimum for broader compatibility
+        .max_tls_version(reqwest::tls::Version::TLS_1_2); // Limit to TLS 1.2 maximum for compatibility
     
     if !use_proxy {
         client_builder = client_builder.no_proxy();
@@ -309,7 +310,9 @@ fn create_enhanced_http_client(use_proxy: bool) -> Result<reqwest::Client, Strin
         .user_agent("YuukiPS-Launcher/1.0")
         .tcp_keepalive(std::time::Duration::from_secs(60))
         .pool_idle_timeout(std::time::Duration::from_secs(90))
-        .pool_max_idle_per_host(10);
+        .pool_max_idle_per_host(10)
+        .min_tls_version(reqwest::tls::Version::TLS_1_0) // Use TLS 1.0 minimum for broader compatibility
+        .max_tls_version(reqwest::tls::Version::TLS_1_2); // Limit to TLS 1.2 maximum for compatibility
     
     if !use_proxy {
         client_builder = client_builder.no_proxy();
@@ -386,13 +389,13 @@ fn extract_tls_version_from_response(headers: &reqwest::header::HeaderMap, url: 
     if headers.get("strict-transport-security").is_some() {
         // HSTS indicates HTTPS/TLS is being used
         if url.starts_with("https://") {
-            return "TLS 1.2+ (HTTPS with HSTS)".to_string();
+            return "TLS 1.0-1.2 (HTTPS with HSTS, client enforces TLS 1.0-1.2 range)".to_string();
         }
     }
     
-    // Default assumption for HTTPS URLs
+    // Default assumption for HTTPS URLs - we enforce TLS 1.0-1.2 range
     if url.starts_with("https://") {
-        "TLS 1.2+ (HTTPS connection established)".to_string()
+        "TLS 1.0-1.2 (HTTPS connection established, client enforces TLS 1.0-1.2 range)".to_string()
     } else {
         "N/A (HTTP connection)".to_string()
     }
