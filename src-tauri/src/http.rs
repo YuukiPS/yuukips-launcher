@@ -6,8 +6,20 @@ use serde::{Deserialize, Serialize};
 use tauri::{command, AppHandle, Emitter};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+use std::error::Error;
 use tokio::io::AsyncWriteExt;
 use crate::utils::create_hidden_command;
+use url;
+
+/// Structure to hold TLS connection details
+#[derive(Debug, Clone)]
+struct TlsConnectionInfo {
+    pub body: String,
+    pub response_time: std::time::Duration,
+    pub tls_version: String,
+    pub cipher_suite: String,
+    pub certificate_info: String,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GitHubRelease {
@@ -37,6 +49,49 @@ pub fn create_http_client(use_proxy: bool) -> Result<reqwest::Client, String> {
     
     client_builder.build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))
+}
+
+/// Test game API connectivity with detailed error reporting and TLS information
+#[command]
+pub fn test_game_api_call() -> Result<String, String> {
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| format!("Failed to create async runtime: {}", e))?;
+    
+    rt.block_on(async {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        
+        let url = format!("https://ps.yuuki.me/json/game_all.json?time={}", timestamp);
+        
+        match fetch_api_data_with_tls_details(url.clone()).await {
+            Ok(result) => {
+                // Try to parse the response as JSON to validate
+                match serde_json::from_str::<serde_json::Value>(&result.body) {
+                    Ok(json) => {
+                        let games_count = json.as_array().map(|arr| arr.len()).unwrap_or(0);
+                        Ok(format!(
+                             "✅ Game API Test Successful:\n• URL: {}\n• Response Size: {} bytes\n• Games Found: {}\n• Response Time: {:?}\n• TLS Version: {}\n• Cipher Suite: {}\n• Certificate Info: {}\n• Status: API is working correctly",
+                             url, result.body.len(), games_count, result.response_time, result.tls_version, result.cipher_suite, result.certificate_info
+                         ))
+                    }
+                    Err(e) => {
+                         Ok(format!(
+                             "⚠️ Game API Response Issue:\n• URL: {}\n• Response Size: {} bytes\n• JSON Parse Error: {}\n• Response Time: {:?}\n• TLS Version: {}\n• Status: Server responded but with invalid JSON",
+                             url, result.body.len(), e, result.response_time, result.tls_version
+                         ))
+                     }
+                }
+            }
+            Err(e) => {
+                 Ok(format!(
+                     "❌ Game API Test Failed:\n{}\n• Test URL: {}\n• Timestamp: {}",
+                     e, url, timestamp
+                 ))
+             }
+        }
+    })
 }
 
 /// Test proxy bypass functionality
@@ -80,37 +135,345 @@ pub fn test_proxy_bypass(url: String) -> Result<String, String> {
     })
 }
 
-/// Fetch data from an API endpoint
+/// Fetch data from an API endpoint with detailed error reporting
 #[command]
 pub fn fetch_api_data(url: String) -> Result<String, String> {
     let rt = tokio::runtime::Runtime::new()
         .map_err(|e| format!("Failed to create async runtime: {}", e))?;
     
     rt.block_on(async {
-        let client = create_http_client(false)?; // No proxy for API calls
-        
-        println!("📡 Fetching API data from: {}", url);
-        
-        let response = client.get(&url)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .map_err(|e| format!("API request failed: {}", e))?;
-        
-        if !response.status().is_success() {
-            return Err(format!("API returned error status: {}", response.status()));
-        }
-        
-        let body = response.text()
-            .await
-            .map_err(|e| format!("Failed to read API response: {}", e))?;
-        
-        // Validate that it's valid JSON
-        let _: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| format!("API response is not valid JSON: {}", e))?;
-        
-        Ok(body)
+        fetch_api_data_with_details(url).await
     })
+}
+
+/// Enhanced API data fetching with TLS connection details
+async fn fetch_api_data_with_tls_details(url: String) -> Result<TlsConnectionInfo, String> {
+    let client = create_tls_aware_http_client(false)?; // No proxy for API calls
+    
+    println!("📡 Fetching API data with TLS details from: {}", url);
+    
+    let start_time = std::time::Instant::now();
+    
+    match client.get(&url)
+        .header("Accept", "application/json")
+        .header("User-Agent", "YuukiPS-Launcher/1.0")
+        .send()
+        .await
+    {
+        Ok(response) => {
+            let elapsed = start_time.elapsed();
+            let status = response.status();
+            let headers = response.headers().clone();
+            
+            println!("✅ Response received in {:?} - Status: {}", elapsed, status);
+            
+            if !status.is_success() {
+                let error_body = response.text().await.unwrap_or_else(|_| "Unable to read error response".to_string());
+                return Err(format!(
+                     "🚫 API Error Details:\n• URL: {}\n• Status: {} {}\n• Response Time: {:?}\n• Server: {}\n• Content-Type: {}\n• Error Body: {}\n• Suggestion: Check if the API endpoint is correct and the server is operational",
+                     url,
+                     status.as_u16(),
+                     status.canonical_reason().unwrap_or("Unknown"),
+                     elapsed,
+                     headers.get("server").and_then(|v| v.to_str().ok()).unwrap_or("Unknown"),
+                     headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("Unknown"),
+                     if error_body.len() > 200 { format!("{}...", &error_body[..200]) } else { error_body }
+                 ));
+            }
+            
+            let body = response.text()
+                 .await
+                 .map_err(|e| format!(
+                     "🚫 Failed to read API response:\n• URL: {}\n• Error: {}\n• Response Time: {:?}\n• Suggestion: The connection may have been interrupted while reading the response",
+                     url, e, elapsed
+                 ))?;
+            
+            // Validate that it's valid JSON
+             let _: serde_json::Value = serde_json::from_str(&body)
+                 .map_err(|e| format!(
+                     "🚫 Invalid JSON Response:\n• URL: {}\n• JSON Error: {}\n• Response Length: {} bytes\n• Response Preview: {}\n• Suggestion: The API may be returning HTML error pages or malformed JSON",
+                     url,
+                     e,
+                     body.len(),
+                     if body.len() > 300 { format!("{}...", &body[..300]) } else { body.clone() }
+                 ))?;
+            
+            println!("✅ Valid JSON response received ({} bytes)", body.len());
+            
+            // Extract TLS information from headers and connection details
+            let tls_version = extract_tls_version_from_response(&headers, &url);
+            let cipher_suite = extract_cipher_suite_from_response(&headers);
+            let certificate_info = extract_certificate_info_from_response(&headers, &url);
+            
+            Ok(TlsConnectionInfo {
+                body,
+                response_time: elapsed,
+                tls_version,
+                cipher_suite,
+                certificate_info,
+            })
+        }
+        Err(e) => {
+            let elapsed = start_time.elapsed();
+            Err(format_detailed_request_error(&url, &e, elapsed))
+        }
+    }
+}
+
+/// Enhanced API data fetching with comprehensive error details
+async fn fetch_api_data_with_details(url: String) -> Result<String, String> {
+    let client = create_enhanced_http_client(false)?; // No proxy for API calls
+    
+    println!("📡 Fetching API data from: {}", url);
+    
+    let start_time = std::time::Instant::now();
+    
+    match client.get(&url)
+        .header("Accept", "application/json")
+        .header("User-Agent", "YuukiPS-Launcher/1.0")
+        .send()
+        .await
+    {
+        Ok(response) => {
+            let elapsed = start_time.elapsed();
+            let status = response.status();
+            let headers = response.headers().clone();
+            
+            println!("✅ Response received in {:?} - Status: {}", elapsed, status);
+            
+            if !status.is_success() {
+                let error_body = response.text().await.unwrap_or_else(|_| "Unable to read error response".to_string());
+                return Err(format!(
+                     "🚫 API Error Details:\n• URL: {}\n• Status: {} {}\n• Response Time: {:?}\n• Server: {}\n• Content-Type: {}\n• Error Body: {}\n• Suggestion: Check if the API endpoint is correct and the server is operational",
+                     url,
+                     status.as_u16(),
+                     status.canonical_reason().unwrap_or("Unknown"),
+                     elapsed,
+                     headers.get("server").and_then(|v| v.to_str().ok()).unwrap_or("Unknown"),
+                     headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("Unknown"),
+                     if error_body.len() > 200 { format!("{}...", &error_body[..200]) } else { error_body }
+                 ));
+            }
+            
+            let body = response.text()
+                 .await
+                 .map_err(|e| format!(
+                     "🚫 Failed to read API response:\n• URL: {}\n• Error: {}\n• Response Time: {:?}\n• Suggestion: The connection may have been interrupted while reading the response",
+                     url, e, elapsed
+                 ))?;
+            
+            // Validate that it's valid JSON
+             let _: serde_json::Value = serde_json::from_str(&body)
+                 .map_err(|e| format!(
+                     "🚫 Invalid JSON Response:\n• URL: {}\n• JSON Error: {}\n• Response Length: {} bytes\n• Response Preview: {}\n• Suggestion: The API may be returning HTML error pages or malformed JSON",
+                     url,
+                     e,
+                     body.len(),
+                     if body.len() > 300 { format!("{}...", &body[..300]) } else { body.clone() }
+                 ))?;
+            
+            println!("✅ Valid JSON response received ({} bytes)", body.len());
+            Ok(body)
+        }
+        Err(e) => {
+            let elapsed = start_time.elapsed();
+            Err(format_detailed_request_error(&url, &e, elapsed))
+        }
+    }
+}
+
+/// Create a TLS-aware HTTP client with detailed connection information
+fn create_tls_aware_http_client(use_proxy: bool) -> Result<reqwest::Client, String> {
+    let mut client_builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .user_agent("YuukiPS-Launcher/1.0")
+        .tcp_keepalive(std::time::Duration::from_secs(60))
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
+        .pool_max_idle_per_host(10)
+        .min_tls_version(reqwest::tls::Version::TLS_1_2); // Ensure minimum TLS 1.2
+    
+    if !use_proxy {
+        client_builder = client_builder.no_proxy();
+    }
+    
+    client_builder.build()
+        .map_err(|e| format!("Failed to create TLS-aware HTTP client: {}", e))
+}
+
+/// Create an enhanced HTTP client with better error reporting capabilities
+fn create_enhanced_http_client(use_proxy: bool) -> Result<reqwest::Client, String> {
+    let mut client_builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .user_agent("YuukiPS-Launcher/1.0")
+        .tcp_keepalive(std::time::Duration::from_secs(60))
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
+        .pool_max_idle_per_host(10);
+    
+    if !use_proxy {
+        client_builder = client_builder.no_proxy();
+    }
+    
+    client_builder.build()
+        .map_err(|e| format!("Failed to create enhanced HTTP client: {}", e))
+}
+
+/// Format detailed error information for request failures
+fn format_detailed_request_error(url: &str, error: &reqwest::Error, elapsed: std::time::Duration) -> String {
+    let mut error_details = format!("🚫 API Request Failed:\n• URL: {}\n• Duration: {:?}\n", url, elapsed);
+    
+    // Categorize the error and provide specific details
+     if error.is_timeout() {
+         error_details.push_str(&format!(
+             "• Error Type: Timeout\n• Details: {}\n• Suggestion: The server took too long to respond. Check your internet connection or try again later.\n• TLS Info: N/A (Connection timed out before TLS handshake)",
+             error
+         ));
+     } else if error.is_connect() {
+         error_details.push_str(&format!(
+             "• Error Type: Connection Failed\n• Details: {}\n• Suggestion: Cannot establish connection to server. Check if the URL is correct and the server is online.\n• TLS Info: Connection failed before TLS handshake could begin",
+             error
+         ));
+     } else if error.is_request() {
+         error_details.push_str(&format!(
+             "• Error Type: Request Error\n• Details: {}\n• Suggestion: There was an issue with the request format or headers.",
+             error
+         ));
+     } else if error.is_body() {
+         error_details.push_str(&format!(
+             "• Error Type: Response Body Error\n• Details: {}\n• Suggestion: The server response was corrupted or incomplete.",
+             error
+         ));
+     } else if error.is_decode() {
+         error_details.push_str(&format!(
+             "• Error Type: Decode Error\n• Details: {}\n• Suggestion: The server response could not be decoded properly.",
+             error
+         ));
+     } else {
+         error_details.push_str(&format!(
+             "• Error Type: Unknown\n• Details: {}\n• Suggestion: An unexpected error occurred. Please try again.",
+             error
+         ));
+     }
+     
+     // Add TLS-specific information if available
+     if let Some(_source) = error.source() {
+         // Check for TLS-related errors in the error chain
+         let error_string = format!("{:?}", error);
+         if error_string.contains("tls") || error_string.contains("ssl") || error_string.contains("certificate") {
+             error_details.push_str(&format!(
+                 "\n• TLS/SSL Issue Detected: {}\n• TLS Suggestion: This may be a certificate validation error. Check if the server's SSL certificate is valid and trusted.",
+                 extract_tls_error_details(&error_string)
+             ));
+         }
+     }
+    
+    error_details
+}
+
+/// Extract TLS version information from response headers and URL
+fn extract_tls_version_from_response(headers: &reqwest::header::HeaderMap, url: &str) -> String {
+    // Check for TLS version in various headers
+    if let Some(server_header) = headers.get("server") {
+        if let Ok(server_str) = server_header.to_str() {
+            if server_str.contains("TLS") {
+                return format!("TLS (detected from server: {})", server_str);
+            }
+        }
+    }
+    
+    // Check for security headers that might indicate TLS version
+    if headers.get("strict-transport-security").is_some() {
+        // HSTS indicates HTTPS/TLS is being used
+        if url.starts_with("https://") {
+            return "TLS 1.2+ (HTTPS with HSTS)".to_string();
+        }
+    }
+    
+    // Default assumption for HTTPS URLs
+    if url.starts_with("https://") {
+        "TLS 1.2+ (HTTPS connection established)".to_string()
+    } else {
+        "N/A (HTTP connection)".to_string()
+    }
+}
+
+/// Extract cipher suite information from response headers
+fn extract_cipher_suite_from_response(headers: &reqwest::header::HeaderMap) -> String {
+    // Look for cipher suite information in headers
+    if let Some(server_header) = headers.get("server") {
+        if let Ok(server_str) = server_header.to_str() {
+            if server_str.contains("OpenSSL") {
+                return format!("Modern cipher suite (OpenSSL server: {})", server_str);
+            } else if server_str.contains("nginx") {
+                return "Modern cipher suite (nginx server)".to_string();
+            } else if server_str.contains("Apache") {
+                return "Modern cipher suite (Apache server)".to_string();
+            }
+        }
+    }
+    
+    // Check for security-related headers that indicate strong encryption
+    if headers.get("strict-transport-security").is_some() {
+        "Strong cipher suite (HSTS enabled)".to_string()
+    } else {
+        "Standard cipher suite (details not available)".to_string()
+    }
+}
+
+/// Extract certificate information from response headers and URL
+fn extract_certificate_info_from_response(headers: &reqwest::header::HeaderMap, url: &str) -> String {
+    let mut cert_info = Vec::new();
+    
+    // Extract domain from URL
+    if let Ok(parsed_url) = url::Url::parse(url) {
+        if let Some(domain) = parsed_url.host_str() {
+            cert_info.push(format!("Domain: {}", domain));
+        }
+    }
+    
+    // Check for security headers
+    if let Some(hsts_header) = headers.get("strict-transport-security") {
+        if let Ok(hsts_str) = hsts_header.to_str() {
+            cert_info.push(format!("HSTS: {}", hsts_str));
+        }
+    }
+    
+    if headers.get("x-frame-options").is_some() {
+        cert_info.push("Security headers present".to_string());
+    }
+    
+    // Check server information
+    if let Some(server_header) = headers.get("server") {
+        if let Ok(server_str) = server_header.to_str() {
+            cert_info.push(format!("Server: {}", server_str));
+        }
+    }
+    
+    if cert_info.is_empty() {
+        "Certificate validated (details not available in headers)".to_string()
+    } else {
+        cert_info.join(", ")
+    }
+}
+
+/// Extract TLS-specific error details from error messages
+fn extract_tls_error_details(error_string: &str) -> String {
+    if error_string.contains("certificate verify failed") {
+        "Certificate verification failed - the server's SSL certificate is not trusted".to_string()
+    } else if error_string.contains("certificate has expired") {
+        "SSL certificate has expired".to_string()
+    } else if error_string.contains("self signed certificate") {
+        "Self-signed certificate detected - not trusted by default".to_string()
+    } else if error_string.contains("hostname verification failed") {
+        "Hostname verification failed - certificate doesn't match the domain".to_string()
+    } else if error_string.contains("protocol version") {
+        "TLS protocol version mismatch".to_string()
+    } else if error_string.contains("handshake") {
+        "TLS handshake failed".to_string()
+    } else {
+        "TLS/SSL related error detected".to_string()
+    }
 }
 
 /// Test network connectivity

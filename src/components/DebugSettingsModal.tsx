@@ -50,13 +50,10 @@ export const DebugSettingsModal: React.FC<DebugSettingsModalProps> = ({
     setTestResult('');
     
     try {
-      const result = await invoke('fetch_api_data', { 
-        url: 'https://ps.yuuki.me/json/game_all.json' 
-      }) as string;
-      const games = JSON.parse(result);
-      setTestResult(`✅ Game API Success: Fetched ${games.length} games`);
+      const result = await invoke('test_game_api_call') as string;
+      setTestResult(result);
     } catch (error) {
-      setTestResult(`❌ Game API Error: ${error}`);
+      setTestResult(`❌ Game API Test Error: ${error}`);
     } finally {
       setIsProxyTesting(false);
     }

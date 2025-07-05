@@ -102,7 +102,22 @@ export class GameApiService {
       }));
     } catch (error) {
       console.error('Failed to fetch games:', error);
-      throw new Error('Sorry, your internet is having problems or our server is having problems, please try again later.');
+      
+      // Check if this is a detailed error from our enhanced backend
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      if (errorMessage.includes('🚫')) {
+        // This is a detailed error from our enhanced backend - pass it through
+        throw new Error(errorMessage);
+      } else {
+        // Fallback for other types of errors
+        throw new Error(
+          `🚫 Game List Loading Failed:\n` +
+          `• Error: ${errorMessage}\n` +
+          `• URL: https://ps.yuuki.me/json/game_all.json\n` +
+          `• Suggestion: Check your internet connection and try again. If the problem persists, the game server may be temporarily unavailable.`
+        );
+      }
     }
   }
   
