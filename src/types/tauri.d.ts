@@ -41,6 +41,10 @@ export interface TauriCommands {
   check_and_disable_windows_proxy(): Promise<string>;
   install_ssl_certificate(): Promise<string>;
   check_ssl_certificate_installed(): Promise<boolean>;
+  clear_launcher_data(): Promise<string>;
+  get_yuukips_data_path(): Promise<string>;
+  get_app_data_path(): Promise<string>;
+  get_temp_files_path(): Promise<string>;
   test_game_api_call(): Promise<string>;
   generate_ca_files(path: string): Promise<void>;
   launch_game(

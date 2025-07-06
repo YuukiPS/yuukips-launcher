@@ -26,17 +26,7 @@ use std::path::Path;
 use hudsucker::hyper::Uri;
 use rustls_pemfile as pemfile;
 
-use std::env;
 use crate::utils::create_hidden_command;
-
-// Helper function to get data directory
-fn get_data_dir() -> Result<PathBuf, String> {
-    if let Some(home) = env::var_os("USERPROFILE") {
-        Ok(PathBuf::from(home).join("AppData").join("Local"))
-    } else {
-        Err("Could not determine data directory".to_string())
-    }
-}
 
 #[cfg(windows)]
 use registry::{Data, Hive, Security};
@@ -253,7 +243,8 @@ pub async fn create_proxy_internal(
         Ok(b) => b,
         Err(e) => {
             println!("Encountered {}. Regenerating CA cert and retrying...", e);
-            generate_ca_files(&get_data_dir().unwrap().join("yuukips"));
+            let yuukips_path = crate::system::get_yuukips_data_path().expect("Could not get YuukiPS data path");
+            generate_ca_files(&PathBuf::from(yuukips_path));
 
             fs::read(&pk_path).expect("Could not read private key")
         }
@@ -264,7 +255,8 @@ pub async fn create_proxy_internal(
         Ok(b) => b,
         Err(e) => {
             println!("Encountered {}. Regenerating CA cert and retrying...", e);
-            generate_ca_files(&get_data_dir().unwrap().join("yuukips"));
+            let yuukips_path = crate::system::get_yuukips_data_path().expect("Could not get YuukiPS data path");
+            generate_ca_files(&PathBuf::from(yuukips_path));
 
             fs::read(&ca_path).expect("Could not read certificate")
         }
@@ -719,9 +711,9 @@ pub fn start_proxy() -> Result<String, String> {
     let runtime = Runtime::new().map_err(|e| format!("Failed to create runtime: {}", e))?;
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
-    let cert_path = get_data_dir()
-        .unwrap()
-        .join("yuukips")
+    let yuukips_path = crate::system::get_yuukips_data_path()
+        .map_err(|e| format!("Failed to get YuukiPS data path: {}", e))?;
+    let cert_path = PathBuf::from(yuukips_path)
         .join("ca")
         .to_string_lossy()
         .to_string();

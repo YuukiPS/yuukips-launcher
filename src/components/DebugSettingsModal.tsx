@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Bug, RefreshCw, TestTube } from 'lucide-react';
+import { X, Bug, RefreshCw, TestTube, Trash2, FolderOpen, Database, HardDrive } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 
 interface DebugSettingsModalProps {
@@ -16,6 +16,7 @@ export const DebugSettingsModal: React.FC<DebugSettingsModalProps> = ({
   const [isForcing, setIsForcing] = useState(false);
   const [testResult, setTestResult] = useState<string>('');
   const [isProxyTesting, setIsProxyTesting] = useState(false);
+  const [showClearDataConfirm, setShowClearDataConfirm] = useState(false);
 
   if (!isOpen) return null;
 
@@ -56,6 +57,68 @@ export const DebugSettingsModal: React.FC<DebugSettingsModalProps> = ({
       setTestResult(`❌ Game API Test Error: ${error}`);
     } finally {
       setIsProxyTesting(false);
+    }
+  };
+
+  const handleClearData = () => {
+    setShowClearDataConfirm(true);
+  };
+
+  const confirmClearData = async () => {
+    try {
+      // Clear all stored data/settings
+      await invoke('clear_launcher_data');
+      setShowClearDataConfirm(false);
+      onClose();
+    } catch (error) {
+      console.error('Failed to clear launcher data:', error);
+    }
+  };
+
+  const cancelClearData = () => {
+    setShowClearDataConfirm(false);
+  };
+
+  const clearBrowserData = () => {
+    // Clear localStorage
+    localStorage.clear();
+    // Clear sessionStorage
+    sessionStorage.clear();
+    // Clear IndexedDB (if any)
+    if ('indexedDB' in window) {
+      indexedDB.databases().then(databases => {
+        databases.forEach(db => {
+          if (db.name) {
+            indexedDB.deleteDatabase(db.name);
+          }
+        });
+      }).catch(console.error);
+    }
+    alert('Browser data cleared successfully!');
+  };
+
+  const openDataFolder = async (folderType: 'yuukips' | 'appdata' | 'temp') => {
+    try {
+      let folderPath: string;
+      
+      switch (folderType) {
+        case 'yuukips':
+          folderPath = await invoke('get_yuukips_data_path');
+          break;
+        case 'appdata':
+          folderPath = await invoke('get_app_data_path');
+          break;
+        case 'temp':
+          folderPath = await invoke('get_temp_files_path');
+          break;
+        default:
+          throw new Error('Invalid folder type');
+      }
+      
+      await invoke('open_directory', { path: folderPath });
+    } catch (error) {
+      console.error(`Failed to open ${folderType} folder:`, error);
+      alert(`Failed to open ${folderType} folder: ${error}`);
     }
   };
 
@@ -162,6 +225,65 @@ export const DebugSettingsModal: React.FC<DebugSettingsModalProps> = ({
             </div>
           </div>
 
+          <div className="space-y-4">
+            <h3 className="text-lg font-medium text-white">Data Management</h3>
+            
+            <div className="space-y-3">
+              <p className="text-gray-300 text-sm">
+                Manage launcher data, browser storage, and view data folders.
+              </p>
+              
+              {/* Clear Data Buttons */}
+              <div className="space-y-2">
+                <button
+                  onClick={handleClearData}
+                  className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors font-medium"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Clear Launcher Data</span>
+                </button>
+                
+                <button
+                  onClick={clearBrowserData}
+                  className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors font-medium"
+                >
+                  <Database className="w-4 h-4" />
+                  <span>Clear Browser Data</span>
+                </button>
+              </div>
+              
+              {/* Navigation Buttons */}
+              <div className="pt-3 border-t border-gray-600">
+                <p className="text-gray-400 text-xs mb-3">View Data Folders:</p>
+                <div className="grid grid-cols-1 gap-2">
+                  <button
+                    onClick={() => openDataFolder('yuukips')}
+                    className="flex items-center justify-center space-x-2 px-3 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition-colors text-sm"
+                  >
+                    <FolderOpen className="w-4 h-4" />
+                    <span>YuukiPS Data</span>
+                  </button>
+                  
+                  <button
+                    onClick={() => openDataFolder('appdata')}
+                    className="flex items-center justify-center space-x-2 px-3 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition-colors text-sm"
+                  >
+                    <FolderOpen className="w-4 h-4" />
+                    <span>App Data</span>
+                  </button>
+                  
+                  <button
+                    onClick={() => openDataFolder('temp')}
+                    className="flex items-center justify-center space-x-2 px-3 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition-colors text-sm"
+                  >
+                    <HardDrive className="w-4 h-4" />
+                    <span>Temp Files</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="pt-4 border-t border-gray-700">
             <p className="text-gray-400 text-xs">
               Debug features are intended for development and testing purposes only.
@@ -169,6 +291,34 @@ export const DebugSettingsModal: React.FC<DebugSettingsModalProps> = ({
           </div>
         </div>
       </div>
+      
+      {/* Clear Data Confirmation Modal */}
+      {showClearDataConfirm && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-60">
+          <div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-sm mx-4 border border-gray-700">
+            <div className="p-6">
+              <h3 className="text-lg font-semibold text-white mb-4">Confirm Clear Data</h3>
+              <p className="text-gray-300 text-sm mb-6">
+                Are you sure you want to delete launcher data? This will cause all settings to be reset.
+              </p>
+              <div className="flex space-x-3">
+                <button
+                  onClick={cancelClearData}
+                  className="flex-1 px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition-colors font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmClearData}
+                  className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors font-medium"
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

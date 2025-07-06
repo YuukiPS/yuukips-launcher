@@ -31,6 +31,10 @@ pub fn run() {
             install_ssl_certificate,
             check_ssl_certificate_installed,
             open_directory,
+            clear_launcher_data,
+            get_yuukips_data_path,
+            get_app_data_path,
+            get_temp_files_path,
             // Download functions
             download::start_download,
             download::pause_download,

@@ -9,7 +9,7 @@ use crate::utils::create_hidden_command;
 use crate::proxy::generate_ca_files;
 
 // Helper function to get data directory
-fn get_data_dir() -> Result<PathBuf, String> {
+pub fn get_data_dir() -> Result<PathBuf, String> {
     if let Some(home) = env::var_os("USERPROFILE") {
         Ok(PathBuf::from(home).join("AppData").join("Local"))
     } else {
@@ -295,5 +295,132 @@ pub fn check_ssl_certificate_installed() -> Result<bool, String> {
     #[cfg(not(target_os = "windows"))]
     {
         Ok(false)
+    }
+}
+
+/// Get YuukiPS data directory path
+#[command]
+pub fn get_yuukips_data_path() -> Result<String, String> {
+    let yuukips_dir = get_data_dir()?.join("yuukips");
+    Ok(yuukips_dir.to_string_lossy().to_string())
+}
+
+/// Get Tauri app data directory path
+#[command]
+pub fn get_app_data_path() -> Result<String, String> {
+    let app_data_dir = get_data_dir()?.join("com.yuukips.launcher");
+    Ok(app_data_dir.to_string_lossy().to_string())
+}
+
+/// Get temporary files directory path
+#[command]
+pub fn get_temp_files_path() -> Result<String, String> {
+    let temp_dir = std::env::temp_dir().join("yuukips");
+    Ok(temp_dir.to_string_lossy().to_string())
+}
+
+/// Helper function to selectively clear a directory while preserving specified files
+fn clear_directory_selective(dir_path: &std::path::Path, preserve_files: &[&str]) -> Result<usize, String> {
+    use std::fs;
+    
+    let mut cleared_count = 0;
+    
+    let entries = fs::read_dir(dir_path)
+        .map_err(|e| format!("Failed to read directory: {}", e))?;
+    
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+        let path = entry.path();
+        let file_name = path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        
+        // Skip files that should be preserved
+        if preserve_files.contains(&file_name) {
+            println!("🔒 Preserving essential file: {}", file_name);
+            continue;
+        }
+        
+        // Remove file or directory
+        let result = if path.is_dir() {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        };
+        
+        match result {
+            Ok(_) => {
+                cleared_count += 1;
+                println!("🗑️ Removed: {}", path.display());
+            }
+            Err(e) => {
+                eprintln!("⚠️ Failed to remove {}: {}", path.display(), e);
+            }
+        }
+    }
+    
+    Ok(cleared_count)
+}
+
+/// Clear all launcher data and reset settings
+#[command]
+pub fn clear_launcher_data() -> Result<String, String> {
+    use std::fs;
+    
+    let mut cleared_items = Vec::new();
+    
+    // Clear YuukiPS data directory (preserve essential launcher files)
+    let yuukips_dir = get_data_dir()?.join("yuukips");
+    if yuukips_dir.exists() {
+        // Files to preserve (essential launcher files)
+        let preserve_files = ["yuukips-launcher.exe", "uninstall.exe"];
+        
+        match clear_directory_selective(&yuukips_dir, &preserve_files) {
+            Ok(cleared_count) => {
+                if cleared_count > 0 {
+                    cleared_items.push(format!("YuukiPS data directory ({} items)", cleared_count));
+                    println!("🧹 Cleared {} items from YuukiPS data directory: {}", cleared_count, yuukips_dir.display());
+                }
+            }
+            Err(e) => {
+                eprintln!("⚠️ Failed to clear YuukiPS data directory: {}", e);
+            }
+        }
+    }
+    
+    // Clear Tauri app data directory (in AppData/Local/com.yuukips.launcher)
+    let app_data_dir = get_data_dir()?.join("com.yuukips.launcher");
+    if app_data_dir.exists() {
+        match fs::remove_dir_all(&app_data_dir) {
+            Ok(_) => {
+                cleared_items.push("Tauri app data".to_string());
+                println!("🧹 Cleared Tauri app data: {}", app_data_dir.display());
+            }
+            Err(e) => {
+                eprintln!("⚠️ Failed to clear Tauri app data: {}", e);
+            }
+        }
+    }
+    
+    // Clear temporary files
+    if let Ok(temp_dir) = std::env::temp_dir().canonicalize() {
+        let yuukips_temp = temp_dir.join("yuukips");
+        if yuukips_temp.exists() {
+            match fs::remove_dir_all(&yuukips_temp) {
+                Ok(_) => {
+                    cleared_items.push("temporary files".to_string());
+                    println!("🧹 Cleared temporary files: {}", yuukips_temp.display());
+                }
+                Err(e) => {
+                    eprintln!("⚠️ Failed to clear temporary files: {}", e);
+                }
+            }
+        }
+    }
+    
+    if cleared_items.is_empty() {
+        Ok("No launcher data found to clear".to_string())
+    } else {
+        Ok(format!("Successfully cleared: {}", cleared_items.join(", ")))
     }
 }
