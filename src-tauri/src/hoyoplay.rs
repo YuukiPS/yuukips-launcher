@@ -1,8 +1,8 @@
+#[cfg(windows)]
 use winreg::enums::*;
+#[cfg(windows)]
 use winreg::RegKey;
 use serde_json::Number;
-
-
 
 /// Get game executable names based on game_id and channel_id
 #[tauri::command]
@@ -34,6 +34,7 @@ pub fn get_game_folder(game_id: Number, channel_id: Number) -> Result<String, St
 
 /// Get list of all installed games from HoyoPlay registry
 #[tauri::command]
+#[cfg(windows)]
 pub fn get_hoyoplay_list_game() -> Result<Vec<(String, String)>, String> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let hyp_key = hkcu
@@ -60,8 +61,15 @@ pub fn get_hoyoplay_list_game() -> Result<Vec<(String, String)>, String> {
     Ok(games)
 }
 
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn get_hoyoplay_list_game() -> Result<Vec<(String, String)>, String> {
+    Err("HoyoPlay registry access is only available on Windows".to_string())
+}
+
 /// Get game folder path using name_code directly from HoyoPlay registry
 #[tauri::command]
+#[cfg(windows)]
 pub fn get_hoyoplay_game_folder(name_code: String) -> Result<String, String> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let registry_path = format!("Software\\Cognosphere\\HYP\\1_0\\{}", name_code);
@@ -75,4 +83,10 @@ pub fn get_hoyoplay_game_folder(name_code: String) -> Result<String, String> {
         .map_err(|e| format!("Failed to get GameInstallPath for {}: {}", name_code, e))?;
     
     Ok(install_path)
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn get_hoyoplay_game_folder(name_code: String) -> Result<String, String> {
+    Err("HoyoPlay registry access is only available on Windows".to_string())
 }
