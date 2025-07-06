@@ -130,11 +130,16 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
 
       console.log(`Launching game ${game.id}/${version}/${channel} from folder: ${gameFolderPath}`);
       
+      // Get delete hoyo pass setting from localStorage (default: true)
+      const deleteHoyoPassSetting = localStorage.getItem('delete-hoyo-pass-setting');
+      const deleteHoyoPass = deleteHoyoPassSetting ? JSON.parse(deleteHoyoPassSetting) : true;
+      
       const result = await invoke('launch_game', {
         gameId: game.id,
         version: version,
         channel: channel,
-        gameFolderPath: gameFolderPath
+        gameFolderPath: gameFolderPath,
+        deleteHoyoPass: deleteHoyoPass
       });
       
       console.log('Game launch result:', result);

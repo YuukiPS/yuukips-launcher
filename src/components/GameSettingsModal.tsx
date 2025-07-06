@@ -41,6 +41,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const [isValidating, setIsValidating] = useState(false);
   const [patchErrorModalOpen, setPatchErrorModalOpen] = useState(false);
   const [patchErrorInfo, setPatchErrorInfo] = useState<PatchErrorInfo | null>(null);
+  const [deleteHoyoPass, setDeleteHoyoPass] = useState<boolean>(true);
 
   // Get available versions dynamically from game engine data
   const availableVersions = GameApiService.getAvailableVersionsForPlatform(game, 1);
@@ -133,6 +134,18 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
     }
   }, []);
 
+  // Load saved delete hoyo pass setting from localStorage
+  useEffect(() => {
+    const savedDeleteHoyoPass = localStorage.getItem('delete-hoyo-pass-setting');
+    if (savedDeleteHoyoPass !== null) {
+      try {
+        setDeleteHoyoPass(JSON.parse(savedDeleteHoyoPass));
+      } catch (error) {
+        console.error('Failed to parse saved delete hoyo pass setting:', error);
+      }
+    }
+  }, []);
+
   // Save proxy domains to localStorage whenever they change
   const saveProxyDomains = useCallback((domains: string[]) => {
     setProxyDomains(domains);
@@ -196,6 +209,12 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const saveDirectories = (newDirectories: Record<string, Record<number, string>>) => {
     setVersionDirectories(newDirectories);
     localStorage.setItem(`game-${game.id}-directories-v2`, JSON.stringify(newDirectories));
+  };
+
+  // Save delete hoyo pass setting to localStorage whenever it changes
+  const saveDeleteHoyoPassSetting = (enabled: boolean) => {
+    setDeleteHoyoPass(enabled);
+    localStorage.setItem('delete-hoyo-pass-setting', JSON.stringify(enabled));
   };
 
   // Show notification
@@ -1252,6 +1271,16 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                     <div className="flex items-center space-x-3">
                       <input type="checkbox" id="compatibility" className="text-purple-600 focus:ring-purple-500" />
                       <label htmlFor="compatibility" className="text-gray-300">Compatibility Mode</label>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <input 
+                        type="checkbox" 
+                        id="deleteHoyoPass" 
+                        checked={deleteHoyoPass}
+                        onChange={(e) => saveDeleteHoyoPassSetting(e.target.checked)}
+                        className="text-purple-600 focus:ring-purple-500" 
+                      />
+                      <label htmlFor="deleteHoyoPass" className="text-gray-300">Delete hoyo pass</label>
                     </div>
                   </div>
                 </div>

@@ -18,7 +18,7 @@ use crate::patch::{
     restore_original_files,
 };
 use crate::proxy;
-use crate::hoyoplay::get_game_executable_names;
+use crate::hoyoplay::{get_game_executable_names, remove_all_hoyo_pass};
 
 use crate::utils::create_hidden_command;
 
@@ -161,6 +161,7 @@ pub fn launch_game(
     _version: String,
     _channel: Number,
     game_folder_path: String,
+    delete_hoyo_pass: Option<bool>,
 ) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
@@ -256,6 +257,22 @@ pub fn launch_game(
                 // Update patch response
                 if let Ok(mut response) = handle.patch_response.lock() {
                     *response = patch_response_data;
+                }
+            }
+        }
+
+        // Remove HoyoPass entries if requested (default: true)
+        let should_delete_hoyo_pass = delete_hoyo_pass.unwrap_or(true);
+        if should_delete_hoyo_pass {
+            match remove_all_hoyo_pass() {
+                Ok(deleted_entries) => {
+                    if !deleted_entries.is_empty() {
+                        println!("🗑️ Removed {} HoyoPass registry entries: {:?}", deleted_entries.len(), deleted_entries);
+                    }
+                }
+                Err(e) => {
+                    println!("⚠️ Warning: Failed to remove HoyoPass entries: {}", e);
+                    // Continue with game launch even if HoyoPass removal fails
                 }
             }
         }

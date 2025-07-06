@@ -51,7 +51,8 @@ export interface TauriCommands {
     gameId: number,
     version: string,
     channel: number,
-    gameFolderPath: string
+    gameFolderPath: string,
+    deleteHoyoPass?: boolean
   ): Promise<string>;
   validate_game_directory(
     gameId: number,

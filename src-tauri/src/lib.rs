@@ -117,6 +117,7 @@ pub fn run() {
             get_game_folder,
             get_hoyoplay_list_game,
             get_hoyoplay_game_folder,
+            remove_all_hoyo_pass,
         ])
         .setup(|app| {
             // Check admin privileges at startup - required for patch operations and proxy functionality

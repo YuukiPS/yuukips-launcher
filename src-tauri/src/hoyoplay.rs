@@ -4,6 +4,10 @@ use winreg::enums::*;
 use winreg::RegKey;
 use serde_json::Number;
 
+/*  TODO
+https://github.com/babalae/better-genshin-impact/raw/refs/heads/main/BetterGenshinImpact/Genshin/Paths/RegistryGameLocator.cs
+*/
+
 /// Get game executable names based on game_id and channel_id
 #[tauri::command]
 pub fn get_game_executable_names(game_id: Number, channel_id: Number) -> Result<String, String> {
@@ -89,4 +93,55 @@ pub fn get_hoyoplay_game_folder(name_code: String) -> Result<String, String> {
 #[tauri::command]
 pub fn get_hoyoplay_game_folder(name_code: String) -> Result<String, String> {
     Err("HoyoPlay registry access is only available on Windows".to_string())
+}
+
+/// Remove all HoyoPass-related registry entries from miHoYo game folders
+#[tauri::command]
+#[cfg(windows)]
+pub fn remove_all_hoyo_pass() -> Result<Vec<String>, String> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let mihoyo_key = hkcu
+        .open_subkey("Software\\miHoYo")
+        .map_err(|e| format!("Failed to open miHoYo registry key: {}", e))?;
+    
+    let mut deleted_entries = Vec::new();
+    
+    // Enumerate all subkeys under Software\miHoYo
+    for subkey_name in mihoyo_key.enum_keys().map(|x| x.unwrap()) {
+        if let Ok(game_key) = mihoyo_key.open_subkey_with_flags(&subkey_name, KEY_ALL_ACCESS) {
+            // Get all value names in this game folder
+            let value_names: Vec<String> = game_key.enum_values()
+                .filter_map(|result| result.ok())
+                .map(|(name, _)| name)
+                .collect();
+            
+            // Look for HoyoPass-related entries
+            for value_name in value_names {
+                let should_delete = value_name.contains("HOYO_ACCOUNTS_MIGRATED_TO_HOYOPASS_PROD_OVERSEA_h") ||
+                                  value_name.contains("HOYO_PASS_ENABLE") ||
+                                  value_name.contains("HOYO_NEW_USERCENTER_ABTEST");
+                
+                if should_delete {
+                    match game_key.delete_value(&value_name) {
+                        Ok(_) => {
+                            let full_path = format!("HKEY_CURRENT_USER\\Software\\miHoYo\\{}\\{}", subkey_name, value_name);
+                            deleted_entries.push(full_path);
+                        },
+                        Err(e) => {
+                            // Log error but continue with other entries
+                            eprintln!("Failed to delete {}: {}", value_name, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(deleted_entries)
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn remove_all_hoyo_pass() -> Result<Vec<String>, String> {
+    Err("Registry access is only available on Windows".to_string())
 }
