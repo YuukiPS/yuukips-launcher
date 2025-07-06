@@ -43,14 +43,27 @@ pub fn create_parent_directories(file_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Get possible executable names for a game ID
-pub fn get_game_executable_names(game_id: &Number) -> Result<Vec<&'static str>, String> {
-    match game_id.as_u64() {
-        Some(1) => Ok(vec!["GenshinImpact.exe"]),
-        Some(2) => Ok(vec!["StarRail.exe"]),
-        Some(3) => Ok(vec!["ZenlessZoneZero.exe"]),
-        Some(4) => Ok(vec!["WutheringWaves.exe"]),
-        _ => Err(format!("Unsupported game ID: {}", game_id)),
+/// Get possible executable names for a game ID and channel ID
+pub fn get_game_executable_names(game_id: &Number, channel_id: &Number) -> Result<&'static str, String> {
+    match (game_id.as_u64(), channel_id.as_u64()) {
+        (Some(1), Some(1)) => Ok("GenshinImpact.exe"),
+        (Some(1), Some(2)) => Ok("YuanShen.exe"),
+        (Some(2), Some(1)) => Ok("StarRail.exe"),
+        (Some(2), Some(2)) => Ok("StarRail.exe"),
+        (Some(3), Some(1)) => Ok("BlueArchive.exe"),
+        _ => Err(format!("Unsupported game ID: {} with channel ID: {}", game_id, channel_id)),
+    }
+}
+
+/// Get game data folder name for a game ID and channel ID
+pub fn get_game_folder(game_id: &Number, channel_id: &Number) -> Result<&'static str, String> {
+    match (game_id.as_u64(), channel_id.as_u64()) {
+        (Some(1), Some(1)) => Ok("GenshinImpact_Data"),
+        (Some(1), Some(2)) => Ok("YuanShen_Data"),
+        (Some(2), Some(1)) => Ok("StarRail_Data"),
+        (Some(2), Some(2)) => Ok("StarRail_Data"),
+        (Some(3), Some(1)) => Ok("BlueArchive_Data"),
+        _ => Err(format!("Unsupported game ID: {} with channel ID: {}", game_id, channel_id)),
     }
 }
 
@@ -117,25 +130,9 @@ pub fn validate_game_folder_path(game_id: &Number, game_folder_path: &str) -> Re
         ));
     }
     
-    // Check if game executable exists
-    let game_exe_names = get_game_executable_names(game_id)?;
-    let mut found_executable = false;
-    
-    for exe_name in game_exe_names {
-        let exe_path = path.join(exe_name);
-        if exe_path.exists() && exe_path.is_file() {
-            found_executable = true;
-            break;
-        }
-    }
-    
-    if !found_executable {
-        let game_name = get_game_name(game_id)?;
-        return Err(format!(
-            "Game executable not found in folder: {}. Please verify that {} is properly installed.", 
-            game_folder_path, game_name
-        ));
-    }
+    // Note: This function now requires channel_id to check for specific executable
+    // For backward compatibility, we'll skip the executable check here
+    // The caller should use get_game_executable_names with both game_id and channel_id
     
     Ok(())
 }

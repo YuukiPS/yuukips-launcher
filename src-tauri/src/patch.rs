@@ -126,13 +126,13 @@ pub fn check_and_apply_patches(
     
     rt.block_on(async {
         // Fetch patch information
-        let patch_response = fetch_patch_info(game_id.clone(), version, channel, md5).await
+        let patch_response = fetch_patch_info(game_id.clone(), version, channel.clone(), md5).await
             .map_err(|e| format!("Failed to fetch patch info: {}", e))?;
         
         // Check if game is running and try to kill it if needed
-        if crate::game::check_game_running_internal(&game_id)? {
+        if crate::game::check_game_running_internal(&game_id, &channel)? {
             println!("🎮 Game is running, attempting to close it for patching...");
-            match crate::game::kill_game_processes(&game_id) {
+            match crate::game::kill_game_processes(&game_id, &channel) {
                 Ok(message) => println!("🔪 {}", message),
                 Err(e) => return Err(format!("Cannot patch while game is running. Failed to close game: {}", e)),
             }
@@ -141,7 +141,7 @@ pub fn check_and_apply_patches(
             tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
             
             // Verify game is actually closed
-            if crate::game::check_game_running_internal(&game_id)? {
+            if crate::game::check_game_running_internal(&game_id, &channel)? {
                 return Err("Cannot patch: Game is still running after close attempt. Please close the game manually.".to_string());
             }
         }

@@ -260,6 +260,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
     setIsLaunching(true);
     try {
       // First validate game folder path
+      console.log("channel_id: "+channel)
       const gameFolderPath = validateGameFolderPath(version, channel);
       if (!gameFolderPath) {
         return;

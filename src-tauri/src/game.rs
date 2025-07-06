@@ -79,8 +79,7 @@ pub fn check_patch_message(
         }
 
         // Get game executable name
-        let game_exe_names = get_game_executable_names(&_game_id)?;
-        let game_exe_name = game_exe_names[0]; // Use first executable name
+        let game_exe_name = get_game_executable_names(&_game_id, &_channel)?;
 
         // Construct full path to game executable
         let game_exe_path = Path::new(&game_folder_path).join(game_exe_name);
@@ -88,9 +87,10 @@ pub fn check_patch_message(
         // Check if game executable exists
         if !game_exe_path.exists() {
             return Err(format!(
-                "Game executable not found: {} = {}. Please verify the game installation.",
+                "Game executable not found: {} = {} > channel_id {}. Please verify the game installation.",
                 game_exe_path.display(),
-                _game_id
+                _game_id,
+                _channel
             ));
         }
 
@@ -181,8 +181,7 @@ pub fn launch_game(
         }
 
         // Get game executable name
-        let game_exe_names = get_game_executable_names(&_game_id)?;
-        let game_exe_name = game_exe_names[0]; // Use first executable name
+        let game_exe_name = get_game_executable_names(&_game_id, &_channel)?;
 
         // Construct full path to game executable
         let game_exe_path = Path::new(&game_folder_path).join(game_exe_name);
@@ -190,9 +189,10 @@ pub fn launch_game(
         // Check if game executable exists
         if !game_exe_path.exists() {
             return Err(format!(
-                "Game executable not found: {} = {}. Please verify the game installation.",
+                "Game executable not found: {} = {} > channel_id {}. Please verify the game installation.",
                 game_exe_path.display(),
-                _game_id
+                _game_id,
+                _channel
             ));
         }
 
@@ -236,7 +236,7 @@ pub fn launch_game(
         };
 
         // Start game monitoring AFTER patching is complete
-        if let Err(e) = start_game_monitor(_game_id.clone()) {
+        if let Err(e) = start_game_monitor(_game_id.clone(), _channel.clone()) {
             return Err(format!("Failed to start game monitoring: {}", e));
         }
 
@@ -316,46 +316,41 @@ pub fn check_game_installed(_game_id: Number, _version: String, _game_folder_pat
 }
 
 /// Internal function to check if a specific game is running
-pub fn check_game_running_internal(_game_id: &Number) -> Result<bool, String> {
+pub fn check_game_running_internal(_game_id: &Number, _channel_id: &Number) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
-        let game_exe_names = get_game_executable_names(_game_id)?;
+        let game_exe_name = get_game_executable_names(_game_id, _channel_id)?;
+        
+        let output = create_hidden_command("tasklist")
+            .args([
+                "/FI",
+                &format!("IMAGENAME eq {}", game_exe_name),
+                "/FO",
+                "CSV",
+            ])
+            .output()
+            .map_err(|e| format!("Failed to execute tasklist: {}", e))?;
 
-        // Check each possible executable name
-        for game_exe_name in game_exe_names {
-            let output = create_hidden_command("tasklist")
-                .args([
-                    "/FI",
-                    &format!("IMAGENAME eq {}", game_exe_name),
-                    "/FO",
-                    "CSV",
-                ])
-                .output()
-                .map_err(|e| format!("Failed to execute tasklist: {}", e))?;
-
-            if output.status.success() {
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                // Check if the game executable is listed in the output
-                let lines: Vec<&str> = output_str.lines().collect();
-                for line in lines.iter().skip(1) {
-                    // Skip header line
-                    if line.contains(game_exe_name) && !line.trim().is_empty() {
-                        // Additional validation: check if the line contains actual process info
-                        let parts: Vec<&str> = line.split(',').collect();
-                        if parts.len() >= 2 && parts[0].trim_matches('"') == game_exe_name {
-                            return Ok(true);
-                        }
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            // Check if the game executable is listed in the output
+            let lines: Vec<&str> = output_str.lines().collect();
+            for line in lines.iter().skip(1) {
+                // Skip header line
+                if line.contains(game_exe_name) && !line.trim().is_empty() {
+                    // Additional validation: check if the line contains actual process info
+                    let parts: Vec<&str> = line.split(',').collect();
+                    if parts.len() >= 2 && parts[0].trim_matches('"') == game_exe_name {
+                        return Ok(true);
                     }
                 }
-            } else {
-                // If tasklist fails, log the error but continue checking other executables
-                let error_msg = String::from_utf8_lossy(&output.stderr);
-                eprintln!(
-                    "⚠️ Warning: tasklist failed for {}: {}",
-                    game_exe_name, error_msg
-                );
             }
+        } else {
+            // If tasklist fails, return the error
+            let error_msg = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("tasklist failed for {}: {}", game_exe_name, error_msg));
         }
+        
         Ok(false)
     }
 
@@ -367,107 +362,97 @@ pub fn check_game_running_internal(_game_id: &Number) -> Result<bool, String> {
 
 /// Check if a game is currently running
 #[command]
-pub fn check_game_running(game_id: Number) -> Result<bool, String> {
-    check_game_running_internal(&game_id)
+pub fn check_game_running(game_id: Number, channel_id: Number) -> Result<bool, String> {
+    check_game_running_internal(&game_id, &channel_id)
 }
 
 /// Kill game processes if running
-pub fn kill_game_processes(_game_id: &Number) -> Result<String, String> {
+pub fn kill_game_processes(_game_id: &Number, _channel_id: &Number) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        let game_exe_names = get_game_executable_names(_game_id)?;
-        let mut killed_processes = Vec::new();
+        let game_exe_name = get_game_executable_names(_game_id, _channel_id)?;
+        
+        // First check if the process is running
+        let check_output = create_hidden_command("tasklist")
+            .args([
+                "/FI",
+                &format!("IMAGENAME eq {}", game_exe_name),
+                "/FO",
+                "CSV",
+            ])
+            .output()
+            .map_err(|e| format!("Failed to execute tasklist: {}", e))?;
 
-        // Kill each possible executable
-        for game_exe_name in game_exe_names {
-            // First check if the process is running
-            let check_output = create_hidden_command("tasklist")
-                .args([
-                    "/FI",
-                    &format!("IMAGENAME eq {}", game_exe_name),
-                    "/FO",
-                    "CSV",
-                ])
-                .output()
-                .map_err(|e| format!("Failed to execute tasklist: {}", e))?;
+        if check_output.status.success() {
+            let output_str = String::from_utf8_lossy(&check_output.stdout);
+            let lines: Vec<&str> = output_str.lines().collect();
+            let mut process_found = false;
 
-            if check_output.status.success() {
-                let output_str = String::from_utf8_lossy(&check_output.stdout);
-                let lines: Vec<&str> = output_str.lines().collect();
-                let mut process_found = false;
-
-                for line in lines.iter().skip(1) {
-                    // Skip header line
-                    if line.contains(game_exe_name) && !line.trim().is_empty() {
-                        let parts: Vec<&str> = line.split(',').collect();
-                        if parts.len() >= 2 && parts[0].trim_matches('"') == game_exe_name {
-                            process_found = true;
-                            break;
-                        }
-                    }
-                }
-
-                if process_found {
-                    println!("🔪 Killing running game process: {}", game_exe_name);
-
-                    // Try to kill the process gracefully first
-                    let kill_output = create_hidden_command("taskkill")
-                        .args(["/IM", game_exe_name, "/T"])
-                        .output();
-
-                    match kill_output {
-                        Ok(output) if output.status.success() => {
-                            killed_processes.push(game_exe_name.to_string());
-                            println!("✅ Successfully killed: {}", game_exe_name);
-
-                            // Wait a moment for the process to fully terminate
-                            std::thread::sleep(Duration::from_millis(1000));
-                        }
-                        Ok(output) => {
-                            let error_msg = String::from_utf8_lossy(&output.stderr);
-                            println!(
-                                "⚠️ Failed to kill {} gracefully: {}",
-                                game_exe_name, error_msg
-                            );
-
-                            // Try force kill as fallback
-                            let force_kill_output = create_hidden_command("taskkill")
-                                .args(["/IM", game_exe_name, "/T", "/F"])
-                                .output();
-
-                            match force_kill_output {
-                                Ok(force_output) if force_output.status.success() => {
-                                    killed_processes
-                                        .push(format!("{} (force killed)", game_exe_name));
-                                    println!("✅ Force killed: {}", game_exe_name);
-                                    std::thread::sleep(Duration::from_millis(1000));
-                                }
-                                _ => {
-                                    return Err(format!(
-                                        "Failed to kill {}: {}",
-                                        game_exe_name, error_msg
-                                    ));
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            return Err(format!(
-                                "Failed to execute taskkill for {}: {}",
-                                game_exe_name, e
-                            ));
-                        }
+            for line in lines.iter().skip(1) {
+                // Skip header line
+                if line.contains(game_exe_name) && !line.trim().is_empty() {
+                    let parts: Vec<&str> = line.split(',').collect();
+                    if parts.len() >= 2 && parts[0].trim_matches('"') == game_exe_name {
+                        process_found = true;
+                        break;
                     }
                 }
             }
-        }
 
-        if killed_processes.is_empty() {
-            Ok("No game processes were running".to_string())
+            if process_found {
+                println!("🔪 Killing running game process: {}", game_exe_name);
+
+                // Try to kill the process gracefully first
+                let kill_output = create_hidden_command("taskkill")
+                    .args(["/IM", game_exe_name, "/T"])
+                    .output();
+
+                match kill_output {
+                    Ok(output) if output.status.success() => {
+                        println!("✅ Successfully killed: {}", game_exe_name);
+                        // Wait a moment for the process to fully terminate
+                        std::thread::sleep(Duration::from_millis(1000));
+                        Ok(format!("Killed game process: {}", game_exe_name))
+                    }
+                    Ok(output) => {
+                        let error_msg = String::from_utf8_lossy(&output.stderr);
+                        println!(
+                            "⚠️ Failed to kill {} gracefully: {}",
+                            game_exe_name, error_msg
+                        );
+
+                        // Try force kill as fallback
+                        let force_kill_output = create_hidden_command("taskkill")
+                            .args(["/IM", game_exe_name, "/T", "/F"])
+                            .output();
+
+                        match force_kill_output {
+                            Ok(force_output) if force_output.status.success() => {
+                                println!("✅ Force killed: {}", game_exe_name);
+                                std::thread::sleep(Duration::from_millis(1000));
+                                Ok(format!("Force killed game process: {}", game_exe_name))
+                            }
+                            _ => {
+                                Err(format!(
+                                    "Failed to kill {}: {}",
+                                    game_exe_name, error_msg
+                                ))
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        Err(format!(
+                            "Failed to execute taskkill for {}: {}",
+                            game_exe_name, e
+                        ))
+                    }
+                }
+            } else {
+                Ok("No game processes were running".to_string())
+            }
         } else {
-            Ok(format!(
-                "Killed game processes: {}",
-                killed_processes.join(", ")
-            ))
+            let error_msg = String::from_utf8_lossy(&check_output.stderr);
+            Err(format!("Failed to check process status: {}", error_msg))
         }
     }
 
@@ -479,7 +464,7 @@ pub fn kill_game_processes(_game_id: &Number) -> Result<String, String> {
 
 /// Kill a specific game
 #[command]
-pub fn kill_game(game_id: Number) -> Result<String, String> {
+pub fn kill_game(game_id: Number, channel_id: Number) -> Result<String, String> {
     // Stop the monitor first - this will handle cleanup automatically
     if let Ok(monitor_state) = GAME_MONITOR_STATE.lock() {
         if let Some(handle) = monitor_state.as_ref() {
@@ -490,14 +475,14 @@ pub fn kill_game(game_id: Number) -> Result<String, String> {
         }
     }
     
-    let result = kill_game_processes(&game_id);
+    let result = kill_game_processes(&game_id, &channel_id);
     
     result
 }
 
 /// Start monitoring a specific game - Single source of truth for game monitoring
 #[command]
-pub fn start_game_monitor(game_id: Number) -> Result<String, String> {
+pub fn start_game_monitor(game_id: Number, channel_id: Number) -> Result<String, String> {
     let mut monitor_state = GAME_MONITOR_STATE
         .lock()
         .map_err(|e| format!("Failed to lock monitor state: {}", e))?;
@@ -513,6 +498,7 @@ pub fn start_game_monitor(game_id: Number) -> Result<String, String> {
     let should_stop = Arc::new(Mutex::new(false));
     let should_stop_clone = Arc::clone(&should_stop);
     let game_id_clone = game_id.clone();
+    let channel_id_clone = channel_id.clone();
 
     let thread_handle = thread::spawn(move || {
         let mut last_game_state = false;
@@ -552,7 +538,7 @@ pub fn start_game_monitor(game_id: Number) -> Result<String, String> {
                     break;
                 }
                 
-                match check_game_running_internal(&game_id_clone) {
+                match check_game_running_internal(&game_id_clone, &channel_id_clone) {
                     Ok(is_running) => {
                         if is_running {
                             game_started = true;
@@ -604,7 +590,7 @@ pub fn start_game_monitor(game_id: Number) -> Result<String, String> {
             }
 
             // Active monitoring phase - game is running, monitor for stop
-            match check_game_running_internal(&game_id_clone) {
+            match check_game_running_internal(&game_id_clone, &channel_id_clone) {
                 Ok(is_running) => {
                     consecutive_errors = 0; // Reset error counter on success
 
@@ -956,7 +942,7 @@ pub fn stop_game_process(_process_id: u32) -> Result<String, String> {
 
 /// Stop a game by game ID
 #[command]
-pub fn stop_game(_game_id: Number) -> Result<String, String> {
+pub fn stop_game(_game_id: Number, _channel_id: Number) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         // Stop the monitor first - this will handle cleanup automatically
@@ -969,43 +955,25 @@ pub fn stop_game(_game_id: Number) -> Result<String, String> {
             }
         }
         
-        let game_exe_names = get_game_executable_names(&_game_id)?;
-        let mut terminated_processes = Vec::new();
-        let mut last_error = None;
-
-        // Try to terminate each possible executable
-        for game_exe_name in game_exe_names {
-            let output = create_hidden_command("taskkill")
-                .args(["/IM", game_exe_name, "/F"])
-                .output()
-                .map_err(|e| format!("Failed to execute taskkill: {}", e))?;
-
-            if output.status.success() {
-                terminated_processes.push(game_exe_name.to_string());
-            } else {
-                let error_msg = String::from_utf8_lossy(&output.stderr);
-                // Only store error if it's not a "process not found" error
-                if !error_msg.contains("not found") && !error_msg.contains("not running") {
-                    last_error = Some(format!(
-                        "Failed to terminate {}: {}",
-                        game_exe_name, error_msg
-                    ));
-                }
-            }
-        }
+        let game_exe_name = get_game_executable_names(&_game_id, &_channel_id)?;
         
-        // Stop the monitor after terminating the game
-        let _ = stop_game_monitor();
+        let output = create_hidden_command("taskkill")
+            .args(["/IM", &game_exe_name, "/F"])
+            .output()
+            .map_err(|e| format!("Failed to execute taskkill: {}", e))?;
 
-        if !terminated_processes.is_empty() {
-            Ok(format!(
-                "Successfully terminated: {}",
-                terminated_processes.join(", ")
-            ))
-        } else if let Some(error) = last_error {
-            Err(error)
+        if output.status.success() {
+            // Stop the monitor after terminating the game
+            let _ = stop_game_monitor();
+            Ok(format!("Successfully terminated: {}", game_exe_name))
         } else {
-            Ok("No game processes were running".to_string())
+            let error_msg = String::from_utf8_lossy(&output.stderr);
+            // Handle common error cases more gracefully
+            if error_msg.contains("not found") || error_msg.contains("not running") {
+                Ok("No game processes were running".to_string())
+            } else {
+                Err(format!("Failed to terminate {}: {}", game_exe_name, error_msg))
+            }
         }
     }
 
