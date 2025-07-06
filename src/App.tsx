@@ -33,7 +33,11 @@ function App() {
     if (runningGameId !== null) {
       return;
     }
-    setSelectedGameId(typeof gameId === 'string' ? parseInt(gameId) : gameId);
+    const numericGameId = typeof gameId === 'string' ? parseInt(gameId) : gameId;
+    setSelectedGameId(numericGameId);
+    
+    // Save the selected game ID to localStorage
+    localStorage.setItem('selectedGameId', numericGameId.toString());
   };
   const [showNews, setShowNews] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -53,8 +57,30 @@ function App() {
       gamesLoadedRef.current = true;
       setGameLoadError(null); // Clear any previous errors
       
-      // Auto-select first game if none selected
-      setSelectedGameId(prev => prev || (apiGames.length > 0 ? apiGames[0].id : null));
+      // Try to restore previously selected game from localStorage
+      const savedGameId = localStorage.getItem('selectedGameId');
+      if (savedGameId) {
+        const parsedGameId = parseInt(savedGameId);
+        // Check if the saved game ID exists in the loaded games
+        const gameExists = apiGames.some(game => game.id === parsedGameId);
+        if (gameExists) {
+          setSelectedGameId(parsedGameId);
+        } else {
+          // If saved game doesn't exist, auto-select first game and update localStorage
+          const firstGameId = apiGames.length > 0 ? apiGames[0].id : null;
+          setSelectedGameId(firstGameId);
+          if (firstGameId) {
+            localStorage.setItem('selectedGameId', firstGameId.toString());
+          }
+        }
+      } else {
+        // Auto-select first game if none selected and save to localStorage
+        const firstGameId = apiGames.length > 0 ? apiGames[0].id : null;
+        setSelectedGameId(firstGameId);
+        if (firstGameId) {
+          localStorage.setItem('selectedGameId', firstGameId.toString());
+        }
+      }
     } catch (error) {
       console.error('Failed to load games:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
