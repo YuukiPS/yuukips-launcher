@@ -671,6 +671,16 @@ pub fn start_game_monitor(app_handle: tauri::AppHandle, game_id: Number, channel
                                     eprintln!("⚠️ Failed to start Task Manager monitoring: {}", e);
                                 }
                             }
+                            
+                            // Minimize launcher window when game starts
+                            match crate::system::minimize_launcher_window(app_handle_clone.clone()) {
+                                Ok(_) => {
+                                    println!("🪟 Launcher window minimized - game {} is running", game_id_clone);
+                                }
+                                Err(e) => {
+                                    eprintln!("⚠️ Failed to minimize launcher window: {}", e);
+                                }
+                            }
                         }
                     }
                     Err(e) => {
@@ -736,6 +746,20 @@ pub fn start_game_monitor(app_handle: tauri::AppHandle, game_id: Number, channel
                             proxy_started_by_us = false;
                         }
 
+                        // Restore launcher window when game stops
+                        let app_handle_for_restore = app_handle_clone.clone();
+                        let game_id_for_restore = game_id_clone.clone();
+                        thread::spawn(move || {
+                            match crate::system::restore_launcher_window(app_handle_for_restore) {
+                                Ok(_) => {
+                                    println!("🪟 Launcher window restored - game {} has stopped", game_id_for_restore);
+                                }
+                                Err(e) => {
+                                    eprintln!("⚠️ Failed to restore launcher window: {}", e);
+                                }
+                            }
+                        });
+                        
                         // Stop monitoring after game stops
                         println!("🔧 Monitor stopped");
                         break;
@@ -778,6 +802,20 @@ pub fn start_game_monitor(app_handle: tauri::AppHandle, game_id: Number, channel
                             proxy_started_by_us = false;
                         }
 
+                        // Restore launcher window when game stops (error case)
+                        let app_handle_for_restore = app_handle_clone.clone();
+                        let game_id_for_restore = game_id_clone.clone();
+                        thread::spawn(move || {
+                            match crate::system::restore_launcher_window(app_handle_for_restore) {
+                                Ok(_) => {
+                                    println!("🪟 Launcher window restored - game {} assumed stopped due to errors", game_id_for_restore);
+                                }
+                                Err(e) => {
+                                    eprintln!("⚠️ Failed to restore launcher window: {}", e);
+                                }
+                            }
+                        });
+                        
                         // Stop monitoring after assuming game stopped
                         println!("🔧 Monitor stopped");
                         break;

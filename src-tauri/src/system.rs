@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri::Manager;
 
 // Helper function to get data directory
 pub fn get_data_dir() -> Result<PathBuf, String> {
@@ -575,4 +576,36 @@ pub fn is_task_manager_monitor_active() -> Result<bool, String> {
         .map_err(|e| format!("Failed to lock Task Manager monitor state: {}", e))?;
     
     Ok(monitor_state.is_some())
+}
+
+/// Minimize the launcher window
+#[command]
+pub fn minimize_launcher_window(app_handle: tauri::AppHandle) -> Result<String, String> {
+    match app_handle.get_webview_window("main") {
+        Some(window) => {
+            match window.minimize() {
+                Ok(_) => Ok("Launcher window minimized".to_string()),
+                Err(e) => Err(format!("Failed to minimize window: {}", e)),
+            }
+        }
+        None => Err("Main window not found".to_string()),
+    }
+}
+
+/// Restore/show the launcher window
+#[command]
+pub fn restore_launcher_window(app_handle: tauri::AppHandle) -> Result<String, String> {
+    match app_handle.get_webview_window("main") {
+        Some(window) => {
+            match window.unminimize() {
+                Ok(_) => {
+                    // Also bring window to front
+                    let _ = window.set_focus();
+                    Ok("Launcher window restored".to_string())
+                }
+                Err(e) => Err(format!("Failed to restore window: {}", e)),
+            }
+        }
+        None => Err("Main window not found".to_string()),
+    }
 }

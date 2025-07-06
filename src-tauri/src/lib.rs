@@ -42,6 +42,8 @@ pub fn run() {
             start_task_manager_monitor,
             stop_task_manager_monitor,
             is_task_manager_monitor_active,
+            minimize_launcher_window,
+            restore_launcher_window,
             // Download functions
             download::start_download,
             download::pause_download,
