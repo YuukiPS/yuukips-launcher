@@ -6,6 +6,7 @@ use tauri::Manager;
 // Import all modules
 mod download;
 mod game;
+mod hoyoplay;
 mod http;
 mod patch;
 mod proxy;
@@ -15,6 +16,7 @@ mod utils;
 // Re-export commonly used functions for easier access
 pub use download::*;
 pub use game::*;
+pub use hoyoplay::*;
 pub use http::*;
 pub use patch::*;
 pub use system::*;
@@ -93,6 +95,7 @@ pub fn run() {
             // Game functions
             get_game_folder_path,
             launch_game,
+            validate_game_directory,
             check_patch_message,
             check_game_installed,
             check_game_running,
@@ -107,7 +110,13 @@ pub fn run() {
             get_download_progress,
             clear_download_progress,
             check_patch_status,
+            fetch_patch_info_command,
             restore_game_files,
+            // HoyoPlay functions (includes moved functions from utils.rs)
+            get_game_executable_names,
+            get_game_folder,
+            get_hoyoplay_list_game,
+            get_hoyoplay_game_folder,
         ])
         .setup(|app| {
             // Check admin privileges at startup - required for patch operations and proxy functionality

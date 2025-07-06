@@ -18,7 +18,7 @@ use crate::patch::{
     restore_original_files,
 };
 use crate::proxy;
-use crate::utils::get_game_executable_names;
+use crate::hoyoplay::get_game_executable_names;
 
 use crate::utils::create_hidden_command;
 
@@ -79,7 +79,7 @@ pub fn check_patch_message(
         }
 
         // Get game executable name
-        let game_exe_name = get_game_executable_names(&_game_id, &_channel)?;
+        let game_exe_name = get_game_executable_names(_game_id.clone(), _channel.clone())?;
 
         // Construct full path to game executable
         let game_exe_path = Path::new(&game_folder_path).join(game_exe_name);
@@ -181,7 +181,7 @@ pub fn launch_game(
         }
 
         // Get game executable name
-        let game_exe_name = get_game_executable_names(&_game_id, &_channel)?;
+        let game_exe_name = get_game_executable_names(_game_id.clone(), _channel.clone())?;
 
         // Construct full path to game executable
         let game_exe_path = Path::new(&game_folder_path).join(game_exe_name);
@@ -295,6 +295,70 @@ pub fn launch_game(
     }
 }
 
+/// Validate a game directory path without launching the game
+#[command]
+pub fn validate_game_directory(
+    _game_id: Number,
+    _channel: Number,
+    game_folder_path: String,
+) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        // Validate game folder path
+        if game_folder_path.is_empty() {
+            return Err("Game folder path cannot be empty".to_string());
+        }
+
+        // Check if game folder exists
+        if !Path::new(&game_folder_path).exists() {
+            return Err(format!(
+                "Game folder not found: {}. Please verify the path.",
+                game_folder_path
+            ));
+        }
+
+        // Get game executable name
+        let game_exe_name = get_game_executable_names(_game_id.clone(), _channel.clone())?;
+
+        // Construct full path to game executable
+        let game_exe_path = Path::new(&game_folder_path).join(&game_exe_name);
+
+        // Check if game executable exists
+        if !game_exe_path.exists() {
+            return Err(format!(
+                "Game executable not found: {}. Please verify the game installation.",
+                game_exe_path.display()
+            ));
+        }
+
+        // Calculate MD5 for game executable (same as launch_game)
+        let file_contents = std::fs::read(&game_exe_path)
+            .map_err(|e| format!("Failed to read game executable for MD5 calculation: {}", e))?;
+        
+        if file_contents.is_empty() {
+            return Err(format!(
+                "Game executable appears to be corrupted (0 bytes): {}",
+                game_exe_path.display()
+            ));
+        }
+        
+        let md5 = md5::compute(&file_contents);
+        let md5_str = format!("{:x}", md5);
+
+        Ok(format!(
+            "Valid game directory: {} (executable: {}, MD5: {})",
+            game_folder_path,
+            game_exe_name,
+            md5_str
+        ))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Game validation is only supported on Windows".to_string())
+    }
+}
+
 /// Check if a game is installed
 #[command]
 pub fn check_game_installed(_game_id: Number, _version: String, _game_folder_path: String) -> bool {
@@ -319,12 +383,12 @@ pub fn check_game_installed(_game_id: Number, _version: String, _game_folder_pat
 pub fn check_game_running_internal(_game_id: &Number, _channel_id: &Number) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
-        let game_exe_name = get_game_executable_names(_game_id, _channel_id)?;
+        let game_exe_name = get_game_executable_names(_game_id.clone(), _channel_id.clone())?;
         
         let output = create_hidden_command("tasklist")
             .args([
                 "/FI",
-                &format!("IMAGENAME eq {}", game_exe_name),
+                &format!("IMAGENAME eq {}", &game_exe_name),
                 "/FO",
                 "CSV",
             ])
@@ -337,10 +401,10 @@ pub fn check_game_running_internal(_game_id: &Number, _channel_id: &Number) -> R
             let lines: Vec<&str> = output_str.lines().collect();
             for line in lines.iter().skip(1) {
                 // Skip header line
-                if line.contains(game_exe_name) && !line.trim().is_empty() {
+                if line.contains(&game_exe_name) && !line.trim().is_empty() {
                     // Additional validation: check if the line contains actual process info
                     let parts: Vec<&str> = line.split(',').collect();
-                    if parts.len() >= 2 && parts[0].trim_matches('"') == game_exe_name {
+                    if parts.len() >= 2 && parts[0].trim_matches('"') == &game_exe_name {
                         return Ok(true);
                     }
                 }
@@ -370,13 +434,13 @@ pub fn check_game_running(game_id: Number, channel_id: Number) -> Result<bool, S
 pub fn kill_game_processes(_game_id: &Number, _channel_id: &Number) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        let game_exe_name = get_game_executable_names(_game_id, _channel_id)?;
+        let game_exe_name = get_game_executable_names(_game_id.clone(), _channel_id.clone())?;
         
         // First check if the process is running
         let check_output = create_hidden_command("tasklist")
             .args([
                 "/FI",
-                &format!("IMAGENAME eq {}", game_exe_name),
+                &format!("IMAGENAME eq {}", &game_exe_name),
                 "/FO",
                 "CSV",
             ])
@@ -390,9 +454,9 @@ pub fn kill_game_processes(_game_id: &Number, _channel_id: &Number) -> Result<St
 
             for line in lines.iter().skip(1) {
                 // Skip header line
-                if line.contains(game_exe_name) && !line.trim().is_empty() {
+                if line.contains(&game_exe_name) && !line.trim().is_empty() {
                     let parts: Vec<&str> = line.split(',').collect();
-                    if parts.len() >= 2 && parts[0].trim_matches('"') == game_exe_name {
+                    if parts.len() >= 2 && parts[0].trim_matches('"') == &game_exe_name {
                         process_found = true;
                         break;
                     }
@@ -404,7 +468,7 @@ pub fn kill_game_processes(_game_id: &Number, _channel_id: &Number) -> Result<St
 
                 // Try to kill the process gracefully first
                 let kill_output = create_hidden_command("taskkill")
-                    .args(["/IM", game_exe_name, "/T"])
+                    .args(["/IM", &game_exe_name, "/T"])
                     .output();
 
                 match kill_output {
@@ -423,7 +487,7 @@ pub fn kill_game_processes(_game_id: &Number, _channel_id: &Number) -> Result<St
 
                         // Try force kill as fallback
                         let force_kill_output = create_hidden_command("taskkill")
-                            .args(["/IM", game_exe_name, "/T", "/F"])
+                            .args(["/IM", &game_exe_name, "/T", "/F"])
                             .output();
 
                         match force_kill_output {
@@ -955,7 +1019,7 @@ pub fn stop_game(_game_id: Number, _channel_id: Number) -> Result<String, String
             }
         }
         
-        let game_exe_name = get_game_executable_names(&_game_id, &_channel_id)?;
+        let game_exe_name = get_game_executable_names(_game_id.clone(), _channel_id.clone())?;
         
         let output = create_hidden_command("taskkill")
             .args(["/IM", &game_exe_name, "/F"])

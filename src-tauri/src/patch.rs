@@ -85,6 +85,26 @@ pub fn check_patch_status(
     })
 }
 
+/// Fetch patch information for a game (frontend-accessible version)
+#[command]
+pub fn fetch_patch_info_command(
+    game_id: Number,
+    version: String,
+    channel: Number,
+    md5: String,
+) -> Result<String, String> {
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| format!("Failed to create async runtime: {}", e))?;
+    
+    rt.block_on(async {
+        fetch_patch_info(game_id, version, channel, md5).await
+            .map(|patch_response| {
+                serde_json::to_string(&patch_response)
+                    .unwrap_or_else(|e| format!("Failed to serialize patch response: {}", e))
+            })
+    })
+}
+
 /// Restore game files to original state
 #[command]
 pub fn restore_game_files(

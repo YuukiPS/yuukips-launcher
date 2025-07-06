@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, Folder, RotateCcw, HardDrive, Calendar, Clock, Check, Trash2, Plus, RefreshCw, Trash } from 'lucide-react';
+import { X, Folder, RotateCcw, HardDrive, Calendar, Clock, Check, Trash2, Plus, RefreshCw, Trash, Search } from 'lucide-react';
 import { Game } from '../types';
 import { GameApiService } from '../services/gameApi';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
+import { PatchErrorModal, PatchErrorInfo } from './PatchErrorModal';
 
 interface GameSettingsModalProps {
   game: Game;
@@ -37,6 +38,9 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const [newDomainInput, setNewDomainInput] = useState('');
   const [proxyPort, setProxyPort] = useState<number>(8080);
   const [customPortInput, setCustomPortInput] = useState<string>('');
+  const [isValidating, setIsValidating] = useState(false);
+  const [patchErrorModalOpen, setPatchErrorModalOpen] = useState(false);
+  const [patchErrorInfo, setPatchErrorInfo] = useState<PatchErrorInfo | null>(null);
 
   // Get available versions dynamically from game engine data
   const availableVersions = GameApiService.getAvailableVersionsForPlatform(game, 1);
@@ -415,6 +419,58 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
     }
   };
 
+  // Helper function to validate game directory with patch status checking
+  const validateGameDirectory = async (path: string): Promise<boolean> => {
+    setIsValidating(true);
+    try {
+      // First validate the basic directory structure and get MD5
+      const validationResult = await invoke('validate_game_directory', {
+        gameId: game.id,
+        channel: selectedChannel,
+        gameFolderPath: path
+      }) as string;
+      
+      // Extract MD5 from validation result
+      const md5Match = validationResult.match(/MD5: ([a-fA-F0-9]{32})/);
+      if (!md5Match) {
+        throw new Error('Could not extract MD5 hash from validation result');
+      }
+      const md5 = md5Match[1];
+      
+      // Then fetch patch info (this can take a long time)
+      showNotification('Validating directory and checking patch status...', 'success');
+      await invoke('fetch_patch_info_command', {
+        gameId: game.id,
+        version: selectedVersion,
+        channel: selectedChannel,
+        md5: md5
+      });
+      
+      return true;
+    } catch (error) {
+      console.error('Directory validation failed:', error);
+      
+      // Check if this is a patch error with detailed info
+      const errorString = String(error);
+      if (errorString.includes('PATCH_ERROR_404:')) {
+        try {
+          const errorJson = errorString.split('PATCH_ERROR_404:')[1];
+          const errorInfo: PatchErrorInfo = JSON.parse(errorJson);
+          setPatchErrorInfo(errorInfo);
+          setPatchErrorModalOpen(true);
+          return false;
+        } catch (parseError) {
+          console.error('Failed to parse patch error info:', parseError);
+        }
+      }
+      
+      showNotification(`Invalid game directory: ${error}`, 'error');
+      return false;
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
   const handleRelocate = async () => {
     try {
       const selectedPath = await open({
@@ -425,6 +481,12 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
       });
 
       if (selectedPath && typeof selectedPath === 'string') {
+        // Validate the selected directory before setting it
+        const isValid = await validateGameDirectory(selectedPath);
+        if (!isValid) {
+          return; // Validation failed, error already shown
+        }
+
         const updatedDirectories = {
           ...versionDirectories,
           [selectedVersion]: {
@@ -438,6 +500,73 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
     } catch (error) {
       console.error('Failed to open directory dialog:', error);
       showNotification('Failed to open directory selection dialog', 'error');
+    }
+  };
+
+  const handleAutoDetect = async () => {
+    try {
+      // Only support game_id 1 and 2 for auto detection
+      if (game.id !== 1 && game.id !== 2) {
+        showNotification('Auto detect is only supported for Genshin Impact and Honkai: Star Rail', 'error');
+        return;
+      }
+
+      // Get list of installed games from HoyoPlay
+      const installedGames = await invoke('get_hoyoplay_list_game') as Array<[string, string]>;
+      
+      if (!installedGames || installedGames.length === 0) {
+        showNotification('No games found in HoyoPlay registry. Please install the game through HoyoPlay first.', 'error');
+        return;
+      }
+
+      // Filter games based on current game and channel
+      const gameNameCodes = {
+        1: { 1: 'hk4e_global', 2: 'hk4e_cn' }, // Genshin Impact
+        2: { 1: 'hkrpg_global', 2: 'hkrpg_cn' } // Honkai: Star Rail
+      };
+
+      const targetNameCode = gameNameCodes[game.id as keyof typeof gameNameCodes]?.[selectedChannel as keyof typeof gameNameCodes[1]];
+      
+      if (!targetNameCode) {
+        showNotification('Unsupported game or channel for auto detection', 'error');
+        return;
+      }
+
+      // Find matching game installation
+      const matchingGame = installedGames.find(([nameCode]) => nameCode === targetNameCode);
+      
+      if (!matchingGame) {
+        showNotification(`No installation found for ${selectedVersion} (Channel ${getChannelName(selectedChannel)}) in HoyoPlay registry`, 'error');
+        return;
+      }
+
+      const [, installPath] = matchingGame;
+      
+      // Show confirmation popup with detected path
+      const userConfirmed = window.confirm(
+        `Auto-detected game installation:\n\nPath: ${installPath}\n\nDo you want to set this as the game directory for ${selectedVersion} (Channel ${getChannelName(selectedChannel)})?`
+      );
+
+      if (userConfirmed) {
+        // Validate the auto-detected directory before setting it
+        const isValid = await validateGameDirectory(installPath);
+        if (!isValid) {
+          return; // Validation failed, error already shown
+        }
+
+        const updatedDirectories = {
+          ...versionDirectories,
+          [selectedVersion]: {
+            ...versionDirectories[selectedVersion],
+            [selectedChannel]: installPath
+          }
+        };
+        saveDirectories(updatedDirectories);
+        showNotification(`Auto-detected directory for ${selectedVersion} (Channel ${getChannelName(selectedChannel)}) set successfully!`);
+      }
+    } catch (error) {
+      console.error('Failed to auto-detect game directory:', error);
+      showNotification('Failed to auto-detect game directory', 'error');
     }
   };
 
@@ -594,13 +723,13 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                 </div>
 
                 {/* Version Selection */}
-                <div className={`bg-gray-800/50 rounded-lg p-4 ${isGameRunning ? 'opacity-60' : ''}`}>
+                <div className={`bg-gray-800/50 rounded-lg p-4 ${isGameRunning || isValidating ? 'opacity-60' : ''}`}>
                   <h4 className="text-white font-semibold mb-3">Game Version</h4>
                   <div className="space-y-2">
                     {availableVersions.map((version) => (
                       <label
                         key={version}
-                        className={`flex items-center space-x-3 p-3 bg-gray-700/50 rounded-lg transition-colors ${isGameRunning
+                        className={`flex items-center space-x-3 p-3 bg-gray-700/50 rounded-lg transition-colors ${isGameRunning || isValidating
                             ? 'cursor-not-allowed'
                             : 'hover:bg-gray-700/70 cursor-pointer'
                           }`}
@@ -610,8 +739,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                           name="version"
                           value={version}
                           checked={selectedVersion === version}
-                          onChange={() => !isGameRunning && handleVersionChange(version)}
-                          disabled={isGameRunning}
+                          onChange={() => !(isGameRunning || isValidating) && handleVersionChange(version)}
+                          disabled={isGameRunning || isValidating}
                           className="text-purple-600 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
                         />
                         <span className="text-white font-medium">{version}</span>
@@ -635,13 +764,13 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
 
                 {/* Channel Selection */}
                 {selectedVersion && availableChannels.length > 0 && (
-                  <div className={`bg-gray-800/50 rounded-lg p-4 ${isGameRunning ? 'opacity-60' : ''}`}>
+                  <div className={`bg-gray-800/50 rounded-lg p-4 ${isGameRunning || isValidating ? 'opacity-60' : ''}`}>
                     <h4 className="text-white font-semibold mb-3">Select Channel</h4>
                     <div className="space-y-2">
                       {availableChannels.map((channel) => (
                         <label
                           key={channel}
-                          className={`flex items-center space-x-3 p-3 bg-gray-700/50 rounded-lg transition-colors ${isGameRunning
+                          className={`flex items-center space-x-3 p-3 bg-gray-700/50 rounded-lg transition-colors ${isGameRunning || isValidating
                               ? 'cursor-not-allowed'
                               : 'hover:bg-gray-700/70 cursor-pointer'
                             }`}
@@ -651,8 +780,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                             name="channel"
                             value={channel}
                             checked={selectedChannel === channel}
-                            onChange={() => !isGameRunning && setSelectedChannel(channel)}
-                            disabled={isGameRunning}
+                            onChange={() => !(isGameRunning || isValidating) && setSelectedChannel(channel)}
+                            disabled={isGameRunning || isValidating}
                             className="text-purple-600 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
                           />
                           <span className="text-white font-medium">{getChannelName(channel)}</span>
@@ -676,13 +805,13 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                 )}
 
                 {/* Game Directory */}
-                <div className={`bg-gray-800/50 rounded-lg p-4 ${isGameRunning ? 'opacity-60' : ''}`}>
+                <div className={`bg-gray-800/50 rounded-lg p-4 ${isGameRunning || isValidating ? 'opacity-60' : ''}`}>
                   <div className="flex items-center justify-between mb-3">
                     <h4 className="text-white font-semibold">Game Directory</h4>
                     <button
                       onClick={handleOpenDirectory}
-                      disabled={isGameRunning}
-                      className={`flex items-center space-x-2 px-3 py-1 rounded transition-colors ${isGameRunning
+                      disabled={isGameRunning || isValidating}
+                      className={`flex items-center space-x-2 px-3 py-1 rounded transition-colors ${isGameRunning || isValidating
                           ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
                           : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                         }`}
@@ -707,21 +836,54 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                     <h5 className="text-white font-medium mb-2">Relocate Game</h5>
                     <p className="text-gray-400 text-sm mb-3">
                       {getCurrentDirectory()
-                        ? `Update the directory path for ${selectedVersion}. Select the folder where "${game.title}.exe" is located.`
-                        : `Set the directory path for ${selectedVersion}. Select the folder where "${game.title}.exe" is located.`
+                        ? `Update the directory path for ${selectedVersion} (${getChannelName(selectedChannel)}). Select the folder where "${game.title}.exe" is located.`
+                        : `Set the directory path for ${selectedVersion} (${getChannelName(selectedChannel)}). Select the folder where "${game.title}.exe" is located.`
                       }
                     </p>
-                    <button
-                      onClick={handleRelocate}
-                      disabled={isGameRunning}
-                      className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${isGameRunning
-                          ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
-                          : 'bg-purple-600 text-white hover:bg-purple-700'
+                    <div className="flex space-x-3">
+                      <button
+                        onClick={handleAutoDetect}
+                        disabled={isGameRunning || isValidating || (game.id !== 1 && game.id !== 2)}
+                        className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
+                          isGameRunning || isValidating || (game.id !== 1 && game.id !== 2)
+                            ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
+                            : 'bg-blue-600 text-white hover:bg-blue-700'
                         }`}
-                    >
-                      <RotateCcw className="w-4 h-4" />
-                      <span>{getCurrentDirectory() ? 'Relocate' : 'Set Directory'}</span>
-                    </button>
+                        title={game.id !== 1 && game.id !== 2 ? 'Auto detect is only supported for Genshin Impact and Honkai: Star Rail' : ''}
+                      >
+                        {isValidating ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                            <span>Validating...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Search className="w-4 h-4" />
+                            <span>Auto Detect</span>
+                          </>
+                        )}
+                      </button>
+                      <button
+                        onClick={handleRelocate}
+                        disabled={isGameRunning || isValidating}
+                        className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${isGameRunning || isValidating
+                            ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
+                            : 'bg-purple-600 text-white hover:bg-purple-700'
+                          }`}
+                      >
+                        {isValidating ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                            <span>Validating...</span>
+                          </>
+                        ) : (
+                          <>
+                            <RotateCcw className="w-4 h-4" />
+                            <span>{getCurrentDirectory() ? 'Relocate' : 'Set Directory'}</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1160,6 +1322,17 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
           </div>
         </div>
       </div>
+      
+      {/* Patch Error Modal */}
+      {patchErrorModalOpen && patchErrorInfo && (
+        <PatchErrorModal
+          isOpen={patchErrorModalOpen}
+          onClose={() => {
+            setPatchErrorModalOpen(false);
+            setPatchErrorInfo(null);
+          } }
+          errorInfo={patchErrorInfo} gameTitle={''}        />
+      )}
     </div>
   );
 };

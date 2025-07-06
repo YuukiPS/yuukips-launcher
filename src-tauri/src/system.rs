@@ -389,12 +389,18 @@ pub fn clear_launcher_data() -> Result<String, String> {
     }
     
     // Clear Tauri app data directory (in AppData/Local/com.yuukips.launcher)
+    // Preserve EBWebView folder as it contains browser data
     let app_data_dir = get_data_dir()?.join("com.yuukips.launcher");
     if app_data_dir.exists() {
-        match fs::remove_dir_all(&app_data_dir) {
-            Ok(_) => {
-                cleared_items.push("Tauri app data".to_string());
-                println!("🧹 Cleared Tauri app data: {}", app_data_dir.display());
+        // Folders to preserve (browser data)
+        let preserve_folders = ["EBWebView"];
+        
+        match clear_directory_selective(&app_data_dir, &preserve_folders) {
+            Ok(cleared_count) => {
+                if cleared_count > 0 {
+                    cleared_items.push(format!("Tauri app data ({} items)", cleared_count));
+                    println!("🧹 Cleared {} items from Tauri app data directory: {}", cleared_count, app_data_dir.display());
+                }
             }
             Err(e) => {
                 eprintln!("⚠️ Failed to clear Tauri app data: {}", e);

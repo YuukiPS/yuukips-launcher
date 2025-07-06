@@ -53,6 +53,11 @@ export interface TauriCommands {
     channel: number,
     gameFolderPath: string
   ): Promise<string>;
+  validate_game_directory(
+    gameId: number,
+    channel: number,
+    gameFolderPath: string
+  ): Promise<string>;
   get_game_folder_path(gameId: number, version: string): Promise<string>;
   check_game_installed(gameId: number, version: string, gameFolderPath: string): Promise<boolean>;
   open_directory(path: string): Promise<string>;
@@ -60,6 +65,12 @@ export interface TauriCommands {
   stop_game_monitor(): Promise<string>;
   is_game_monitor_active(): Promise<boolean>;
   force_stop_game_monitor(): Promise<string>;
+  fetch_patch_info_command(
+    gameId: number,
+    version: string,
+    channel: number,
+    md5: string
+  ): Promise<string>;
 }
 
 export {};

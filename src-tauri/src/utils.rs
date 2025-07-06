@@ -43,37 +43,14 @@ pub fn create_parent_directories(file_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Get possible executable names for a game ID and channel ID
-pub fn get_game_executable_names(game_id: &Number, channel_id: &Number) -> Result<&'static str, String> {
-    match (game_id.as_u64(), channel_id.as_u64()) {
-        (Some(1), Some(1)) => Ok("GenshinImpact.exe"),
-        (Some(1), Some(2)) => Ok("YuanShen.exe"),
-        (Some(2), Some(1)) => Ok("StarRail.exe"),
-        (Some(2), Some(2)) => Ok("StarRail.exe"),
-        (Some(3), Some(1)) => Ok("BlueArchive.exe"),
-        _ => Err(format!("Unsupported game ID: {} with channel ID: {}", game_id, channel_id)),
-    }
-}
-
-/// Get game data folder name for a game ID and channel ID
-pub fn get_game_folder(game_id: &Number, channel_id: &Number) -> Result<&'static str, String> {
-    match (game_id.as_u64(), channel_id.as_u64()) {
-        (Some(1), Some(1)) => Ok("GenshinImpact_Data"),
-        (Some(1), Some(2)) => Ok("YuanShen_Data"),
-        (Some(2), Some(1)) => Ok("StarRail_Data"),
-        (Some(2), Some(2)) => Ok("StarRail_Data"),
-        (Some(3), Some(1)) => Ok("BlueArchive_Data"),
-        _ => Err(format!("Unsupported game ID: {} with channel ID: {}", game_id, channel_id)),
-    }
-}
+// Functions moved to hoyoplay.rs for better organization
 
 /// Get game name from game ID
 pub fn get_game_name(game_id: &Number) -> Result<&'static str, String> {
     match game_id.as_u64() {
         Some(1) => Ok("Genshin Impact"),
         Some(2) => Ok("Honkai: Star Rail"),
-        Some(3) => Ok("Zenless Zone Zero"),
-        Some(4) => Ok("Wuthering Waves"),
+        Some(3) => Ok("Blue Archive"),
         _ => Err(format!("Unsupported game ID: {}", game_id)),
     }
 }
