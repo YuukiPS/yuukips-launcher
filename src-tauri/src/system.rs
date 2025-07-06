@@ -7,6 +7,11 @@ use tauri::command;
 
 use crate::utils::create_hidden_command;
 use crate::proxy::generate_ca_files;
+use crate::game::is_any_game_running;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 // Helper function to get data directory
 pub fn get_data_dir() -> Result<PathBuf, String> {
@@ -429,4 +434,145 @@ pub fn clear_launcher_data() -> Result<String, String> {
     } else {
         Ok(format!("Successfully cleared: {}", cleared_items.join(", ")))
     }
+}
+
+// Global state for Task Manager monitoring
+static TASK_MANAGER_MONITOR_STATE: Mutex<Option<TaskManagerMonitorHandle>> = Mutex::new(None);
+
+struct TaskManagerMonitorHandle {
+    should_stop: Arc<Mutex<bool>>,
+    thread_handle: Option<thread::JoinHandle<()>>,
+}
+
+/// Check if Task Manager is currently running
+#[cfg(target_os = "windows")]
+fn is_task_manager_running() -> Result<bool, String> {
+    let output = create_hidden_command("tasklist")
+        .args(["/FI", "IMAGENAME eq Taskmgr.exe"])
+        .output()
+        .map_err(|e| format!("Failed to check Task Manager process: {}", e))?;
+
+    if output.status.success() {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        Ok(output_str.contains("Taskmgr.exe"))
+    } else {
+        Err("Failed to execute tasklist command".to_string())
+    }
+}
+
+/// Start monitoring for Task Manager while a game is running (internal version)
+pub fn start_task_manager_monitor_internal(app_handle: tauri::AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut monitor_state = TASK_MANAGER_MONITOR_STATE
+            .lock()
+            .map_err(|e| format!("Failed to lock Task Manager monitor state: {}", e))?;
+
+        // Stop existing monitor if running
+        if let Some(mut handle) = monitor_state.take() {
+            *handle.should_stop.lock().unwrap() = true;
+            if let Some(thread_handle) = handle.thread_handle.take() {
+                let _ = thread_handle.join();
+            }
+        }
+
+        let should_stop = Arc::new(Mutex::new(false));
+        let should_stop_clone = Arc::clone(&should_stop);
+
+        let thread_handle = thread::spawn(move || {
+            let mut last_task_manager_state = false;
+            let mut warning_shown = false;
+
+            loop {
+                // Check if we should stop monitoring
+                if *should_stop_clone.lock().unwrap() {
+                    break;
+                }
+
+                // Check if any game is running
+                let game_running = match is_any_game_running() {
+                    Ok(running) => running,
+                    Err(_) => false,
+                };
+
+                if !game_running {
+                    // No game running, stop monitoring
+                    break;
+                }
+
+                // Check Task Manager status
+                let task_manager_running = match is_task_manager_running() {
+                    Ok(running) => running,
+                    Err(_) => false,
+                };
+
+                // If Task Manager just started running
+                if task_manager_running && !last_task_manager_state && !warning_shown {
+                     // Show warning dialog on client side
+                     let _ = app_handle.dialog()
+                         .message("Task Manager detected while game is running!\n\nWarning: Closing game through Task Manager may cause issues:\n• Proxy settings may not be deactivated automatically\n• Remaining patch files may not be deleted\n• Game may not run normally on official servers\n\nPlease use the launcher to properly close the game instead.")
+                         .title("Task Manager Warning")
+                         .kind(MessageDialogKind::Warning)
+                         .show(|_| {});
+                     warning_shown = true;
+                 }
+
+                // Reset warning flag when Task Manager is closed
+                if !task_manager_running {
+                    warning_shown = false;
+                }
+
+                last_task_manager_state = task_manager_running;
+
+                // Sleep for a short interval before checking again
+                thread::sleep(Duration::from_millis(1000));
+            }
+        });
+
+        *monitor_state = Some(TaskManagerMonitorHandle {
+            should_stop,
+            thread_handle: Some(thread_handle),
+        });
+
+        Ok("Task Manager monitoring started".to_string())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok("Task Manager monitoring is only supported on Windows".to_string())
+    }
+}
+
+/// Start monitoring for Task Manager while a game is running (command version)
+#[command]
+pub fn start_task_manager_monitor(app_handle: tauri::AppHandle) -> Result<String, String> {
+    start_task_manager_monitor_internal(app_handle)
+}
+
+/// Stop Task Manager monitoring
+#[command]
+pub fn stop_task_manager_monitor() -> Result<String, String> {
+    let mut monitor_state = TASK_MANAGER_MONITOR_STATE
+        .lock()
+        .map_err(|e| format!("Failed to lock Task Manager monitor state: {}", e))?;
+
+    if let Some(mut handle) = monitor_state.take() {
+        *handle.should_stop.lock().unwrap() = true;
+        if let Some(thread_handle) = handle.thread_handle.take() {
+            let _ = thread_handle.join();
+        }
+        Ok("Task Manager monitoring stopped".to_string())
+    } else {
+        Ok("Task Manager monitoring was not active".to_string())
+    }
+}
+
+/// Check if Task Manager monitoring is active
+#[command]
+pub fn is_task_manager_monitor_active() -> Result<bool, String> {
+    let monitor_state = TASK_MANAGER_MONITOR_STATE
+        .lock()
+        .map_err(|e| format!("Failed to lock Task Manager monitor state: {}", e))?;
+    
+    Ok(monitor_state.is_some())
 }

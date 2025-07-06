@@ -22,6 +22,8 @@ pub use patch::*;
 pub use system::*;
 pub use utils::*;
 
+// Task manager monitoring functions are already available through pub use system::*
+
 /// Initialize and run the Tauri application
 pub fn run() {
     tauri::Builder::default()
@@ -37,6 +39,9 @@ pub fn run() {
             get_yuukips_data_path,
             get_app_data_path,
             get_temp_files_path,
+            start_task_manager_monitor,
+            stop_task_manager_monitor,
+            is_task_manager_monitor_active,
             // Download functions
             download::start_download,
             download::pause_download,
@@ -106,6 +111,7 @@ pub fn run() {
             force_stop_game_monitor,
             stop_game_process,
             stop_game,
+            is_any_game_running,
             // Patch functions
             get_download_progress,
             clear_download_progress,
@@ -152,6 +158,37 @@ pub fn run() {
             main_window.show().unwrap();
             
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Check if any game is running before allowing close
+                match is_any_game_running() {
+                    Ok(true) => {
+                        // Game is running, prevent close and show warning
+                        api.prevent_close();
+                        
+                        // Show warning dialog
+                        use tauri_plugin_dialog::DialogExt;
+                        let dialog = window.app_handle().dialog()
+                            .message("Cannot close launcher while a game is running.\n\nClosing the launcher while playing will cause:\n• Proxy settings not to be turned off automatically\n• Remaining patch files not to be deleted\n• Game may not run normally on official servers\n\nPlease close the game first, then close the launcher.")
+                            .title("Game Running - Cannot Close Launcher")
+                            .buttons(tauri_plugin_dialog::MessageDialogButtons::Ok);
+                        
+                        // Show dialog in a separate thread to avoid blocking
+                          tauri::async_runtime::spawn(async move {
+                              let _ = dialog.show(|_| {});
+                          });
+                    }
+                    Ok(false) => {
+                        // No game running, allow close
+                        // Cleanup will be handled by the normal shutdown process
+                    }
+                    Err(e) => {
+                        // Error checking game status, log it but allow close
+                        eprintln!("⚠️ Error checking game status during close: {}", e);
+                    }
+                }
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

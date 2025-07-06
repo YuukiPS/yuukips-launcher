@@ -21,6 +21,7 @@ use crate::proxy;
 use crate::hoyoplay::{get_game_executable_names, remove_all_hoyo_pass};
 
 use crate::utils::create_hidden_command;
+use crate::system::start_task_manager_monitor_internal;
 
 // Global game monitoring state
 static GAME_MONITOR_STATE: once_cell::sync::Lazy<Arc<Mutex<Option<GameMonitorHandle>>>> =
@@ -157,6 +158,7 @@ pub fn get_game_folder_path(game_id: Number, version: String) -> Result<String, 
 /// Launch a game with the specified parameters
 #[command]
 pub fn launch_game(
+    app_handle: tauri::AppHandle,
     _game_id: Number,
     _version: String,
     _channel: Number,
@@ -237,7 +239,7 @@ pub fn launch_game(
         };
 
         // Start game monitoring AFTER patching is complete
-        if let Err(e) = start_game_monitor(_game_id.clone(), _channel.clone()) {
+        if let Err(e) = start_game_monitor(app_handle, _game_id.clone(), _channel.clone()) {
             return Err(format!("Failed to start game monitoring: {}", e));
         }
 
@@ -563,7 +565,7 @@ pub fn kill_game(game_id: Number, channel_id: Number) -> Result<String, String> 
 
 /// Start monitoring a specific game - Single source of truth for game monitoring
 #[command]
-pub fn start_game_monitor(game_id: Number, channel_id: Number) -> Result<String, String> {
+pub fn start_game_monitor(app_handle: tauri::AppHandle, game_id: Number, channel_id: Number) -> Result<String, String> {
     let mut monitor_state = GAME_MONITOR_STATE
         .lock()
         .map_err(|e| format!("Failed to lock monitor state: {}", e))?;
@@ -580,6 +582,7 @@ pub fn start_game_monitor(game_id: Number, channel_id: Number) -> Result<String,
     let should_stop_clone = Arc::clone(&should_stop);
     let game_id_clone = game_id.clone();
     let channel_id_clone = channel_id.clone();
+    let app_handle_clone = app_handle.clone();
 
     let thread_handle = thread::spawn(move || {
         let mut last_game_state = false;
@@ -656,6 +659,16 @@ pub fn start_game_monitor(game_id: Number, channel_id: Number) -> Result<String,
                                             eprintln!("⚠️ Failed to start proxy when game started: {}", e);
                                         }
                                     }
+                                }
+                            }
+                            
+                            // Start Task Manager monitoring when game starts
+                            match start_task_manager_monitor_internal(app_handle_clone.clone()) {
+                                Ok(_) => {
+                                    println!("🔍 Task Manager monitoring started for game {}", game_id_clone);
+                                }
+                                Err(e) => {
+                                    eprintln!("⚠️ Failed to start Task Manager monitoring: {}", e);
                                 }
                             }
                         }
@@ -927,6 +940,24 @@ pub fn is_game_monitor_active() -> Result<bool, String> {
         .lock()
         .map_err(|e| format!("Failed to lock monitor state: {}", e))?;
     Ok(monitor_state.is_some())
+}
+
+/// Check if any game is currently running (used for launcher close prevention)
+#[command]
+pub fn is_any_game_running() -> Result<bool, String> {
+    let monitor_state = GAME_MONITOR_STATE
+        .lock()
+        .map_err(|e| format!("Failed to lock monitor state: {}", e))?;
+    
+    if let Some(handle) = monitor_state.as_ref() {
+        // If monitor is active, check if the game is actually running
+        match check_game_running_internal(&handle.game_id, &handle.channel) {
+            Ok(is_running) => Ok(is_running),
+            Err(_) => Ok(false), // If we can't check, assume not running
+        }
+    } else {
+        Ok(false) // No monitor active means no game running
+    }
 }
 
 /// Force stop game monitor - ensures clean shutdown
