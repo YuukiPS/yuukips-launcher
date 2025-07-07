@@ -1,7 +1,6 @@
 //! Game management module
 //! Handles game launching, monitoring, and process management
 
-use scopeguard;
 use serde::{Deserialize, Serialize};
 use serde_json::Number;
 use std::path::Path;
@@ -19,7 +18,6 @@ use crate::patch::{
 };
 use crate::proxy;
 use crate::hoyoplay::{get_game_executable_names, remove_all_hoyo_pass};
-
 use crate::utils::create_hidden_command;
 use crate::system::start_task_manager_monitor_internal;
 
@@ -59,12 +57,12 @@ pub fn check_patch_message(
     _game_id: Number,
     _version: String,
     _channel: Number,
-    game_folder_path: String,
+    _game_folder_path: String,
 ) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         // Validate game folder path
-        if game_folder_path.is_empty() {
+        if _game_folder_path.is_empty() {
             return Err(format!(
                 "Game folder path not set for {} version {}. Please configure it in game settings.",
                 _game_id, _version
@@ -72,10 +70,10 @@ pub fn check_patch_message(
         }
 
         // Check if game folder exists
-        if !Path::new(&game_folder_path).exists() {
+        if !Path::new(&_game_folder_path).exists() {
             return Err(format!(
                 "Game folder not found: {}. Please verify the path in game settings.",
-                game_folder_path
+                _game_folder_path
             ));
         }
 
@@ -83,7 +81,7 @@ pub fn check_patch_message(
         let game_exe_name = get_game_executable_names(_game_id.clone(), _channel.clone())?;
 
         // Construct full path to game executable
-        let game_exe_path = Path::new(&game_folder_path).join(game_exe_name);
+        let game_exe_path = Path::new(&_game_folder_path).join(game_exe_name);
 
         // Check if game executable exists
         if !game_exe_path.exists() {
@@ -158,17 +156,17 @@ pub fn get_game_folder_path(game_id: Number, version: String) -> Result<String, 
 /// Launch a game with the specified parameters
 #[command]
 pub fn launch_game(
-    app_handle: tauri::AppHandle,
+    _app_handle: tauri::AppHandle,
     _game_id: Number,
     _version: String,
     _channel: Number,
-    game_folder_path: String,
-    delete_hoyo_pass: Option<bool>,
+    _game_folder_path: String,
+    _delete_hoyo_pass: Option<bool>,
 ) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         // Validate game folder path
-        if game_folder_path.is_empty() {
+        if _game_folder_path.is_empty() {
             return Err(format!(
                 "Game folder path not set for {} version {}. Please configure it in game settings.",
                 _game_id, _version
@@ -176,10 +174,10 @@ pub fn launch_game(
         }
 
         // Check if game folder exists
-        if !Path::new(&game_folder_path).exists() {
+        if !Path::new(&_game_folder_path).exists() {
             return Err(format!(
                 "Game folder not found: {}. Please verify the path in game settings.",
-                game_folder_path
+                _game_folder_path
             ));
         }
 
@@ -187,7 +185,7 @@ pub fn launch_game(
         let game_exe_name = get_game_executable_names(_game_id.clone(), _channel.clone())?;
 
         // Construct full path to game executable
-        let game_exe_path = Path::new(&game_folder_path).join(game_exe_name);
+        let game_exe_path = Path::new(&_game_folder_path).join(game_exe_name);
 
         // Check if game executable exists
         if !game_exe_path.exists() {
@@ -211,7 +209,7 @@ pub fn launch_game(
             _version.clone(),
             _channel.clone(),
             md5_str.clone(),
-            game_folder_path.clone(),
+            _game_folder_path.clone(),
         ) {
             Ok((patch_message, response, files)) => {
                 if !patch_message.is_empty() {
@@ -239,7 +237,7 @@ pub fn launch_game(
         };
 
         // Start game monitoring AFTER patching is complete
-        if let Err(e) = start_game_monitor(app_handle, _game_id.clone(), _channel.clone()) {
+        if let Err(e) = start_game_monitor(_app_handle, _game_id.clone(), _channel.clone()) {
             return Err(format!("Failed to start game monitoring: {}", e));
         }
 
@@ -249,7 +247,7 @@ pub fn launch_game(
                 handle.version = _version.clone();
                 handle.channel = _channel.clone();
                 handle.md5 = md5_str.clone();
-                handle.game_folder_path = game_folder_path.clone();
+                handle.game_folder_path = _game_folder_path.clone();
 
                 // Update patched files list
                 if let Ok(mut files) = handle.patched_files.lock() {
@@ -264,7 +262,7 @@ pub fn launch_game(
         }
 
         // Remove HoyoPass entries if requested (default: true)
-        let should_delete_hoyo_pass = delete_hoyo_pass.unwrap_or(true);
+        let should_delete_hoyo_pass = _delete_hoyo_pass.unwrap_or(true);
         if should_delete_hoyo_pass {
             match remove_all_hoyo_pass() {
                 Ok(deleted_entries) => {
@@ -281,7 +279,7 @@ pub fn launch_game(
 
         // Launch the game executable
         match Command::new(&game_exe_path)
-            .current_dir(&game_folder_path)
+            .current_dir(&_game_folder_path)
             .spawn()
         {
             Ok(child) => {
@@ -319,20 +317,20 @@ pub fn launch_game(
 pub fn validate_game_directory(
     _game_id: Number,
     _channel: Number,
-    game_folder_path: String,
+    _game_folder_path: String,
 ) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         // Validate game folder path
-        if game_folder_path.is_empty() {
+        if _game_folder_path.is_empty() {
             return Err("Game folder path cannot be empty".to_string());
         }
 
         // Check if game folder exists
-        if !Path::new(&game_folder_path).exists() {
+        if !Path::new(&_game_folder_path).exists() {
             return Err(format!(
                 "Game folder not found: {}. Please verify the path.",
-                game_folder_path
+                _game_folder_path
             ));
         }
 
@@ -340,7 +338,7 @@ pub fn validate_game_directory(
         let game_exe_name = get_game_executable_names(_game_id.clone(), _channel.clone())?;
 
         // Construct full path to game executable
-        let game_exe_path = Path::new(&game_folder_path).join(&game_exe_name);
+        let game_exe_path = Path::new(&_game_folder_path).join(&game_exe_name);
 
         // Check if game executable exists
         if !game_exe_path.exists() {
@@ -366,7 +364,7 @@ pub fn validate_game_directory(
 
         Ok(format!(
             "Valid game directory: {} (executable: {}, MD5: {})",
-            game_folder_path,
+            _game_folder_path,
             game_exe_name,
             md5_str
         ))
@@ -558,9 +556,9 @@ pub fn kill_game(game_id: Number, channel_id: Number) -> Result<String, String> 
         }
     }
     
-    let result = kill_game_processes(&game_id, &channel_id);
     
-    result
+    
+    kill_game_processes(&game_id, &channel_id)
 }
 
 /// Start monitoring a specific game - Single source of truth for game monitoring
@@ -648,16 +646,14 @@ pub fn start_game_monitor(app_handle: tauri::AppHandle, game_id: Number, channel
                                 true
                             };
                             
-                            if should_start_proxy {
-                                if !proxy::is_proxy_running() {
-                                    match proxy::start_proxy() {
-                                        Ok(_) => {
-                                            proxy_started_by_us = true;
-                                            println!("🎮 Game {} started - Proxy activated automatically", game_id_clone);
-                                        }
-                                        Err(e) => {
-                                            eprintln!("⚠️ Failed to start proxy when game started: {}", e);
-                                        }
+                            if should_start_proxy && !proxy::is_proxy_running() {
+                                match proxy::start_proxy() {
+                                    Ok(_) => {
+                                        proxy_started_by_us = true;
+                                        println!("🎮 Game {} started - Proxy activated automatically", game_id_clone);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("⚠️ Failed to start proxy when game started: {}", e);
                                     }
                                 }
                             }

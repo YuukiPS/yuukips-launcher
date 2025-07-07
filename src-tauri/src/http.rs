@@ -1,15 +1,13 @@
 //! HTTP utilities module
 //! Handles HTTP client creation and network requests
 
-use reqwest;
 use serde::{Deserialize, Serialize};
 use tauri::{command, AppHandle, Emitter};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use std::error::Error;
 use tokio::io::AsyncWriteExt;
 use crate::utils::create_hidden_command;
-use url;
 
 /// Structure to hold TLS connection details
 #[derive(Debug, Clone)]
@@ -673,7 +671,7 @@ async fn install_update_with_termination(file_path: &PathBuf) -> Result<(), Stri
 
 /// Create and run MSI installer script that terminates launcher first
 #[cfg(target_os = "windows")]
-async fn create_and_run_msi_installer_script(file_path: &PathBuf) -> Result<(), String> {
+async fn create_and_run_msi_installer_script(file_path: &Path) -> Result<(), String> {
     use std::fs;
     
     let file_path_str = file_path.to_str().ok_or("Invalid file path")?;
@@ -728,7 +726,7 @@ del "%~f0"
 
 /// Create and run EXE installer script that terminates launcher first
 #[cfg(target_os = "windows")]
-async fn create_and_run_exe_installer_script(file_path: &PathBuf) -> Result<(), String> {
+async fn create_and_run_exe_installer_script(file_path: &Path) -> Result<(), String> {
     use std::fs;
     
     let file_path_str = file_path.to_str().ok_or("Invalid file path")?;

@@ -11,7 +11,7 @@ use crate::game::is_any_game_running;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+// Dialog imports are now used locally where needed
 use tauri::Manager;
 
 // Helper function to get data directory
@@ -337,7 +337,7 @@ fn clear_directory_selective(dir_path: &std::path::Path, preserve_files: &[&str]
     for entry in entries {
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
         let path = entry.path();
-        let file_name = path.file_name()
+        let file_name = std::path::Path::file_name(&path)
             .and_then(|name| name.to_str())
             .unwrap_or("");
         
@@ -491,10 +491,7 @@ pub fn start_task_manager_monitor_internal(app_handle: tauri::AppHandle) -> Resu
                 }
 
                 // Check if any game is running
-                let game_running = match is_any_game_running() {
-                    Ok(running) => running,
-                    Err(_) => false,
-                };
+                let game_running = is_any_game_running().unwrap_or_default();
 
                 if !game_running {
                     // No game running, stop monitoring
@@ -502,19 +499,21 @@ pub fn start_task_manager_monitor_internal(app_handle: tauri::AppHandle) -> Resu
                 }
 
                 // Check Task Manager status
-                let task_manager_running = match is_task_manager_running() {
-                    Ok(running) => running,
-                    Err(_) => false,
-                };
+                let task_manager_running = is_task_manager_running().unwrap_or_default();
 
                 // If Task Manager just started running
                 if task_manager_running && !last_task_manager_state && !warning_shown {
                      // Show warning dialog on client side
-                     let _ = app_handle.dialog()
+                     use tauri_plugin_dialog::DialogExt;
+                     let dialog = app_handle.dialog()
                          .message("Task Manager detected while game is running!\n\nWarning: Closing game through Task Manager may cause issues:\n• Proxy settings may not be deactivated automatically\n• Remaining patch files may not be deleted\n• Game may not run normally on official servers\n\nPlease use the launcher to properly close the game instead.")
                          .title("Task Manager Warning")
-                         .kind(MessageDialogKind::Warning)
-                         .show(|_| {});
+                         .buttons(tauri_plugin_dialog::MessageDialogButtons::Ok);
+                     
+                     // Show dialog in a separate thread to avoid blocking
+                     tauri::async_runtime::spawn(async move {
+                         dialog.show(|_| {});
+                     });
                      warning_shown = true;
                  }
 
@@ -583,20 +582,18 @@ pub fn is_task_manager_monitor_active() -> Result<bool, String> {
 pub fn open_devtools(app_handle: tauri::AppHandle) -> Result<String, String> {
     match app_handle.get_webview_window("main") {
         Some(window) => {
-            #[cfg(debug_assertions)]
+            #[cfg(feature = "devtools")]
             {
                 window.open_devtools();
                 Ok("Developer tools opened".to_string())
             }
-            #[cfg(not(debug_assertions))]
+            #[cfg(not(feature = "devtools"))]
             {
-                // In release mode, we can still allow devtools for debugging purposes
-                // but with a warning
-                window.open_devtools();
-                Ok("Developer tools opened (release mode)".to_string())
+                let _ = window; // Suppress unused variable warning
+                Err("Developer tools are not available in this build".to_string())
             }
         }
-        None => Err("Main window not found".to_string()),
+        _none => Err("Main window not found".to_string()),
     }
 }
 
@@ -610,7 +607,7 @@ pub fn minimize_launcher_window(app_handle: tauri::AppHandle) -> Result<String, 
                 Err(e) => Err(format!("Failed to minimize window: {}", e)),
             }
         }
-        None => Err("Main window not found".to_string()),
+        _none => Err("Main window not found".to_string()),
     }
 }
 
@@ -628,6 +625,6 @@ pub fn restore_launcher_window(app_handle: tauri::AppHandle) -> Result<String, S
                 Err(e) => Err(format!("Failed to restore window: {}", e)),
             }
         }
-        None => Err("Main window not found".to_string()),
+        _none => Err("Main window not found".to_string()),
     }
 }

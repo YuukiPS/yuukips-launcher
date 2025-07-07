@@ -3,22 +3,17 @@ import { SocialLink } from '../types';
 export const socialLinks: SocialLink[] = [
   {
     platform: 'Discord',
-    url: 'https://discord.gg/example',
+    url: 'https://discord.yuuki.me/',
     icon: 'MessageCircle'
   },
   {
-    platform: 'Twitter',
-    url: 'https://twitter.com/example',
-    icon: 'Twitter'
+    platform: 'Telegram',
+    url: 'https://t.me/YuukiPSz',
+    icon: 'MessageCircle'
   },
   {
     platform: 'YouTube',
-    url: 'https://youtube.com/example',
+    url: 'https://www.youtube.com/c/MeYuuki',
     icon: 'Youtube'
-  },
-  {
-    platform: 'Twitch',
-    url: 'https://twitch.tv/example',
-    icon: 'Tv'
   }
 ];

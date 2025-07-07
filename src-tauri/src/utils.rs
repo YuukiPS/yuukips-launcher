@@ -14,7 +14,7 @@ pub fn create_hidden_command(program: &str) -> Command {
     #[cfg(target_os = "windows")]
     {
         let mut cmd = Command::new(program);
-        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         cmd
     }
     #[cfg(not(target_os = "windows"))]

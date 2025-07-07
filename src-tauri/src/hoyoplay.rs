@@ -74,24 +74,24 @@ pub fn get_hoyoplay_list_game() -> Result<Vec<(String, String)>, String> {
 /// Get game folder path using name_code directly from HoyoPlay registry
 #[tauri::command]
 #[cfg(windows)]
-pub fn get_hoyoplay_game_folder(name_code: String) -> Result<String, String> {
+pub fn get_hoyoplay_game_folder(_name_code: String) -> Result<String, String> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let registry_path = format!("Software\\Cognosphere\\HYP\\1_0\\{}", name_code);
+    let registry_path = format!("Software\\Cognosphere\\HYP\\1_0\\{}", _name_code);
     
     let game_key = hkcu
         .open_subkey(&registry_path)
-        .map_err(|e| format!("Failed to open registry key for {}: {}", name_code, e))?;
+        .map_err(|e| format!("Failed to open registry key for {}: {}", _name_code, e))?;
     
     let install_path = game_key
         .get_value::<String, _>("GameInstallPath")
-        .map_err(|e| format!("Failed to get GameInstallPath for {}: {}", name_code, e))?;
+        .map_err(|e| format!("Failed to get GameInstallPath for {}: {}", _name_code, e))?;
     
     Ok(install_path)
 }
 
 #[cfg(not(windows))]
 #[tauri::command]
-pub fn get_hoyoplay_game_folder(name_code: String) -> Result<String, String> {
+pub fn get_hoyoplay_game_folder(_name_code: String) -> Result<String, String> {
     Err("HoyoPlay registry access is only available on Windows".to_string())
 }
 

@@ -8,7 +8,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tauri::command;
 use uuid::Uuid;
-use url;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::AsyncWriteExt;
 
@@ -679,9 +678,9 @@ pub async fn get_file_size_from_url(url: String) -> Result<u64, String> {
                     .map_err(|e| format!("Invalid content-length header: {}", e))?;
                 let size = size_str.parse::<u64>()
                     .map_err(|e| format!("Failed to parse content-length: {}", e))?;
-                return Ok(size);
+                Ok(size)
             } else {
-                return Err("Content-Length header not found".to_string());
+                Err("Content-Length header not found".to_string())
             }
         }
         Err(e) => {
@@ -706,10 +705,10 @@ pub async fn get_file_size_from_url(url: String) -> Result<u64, String> {
                              return Ok(size);
                          }
                      }
-                     return Err("Could not determine file size from range request".to_string());
+                     Err("Could not determine file size from range request".to_string())
                  }
                  Err(range_err) => {
-                     return Err(format!("Both HEAD and range requests failed: HEAD: {}, Range: {}", error_string, range_err));
+                     Err(format!("Both HEAD and range requests failed: HEAD: {}, Range: {}", error_string, range_err))
                  }
              }
         }

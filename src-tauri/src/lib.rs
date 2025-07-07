@@ -179,7 +179,7 @@ pub fn run() {
                         
                         // Show dialog in a separate thread to avoid blocking
                           tauri::async_runtime::spawn(async move {
-                              let _ = dialog.show(|_| {});
+                              dialog.show(|_| {});
                           });
                     }
                     Ok(false) => {

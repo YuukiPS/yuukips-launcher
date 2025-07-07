@@ -1,12 +1,16 @@
 [package]
 name = "yuukips-launcher"
-version = "0.0.24"
+version = "0.0.25"
 description = "A launcher for YuukiPS"
 authors = ["yuuki"]
 license = "MIT"
 repository = "https://github.com/YuukiPS/yuukips-launcher"
 edition = "2021"
 rust-version = "1.77.2"
+
+[features]
+default = []
+devtools = []
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -53,3 +57,33 @@ registry = "1.2"
 
 [target.'cfg(not(windows))'.dependencies]
 libc = "0.2"
+
+# Profile configurations to prevent debug builds
+[profile.dev]
+opt-level = 3
+debug = false
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.release]
+opt-level = 3
+debug = false
+lto = true
+codegen-units = 1
+panic = "abort"
+
+# Linting configuration for code quality
+[lints.rust]
+unused_imports = "warn"
+unused_variables = "warn"
+dead_code = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
+ptr_arg = "deny"
+let_unit_value = "deny"
+unused_self = "warn"
+redundant_clone = "warn"

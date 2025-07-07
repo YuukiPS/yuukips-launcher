@@ -164,7 +164,7 @@ impl HttpHandler for ProxyHandler {
             } else {
                 let uri_path_and_query = match req.uri().path_and_query() {
                     Some(pq) => pq.as_str(),
-                    None => {
+                    _none => {
                         eprintln!("⚠️ Failed to get path and query from URI");
                         let error_response = Response::builder()
                              .status(StatusCode::BAD_REQUEST)

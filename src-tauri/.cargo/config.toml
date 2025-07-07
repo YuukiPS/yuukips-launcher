@@ -1,0 +1,26 @@
+[build]
+# Force all builds to use release profile to prevent debug folder creation
+target-dir = "target"
+
+[env]
+# Force release mode for all builds
+CARGO_PROFILE = "release"
+
+[profile.dev]
+# Override dev profile to match release settings exactly
+opt-level = 3
+debug = false
+lto = true
+codegen-units = 1
+panic = "abort"
+overflow-checks = false
+incremental = false
+
+[profile.release]
+# Ensure release profile is optimized
+opt-level = 3
+debug = false
+lto = true
+codegen-units = 1
+panic = "abort"
+overflow-checks = false

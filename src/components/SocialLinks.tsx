@@ -26,12 +26,10 @@ export const SocialLinks: React.FC<SocialLinksProps> = ({ links }) => {
     switch (platform.toLowerCase()) {
       case 'discord':
         return 'hover:bg-indigo-600 hover:shadow-indigo-500/25';
-      case 'twitter':
+      case 'telegram':
         return 'hover:bg-blue-500 hover:shadow-blue-500/25';
       case 'youtube':
         return 'hover:bg-red-600 hover:shadow-red-500/25';
-      case 'twitch':
-        return 'hover:bg-purple-600 hover:shadow-purple-500/25';
       default:
         return 'hover:bg-gray-600 hover:shadow-gray-500/25';
     }
