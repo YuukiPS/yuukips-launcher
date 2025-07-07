@@ -136,6 +136,22 @@ function App() {
     checkForUpdates();
   }, [loadGames, checkForUpdates]);
 
+  // Disable right-click context menu globally
+  useEffect(() => {
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      return false;
+    };
+
+    // Add event listener to disable right-click context menu
+    document.addEventListener('contextmenu', handleContextMenu);
+
+    // Cleanup function to remove event listener
+    return () => {
+      document.removeEventListener('contextmenu', handleContextMenu);
+    };
+  }, []);
+
   const handleGameUpdate = (updatedGame: Game) => {
     setGames(prevGames => 
       prevGames.map(game => 

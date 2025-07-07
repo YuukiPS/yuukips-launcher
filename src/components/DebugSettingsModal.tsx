@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Bug, RefreshCw, TestTube, Trash2, FolderOpen, Database, HardDrive } from 'lucide-react';
+import { X, Bug, RefreshCw, TestTube, Trash2, FolderOpen, Database, HardDrive, Code } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 
 interface DebugSettingsModalProps {
@@ -13,7 +13,7 @@ export const DebugSettingsModal: React.FC<DebugSettingsModalProps> = ({
   onClose,
   onForceUpdate
 }) => {
-  const [activeTab, setActiveTab] = useState('update');
+  const [activeTab, setActiveTab] = useState('basic');
   const [isForcing, setIsForcing] = useState(false);
   const [testResult, setTestResult] = useState<string>('');
   const [isProxyTesting, setIsProxyTesting] = useState(false);
@@ -123,6 +123,30 @@ export const DebugSettingsModal: React.FC<DebugSettingsModalProps> = ({
     }
   };
 
+  const openDevTools = async () => {
+    try {
+      // Check if we're in a Tauri environment
+      if (window.__TAURI__) {
+        // Use our custom Tauri command to open devtools
+        const result = await invoke('open_devtools') as string;
+        console.log('DevTools result:', result);
+        // Show success message briefly
+        setTestResult(`✅ ${result}`);
+        setTimeout(() => setTestResult(''), 3000);
+      } else {
+        // Fallback for web environment - try to open browser devtools
+        // This won't work in production but useful for development
+        console.log('DevTools opened (web environment)');
+        setTestResult('⚠️ DevTools functionality is only available in the desktop application.');
+        setTimeout(() => setTestResult(''), 3000);
+      }
+    } catch (error) {
+      console.error('Failed to open DevTools:', error);
+      setTestResult(`❌ Failed to open DevTools: ${error}`);
+      setTimeout(() => setTestResult(''), 5000);
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
       <div className="bg-gray-900 rounded-xl border border-gray-700 shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
@@ -146,6 +170,16 @@ export const DebugSettingsModal: React.FC<DebugSettingsModalProps> = ({
           {/* Sidebar */}
           <div className="w-64 bg-gray-800/50 border-r border-gray-700 p-4">
             <nav className="space-y-2">
+              <button
+                onClick={() => setActiveTab('basic')}
+                className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
+                  activeTab === 'basic'
+                    ? 'bg-orange-600/30 text-orange-400 border border-orange-500/50'
+                    : 'text-gray-300 hover:bg-gray-700/50'
+                }`}
+              >
+                Basic
+              </button>
               <button
                 onClick={() => setActiveTab('update')}
                 className={`w-full text-left px-4 py-3 rounded-lg transition-colors ${
@@ -181,6 +215,40 @@ export const DebugSettingsModal: React.FC<DebugSettingsModalProps> = ({
 
           {/* Content */}
           <div className="flex-1 p-6 overflow-y-auto">
+            {activeTab === 'basic' && (
+              <div className="space-y-6">
+                <div className="space-y-4">
+                  <h3 className="text-lg font-medium text-white">Basic Developer Tools</h3>
+                  
+                  <div className="space-y-3">
+                    <p className="text-gray-300 text-sm">
+                      Access developer tools and basic debugging features.
+                    </p>
+                    
+                    <button
+                       onClick={openDevTools}
+                       className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-medium"
+                     >
+                       <Code className="w-4 h-4" />
+                       <span>Show DevTools</span>
+                     </button>
+                     
+                     {testResult && (
+                       <div className="mt-3 p-3 bg-gray-700 rounded-lg text-sm text-white whitespace-pre-wrap">
+                         {testResult}
+                       </div>
+                     )}
+                   </div>
+                 </div>
+
+                 <div className="pt-4 border-t border-gray-700">
+                   <p className="text-gray-400 text-xs">
+                     Developer tools provide access to browser debugging features including console, network, and element inspection.
+                   </p>
+                 </div>
+              </div>
+            )}
+
             {activeTab === 'update' && (
               <div className="space-y-6">
                 <div className="space-y-4">

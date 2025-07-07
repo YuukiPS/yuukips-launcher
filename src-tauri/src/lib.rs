@@ -42,6 +42,7 @@ pub fn run() {
             start_task_manager_monitor,
             stop_task_manager_monitor,
             is_task_manager_monitor_active,
+            open_devtools,
             minimize_launcher_window,
             restore_launcher_window,
             // Download functions

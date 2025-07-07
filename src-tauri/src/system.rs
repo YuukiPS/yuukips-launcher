@@ -578,6 +578,28 @@ pub fn is_task_manager_monitor_active() -> Result<bool, String> {
     Ok(monitor_state.is_some())
 }
 
+/// Open developer tools for the main window
+#[command]
+pub fn open_devtools(app_handle: tauri::AppHandle) -> Result<String, String> {
+    match app_handle.get_webview_window("main") {
+        Some(window) => {
+            #[cfg(debug_assertions)]
+            {
+                window.open_devtools();
+                Ok("Developer tools opened".to_string())
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                // In release mode, we can still allow devtools for debugging purposes
+                // but with a warning
+                window.open_devtools();
+                Ok("Developer tools opened (release mode)".to_string())
+            }
+        }
+        None => Err("Main window not found".to_string()),
+    }
+}
+
 /// Minimize the launcher window
 #[command]
 pub fn minimize_launcher_window(app_handle: tauri::AppHandle) -> Result<String, String> {
