@@ -10,6 +10,7 @@ use tauri::command;
 use uuid::Uuid;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::AsyncWriteExt;
+use chrono::Utc;
 
 static DOWNLOAD_MANAGER: once_cell::sync::Lazy<Arc<Mutex<DownloadManager>>> = 
     once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(DownloadManager::new())));
@@ -76,9 +77,37 @@ pub enum DownloadStatus {
     Cancelled,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ActivityEntry {
+    pub id: String,
+    pub timestamp: String,
+    #[serde(rename = "actionType")]
+    pub action_type: ActivityType,
+    #[serde(rename = "fileName")]
+    pub file_name: Option<String>,
+    pub identifier: Option<String>,
+    pub status: Option<String>,
+    pub details: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityType {
+    DownloadStarted,
+    DownloadPaused,
+    DownloadResumed,
+    DownloadCancelled,
+    DownloadCompleted,
+    DownloadError,
+    FileAdded,
+    StatusChanged,
+    UserInteraction,
+}
+
 struct DownloadManager {
     downloads: HashMap<String, DownloadItem>,
     history: Vec<DownloadHistory>,
+    activities: Vec<ActivityEntry>,
     download_directory: PathBuf,
     cancellation_tokens: HashMap<String, Arc<AtomicBool>>,
 }
@@ -88,12 +117,76 @@ impl DownloadManager {
         let download_directory = dirs::download_dir()
             .unwrap_or_else(|| PathBuf::from("./downloads"));
         
-        Self {
+        let mut manager = Self {
             downloads: HashMap::new(),
             history: Vec::new(),
+            activities: Vec::new(),
             download_directory,
             cancellation_tokens: HashMap::new(),
+        };
+        
+        // Load persisted activities
+        if let Err(e) = manager.load_activities() {
+            eprintln!("Failed to load activities: {}", e);
         }
+        
+        manager
+    }
+    
+    fn add_activity(&mut self, action_type: ActivityType, file_name: Option<String>, identifier: Option<String>, status: Option<String>, details: Option<String>) {
+        let activity = ActivityEntry {
+            id: Uuid::new_v4().to_string(),
+            timestamp: Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            action_type,
+            file_name,
+            identifier,
+            status,
+            details,
+        };
+        
+        self.activities.push(activity);
+        
+        // Persist activities immediately
+        if let Err(e) = self.save_activities() {
+            eprintln!("Failed to save activities: {}", e);
+        }
+    }
+    
+    fn get_activities_file_path() -> PathBuf {
+        let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+        path.push("yuukips-launcher");
+        path.push("activities.json");
+        path
+    }
+    
+    fn save_activities(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let file_path = Self::get_activities_file_path();
+        
+        // Create directory if it doesn't exist
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        
+        let json = serde_json::to_string_pretty(&self.activities)?;
+        fs::write(file_path, json)?;
+        Ok(())
+    }
+    
+    fn load_activities(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let file_path = Self::get_activities_file_path();
+        
+        if file_path.exists() {
+            let json = fs::read_to_string(file_path)?;
+            self.activities = serde_json::from_str(&json)?;
+        }
+        
+        Ok(())
+    }
+    
+    fn clear_activities(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.activities.clear();
+        self.save_activities()?;
+        Ok(())
     }
 
     fn add_download(&mut self, url: String, file_path: String, file_name: Option<String>) -> String {
@@ -117,7 +210,7 @@ impl DownloadManager {
 
         let download = DownloadItem {
             id: id.clone(),
-            file_name: actual_file_name,
+            file_name: actual_file_name.clone(),
             file_extension,
             total_size: 0,
             downloaded_size: 0,
@@ -125,8 +218,8 @@ impl DownloadManager {
             speed: 0,
             status: DownloadStatus::Downloading,
             time_remaining: 0,
-            url: cleaned_url,
-            file_path,
+            url: cleaned_url.clone(),
+            file_path: file_path.clone(),
             start_time: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -134,6 +227,24 @@ impl DownloadManager {
             end_time: None,
             error_message: None,
         };
+
+        // Add activity entry for file addition
+        self.add_activity(
+            ActivityType::FileAdded,
+            Some(actual_file_name.clone()),
+            Some(id.clone()),
+            None,
+            Some(format!("Added download from URL: {}", cleaned_url))
+        );
+        
+        // Add activity entry for download start
+        self.add_activity(
+            ActivityType::DownloadStarted,
+            Some(actual_file_name),
+            Some(id.clone()),
+            Some("downloading".to_string()),
+            Some(format!("Download started for file: {}", file_path))
+        );
 
         self.downloads.insert(id.clone(), download);
         id
@@ -159,9 +270,60 @@ impl DownloadManager {
 
     fn set_download_status(&mut self, id: &str, status: DownloadStatus, error_message: Option<String>) {
         if let Some(download) = self.downloads.get_mut(id) {
+            let old_status = download.status.clone();
             download.status = status.clone();
-            download.error_message = error_message;
+            download.error_message = error_message.clone();
             
+            // Activity logging will be handled after releasing the borrow
+            
+            // Release the mutable borrow before calling add_activity
+        }
+        
+        // Now we can safely call add_activity without borrowing conflicts
+        if self.downloads.contains_key(id) {
+            let download = &self.downloads[id];
+            let file_name = download.file_name.clone();
+            let old_status = download.status.clone();
+            
+            let activity_type = match status {
+                DownloadStatus::Completed => ActivityType::DownloadCompleted,
+                DownloadStatus::Error => ActivityType::DownloadError,
+                DownloadStatus::Cancelled => ActivityType::DownloadCancelled,
+                DownloadStatus::Paused => ActivityType::DownloadPaused,
+                DownloadStatus::Downloading => {
+                    if matches!(old_status, DownloadStatus::Paused) {
+                        ActivityType::DownloadResumed
+                    } else {
+                        ActivityType::StatusChanged
+                    }
+                }
+            };
+            
+            let status_str = match status {
+                DownloadStatus::Completed => "completed".to_string(),
+                DownloadStatus::Error => "error".to_string(),
+                DownloadStatus::Cancelled => "cancelled".to_string(),
+                DownloadStatus::Paused => "paused".to_string(),
+                DownloadStatus::Downloading => "downloading".to_string(),
+            };
+            
+            let details = if let Some(ref err_msg) = error_message {
+                Some(format!("Status changed to {} - {}", status_str, err_msg))
+            } else {
+                Some(format!("Status changed to {}", status_str))
+            };
+            
+            self.add_activity(
+                activity_type,
+                Some(file_name),
+                Some(id.to_string()),
+                Some(status_str),
+                details
+            );
+        }
+        
+        // Handle final state cleanup
+        if let Some(download) = self.downloads.get_mut(id) {
             if matches!(status, DownloadStatus::Completed | DownloadStatus::Error | DownloadStatus::Cancelled) {
                 download.end_time = Some(
                     SystemTime::now()
@@ -233,6 +395,45 @@ impl DownloadManager {
             average_speed,
         }
     }
+}
+
+/// Get all activity entries
+#[command]
+pub fn get_activities() -> Result<Vec<ActivityEntry>, String> {
+    let manager = DOWNLOAD_MANAGER.lock()
+        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    
+    // Return activities in reverse chronological order (newest first)
+    let mut activities = manager.activities.clone();
+    activities.reverse();
+    Ok(activities)
+}
+
+/// Clear all activity entries
+#[command]
+pub fn clear_activities() -> Result<(), String> {
+    let mut manager = DOWNLOAD_MANAGER.lock()
+        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    
+    manager.clear_activities()
+        .map_err(|e| format!("Failed to clear activities: {}", e))
+}
+
+/// Add a user interaction activity entry
+#[command]
+pub fn add_user_interaction_activity(action: String, details: Option<String>) -> Result<(), String> {
+    let mut manager = DOWNLOAD_MANAGER.lock()
+        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    
+    manager.add_activity(
+        ActivityType::UserInteraction,
+        None,
+        None,
+        None,
+        Some(details.unwrap_or(action))
+    );
+    
+    Ok(())
 }
 
 /// Start a new download

@@ -23,6 +23,17 @@ export interface ProxyLogEntry {
   redirected_url: string;
 }
 
+// Activity entry interface
+export interface ActivityEntry {
+  id: string;
+  timestamp: string;
+  actionType: string;
+  fileName?: string;
+  identifier?: string;
+  status?: string;
+  details?: string;
+}
+
 // Tauri command types
 export interface TauriCommands {
   start_proxy(): Promise<string>;
@@ -81,6 +92,10 @@ export interface TauriCommands {
   get_all_game_name_codes(): Promise<[number, number, string][]>
   get_game_md5(path: string): Promise<string>
   get_hoyoplay_list_game(): Promise<Array<[string, string]>>;
+  // Activity commands
+  get_activities(): Promise<ActivityEntry[]>;
+  clear_activities(): Promise<void>;
+  add_user_interaction_activity(action: string, details?: string): Promise<void>;
 }
 
 export interface DriveInfo {

@@ -68,6 +68,9 @@ pub fn run() {
             download::get_file_size_from_url,
             download::check_file_exists,
             download::get_available_disk_space,
+            download::get_activities,
+            download::clear_activities,
+            download::add_user_interaction_activity,
             // Proxy functions
             proxy::get_proxy_addr,
             proxy::set_proxy_addr,

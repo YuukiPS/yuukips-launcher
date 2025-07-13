@@ -15,8 +15,9 @@ import {
   ArrowUpDown,
   Plus
 } from 'lucide-react';
-import { DownloadItem, DownloadHistory, DownloadStats } from '../types';
+import { DownloadItem, DownloadHistory, DownloadStats, ActivityEntry } from '../types';
 import { DownloadService } from '../services/downloadService';
+import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 
 interface DownloadManagerProps {
@@ -30,7 +31,8 @@ type FilterStatus = 'all' | 'downloading' | 'paused' | 'completed' | 'error';
 
 export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClose }) => {
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
-  const [history, setHistory] = useState<DownloadHistory[]>([]);
+  const [, setHistory] = useState<DownloadHistory[]>([]);
+  const [activities, setActivities] = useState<ActivityEntry[]>([]);
   const [stats, setStats] = useState<DownloadStats>({
     total_downloads: 0,
     active_downloads: 0,
@@ -43,7 +45,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   const [sortField, setSortField] = useState<SortField>('fileName');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [selectedDownloads, setSelectedDownloads] = useState<Set<string>>(new Set());
-  const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
+  const [activeTab, setActiveTab] = useState<'active' | 'activity'>('active');
 
   // New download form state
   const [newDownloadUrl, setNewDownloadUrl] = useState('');
@@ -81,17 +83,56 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
 
   const loadData = async () => {
     try {
-      const [activeDownloads, downloadHistory, downloadStats] = await Promise.all([
+      const [activeDownloads, downloadHistory, downloadStats, activityEntries] = await Promise.all([
         DownloadService.getActiveDownloads(),
         DownloadService.getDownloadHistory(),
-        DownloadService.getDownloadStats()
+        DownloadService.getDownloadStats(),
+        loadActivities()
       ]);
       
       setDownloads(activeDownloads);
       setHistory(downloadHistory);
       setStats(downloadStats);
+      setActivities(activityEntries);
     } catch (error) {
       console.error('Failed to load download data:', error);
+    }
+  };
+
+  const loadActivities = async (): Promise<ActivityEntry[]> => {
+    try {
+      return await invoke('get_activities');
+    } catch (error) {
+      console.error('Failed to load activities:', error);
+      return [];
+    }
+  };
+
+  const clearActivities = async () => {
+    try {
+      await invoke('clear_activities');
+      setActivities([]);
+      // Track the clear action itself
+      await invoke('add_user_interaction_activity', {
+        action: 'Clear Activities',
+        details: 'All activity entries cleared by user'
+      });
+      // Reload activities to get the new clear action
+      const newActivities = await loadActivities();
+      setActivities(newActivities);
+    } catch (error) {
+      console.error('Failed to clear activities:', error);
+    }
+  };
+
+  const addUserInteraction = async (action: string, details?: string) => {
+    try {
+      await invoke('add_user_interaction_activity', { action, details });
+      // Reload activities to show the new entry
+      const newActivities = await loadActivities();
+      setActivities(newActivities);
+    } catch (error) {
+      console.error('Failed to add user interaction:', error);
     }
   };
 
@@ -271,6 +312,9 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
       const downloadId = await DownloadService.startDownload(newDownloadUrl, filePath, fileName);
       console.log('[DownloadManager] Download started successfully with ID:', downloadId);
 
+      // Log user interaction for adding download
+      await addUserInteraction(`Added new download: ${fileName}`);
+
       // Only clear form and close modal if download started successfully
       setNewDownloadUrl('');
       setShowAddModal(false);
@@ -402,8 +446,10 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
 
       if (download.status === 'downloading') {
         await DownloadService.pauseDownload(id);
+        await addUserInteraction(`Paused download: ${download.fileName || download.id}`);
       } else if (download.status === 'paused') {
         await DownloadService.resumeDownload(id);
+        await addUserInteraction(`Resumed download: ${download.fileName || download.id}`);
       }
       
       // Refresh data to show updated status
@@ -415,7 +461,9 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
 
   const handleCancel = async (id: string) => {
     try {
+      const download = downloads.find(d => d.id === id);
       await DownloadService.cancelDownload(id);
+      await addUserInteraction(`Cancelled download: ${download?.fileName || id}`);
       // Refresh data to show updated status
       await loadData();
     } catch (error) {
@@ -425,7 +473,9 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
 
   const handleRestart = async (id: string) => {
     try {
+      const download = downloads.find(d => d.id === id);
       await DownloadService.restartDownload(id);
+      await addUserInteraction(`Restarted download: ${download?.fileName || id}`);
       // Refresh data to show updated status
       await loadData();
     } catch (error) {
@@ -435,7 +485,9 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
 
   const handleClearCompleted = async () => {
     try {
+      const completedCount = downloads.filter(d => d.status === 'completed').length;
       await DownloadService.clearCompletedDownloads();
+      await addUserInteraction(`Cleared ${completedCount} completed downloads`);
       // Refresh data to show updated list
       await loadData();
     } catch (error) {
@@ -483,16 +535,20 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   const handleBulkAction = async (action: 'pause' | 'resume' | 'cancel') => {
     try {
       const downloadIds = Array.from(selectedDownloads);
+      const count = downloadIds.length;
       
       switch (action) {
         case 'pause':
           await DownloadService.bulkPauseDownloads(downloadIds);
+          await addUserInteraction(`Bulk paused ${count} downloads`);
           break;
         case 'resume':
           await DownloadService.bulkResumeDownloads(downloadIds);
+          await addUserInteraction(`Bulk resumed ${count} downloads`);
           break;
         case 'cancel':
           await DownloadService.bulkCancelDownloads(downloadIds);
+          await addUserInteraction(`Bulk cancelled ${count} downloads`);
           break;
       }
       
@@ -608,13 +664,13 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
             Active Downloads
           </button>
           <button
-            onClick={() => setActiveTab('history')}
-            className={`px-6 py-3 font-medium transition-colors ${activeTab === 'history'
+            onClick={() => setActiveTab('activity')}
+            className={`px-6 py-3 font-medium transition-colors ${activeTab === 'activity'
               ? 'text-blue-400 border-b-2 border-blue-400'
               : 'text-gray-400 hover:text-white'
               }`}
           >
-            History
+            Activity
           </button>
         </div>
 
@@ -921,51 +977,115 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
               </div>
             </div>
           ) : (
-            /* History Tab */
-            <div className="h-full overflow-y-auto">
-              {history.length === 0 ? (
-                <div className="flex items-center justify-center h-full">
-                  <div className="text-center">
-                    <Clock className="w-12 h-12 text-gray-500 mx-auto mb-4" />
-                    <p className="text-gray-400 text-lg">No download history</p>
-                    <p className="text-gray-500 text-sm">Completed downloads will appear here</p>
-                  </div>
+            /* Activity Tab */
+            <div className="h-full flex flex-col">
+              {/* Activity Controls */}
+              <div className="p-4 border-b border-gray-700">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-medium text-white">Activity Log</h3>
+                  <button
+                    onClick={() => {
+                      if (window.confirm('Are you sure you want to clear all activity entries? This action cannot be undone.')) {
+                        clearActivities();
+                        addUserInteraction('Clear Activities Confirmed', 'User confirmed clearing all activity entries');
+                      } else {
+                        addUserInteraction('Clear Activities Cancelled', 'User cancelled clearing activity entries');
+                      }
+                    }}
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Clear All
+                  </button>
                 </div>
-              ) : (
-                <div className="p-4">
-                  {history.map((item) => (
-                    <div key={item.id} className="bg-gray-700 rounded-lg p-4 mb-3 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span className="text-2xl">📄</span>
-                        <div>
-                          <div className="text-white font-medium">{item.fileName}</div>
-                          <div className="text-gray-400 text-sm">
-                            {formatFileSize(item.fileSize)} • {item.downloadDate}
-                          </div>
-                          {item.errorMessage && (
-                            <div className="text-red-400 text-sm">{item.errorMessage}</div>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-2">
-                          {item.status === 'completed' && <CheckCircle className="w-4 h-4 text-green-500" />}
-                          {item.status === 'error' && <AlertCircle className="w-4 h-4 text-red-500" />}
-                          {item.status === 'cancelled' && <X className="w-4 h-4 text-gray-500" />}
-                          <span className="text-sm text-gray-300 capitalize">{item.status}</span>
-                        </div>
-                        <button
-                          onClick={() => handleOpenLocation(item.filePath)}
-                          className="p-2 text-gray-400 hover:text-gray-300 transition-colors"
-                          title="Open Location"
-                        >
-                          <FolderOpen className="w-4 h-4" />
-                        </button>
-                      </div>
+              </div>
+              
+              {/* Activity List */}
+              <div className="flex-1 overflow-y-auto">
+                {activities.length === 0 ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-center">
+                      <Clock className="w-12 h-12 text-gray-500 mx-auto mb-4" />
+                      <p className="text-gray-400 text-lg">No activity recorded</p>
+                      <p className="text-gray-500 text-sm">User actions and download events will appear here</p>
                     </div>
-                  ))}
-                </div>
-              )}
+                  </div>
+                ) : (
+                  <div className="p-4">
+                    {activities.map((activity) => {
+                      const getActivityIcon = (actionType: string) => {
+                        switch (actionType) {
+                          case 'DownloadStarted': return <Download className="w-4 h-4 text-blue-500" />;
+                          case 'DownloadCompleted': return <CheckCircle className="w-4 h-4 text-green-500" />;
+                          case 'DownloadPaused': return <Pause className="w-4 h-4 text-yellow-500" />;
+                          case 'DownloadResumed': return <Play className="w-4 h-4 text-green-500" />;
+                          case 'DownloadCancelled': return <X className="w-4 h-4 text-red-500" />;
+                          case 'DownloadError': return <AlertCircle className="w-4 h-4 text-red-500" />;
+                          case 'FileAdded': return <Plus className="w-4 h-4 text-blue-500" />;
+                          case 'StatusChanged': return <RotateCcw className="w-4 h-4 text-orange-500" />;
+                          case 'UserInteraction': return <Clock className="w-4 h-4 text-purple-500" />;
+                          default: return <Clock className="w-4 h-4 text-gray-500" />;
+                        }
+                      };
+                      
+                      const getActivityColor = (actionType: string) => {
+                        switch (actionType) {
+                          case 'DownloadStarted': return 'border-l-blue-500';
+                          case 'DownloadCompleted': return 'border-l-green-500';
+                          case 'DownloadPaused': return 'border-l-yellow-500';
+                          case 'DownloadResumed': return 'border-l-green-500';
+                          case 'DownloadCancelled': return 'border-l-red-500';
+                          case 'DownloadError': return 'border-l-red-500';
+                          case 'FileAdded': return 'border-l-blue-500';
+                          case 'StatusChanged': return 'border-l-orange-500';
+                          case 'UserInteraction': return 'border-l-purple-500';
+                          default: return 'border-l-gray-500';
+                        }
+                      };
+                      
+                      return (
+                        <div key={activity.id} className={`bg-gray-700 rounded-lg p-4 mb-3 border-l-4 ${getActivityColor(activity.actionType)}`}>
+                          <div className="flex items-start gap-3">
+                            <div className="flex-shrink-0 mt-1">
+                              {getActivityIcon(activity.actionType)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between mb-1">
+                                <div className="text-white font-medium">
+                                  {activity.actionType.replace(/([A-Z])/g, ' $1').trim()}
+                                </div>
+                                <div className="text-gray-400 text-xs">
+                                  {new Date(activity.timestamp).toLocaleString()}
+                                </div>
+                              </div>
+                              {activity.fileName && (
+                                <div className="text-gray-300 text-sm mb-1">
+                                  <span className="font-medium">File:</span> {activity.fileName}
+                                </div>
+                              )}
+                              {activity.identifier && (
+                                <div className="text-gray-300 text-sm mb-1">
+                                  <span className="font-medium">ID:</span> {activity.identifier}
+                                </div>
+                              )}
+                              {activity.status && (
+                                <div className="text-gray-300 text-sm mb-1">
+                                  <span className="font-medium">Status:</span> {activity.status}
+                                </div>
+                              )}
+                              {activity.details && (
+                                <div className="text-gray-400 text-sm">
+                                  {activity.details}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

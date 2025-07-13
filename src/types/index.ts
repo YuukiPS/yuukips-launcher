@@ -113,3 +113,13 @@ export interface DownloadStats {
   total_downloaded_size: number;
   average_speed: number;
 }
+
+export interface ActivityEntry {
+  id: string;
+  timestamp: string;
+  actionType: string;
+  fileName?: string;
+  identifier?: string;
+  status?: string;
+  details?: string;
+}

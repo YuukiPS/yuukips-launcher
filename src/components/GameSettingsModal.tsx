@@ -44,7 +44,6 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const [deleteHoyoPass, setDeleteHoyoPass] = useState<boolean>(true);
   const [diskScanModalOpen, setDiskScanModalOpen] = useState(false);
 
-
   // Get available versions dynamically from game engine data
   const availableVersions = GameApiService.getAvailableVersionsForPlatform(game, 1);
 
