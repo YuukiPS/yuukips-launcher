@@ -34,6 +34,16 @@ export interface ActivityEntry {
   details?: string;
 }
 
+// Partial download info interface
+export interface PartialDownloadInfo {
+  id: string;
+  file_path: string;
+  downloaded_bytes: number;
+  total_bytes: number;
+  last_modified: string;
+  checksum: string;
+}
+
 // Tauri command types
 export interface TauriCommands {
   start_proxy(): Promise<string>;
@@ -96,6 +106,13 @@ export interface TauriCommands {
   get_activities(): Promise<ActivityEntry[]>;
   clear_activities(): Promise<void>;
   add_user_interaction_activity(action: string, details?: string): Promise<void>;
+  // State management commands
+  save_download_state(): Promise<void>;
+  load_download_state(): Promise<void>;
+  resume_interrupted_downloads(): Promise<string[]>;
+  get_state_version(): Promise<number>;
+  set_auto_save_enabled(enabled: boolean): Promise<void>;
+  get_partial_downloads(): Promise<Record<string, PartialDownloadInfo>>;
 }
 
 export interface DriveInfo {

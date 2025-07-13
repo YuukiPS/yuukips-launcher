@@ -71,6 +71,12 @@ pub fn run() {
             download::get_activities,
             download::clear_activities,
             download::add_user_interaction_activity,
+            download::save_download_state,
+            download::load_download_state,
+            download::resume_interrupted_downloads,
+            download::get_state_version,
+            download::set_auto_save_enabled,
+            download::get_partial_downloads,
             // Proxy functions
             proxy::get_proxy_addr,
             proxy::set_proxy_addr,

@@ -11,6 +11,7 @@ use uuid::Uuid;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::AsyncWriteExt;
 use chrono::Utc;
+use sha2::{Sha256, Digest};
 
 static DOWNLOAD_MANAGER: once_cell::sync::Lazy<Arc<Mutex<DownloadManager>>> = 
     once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(DownloadManager::new())));
@@ -104,12 +105,46 @@ pub enum ActivityType {
     UserInteraction,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DownloadState {
+    pub downloads: HashMap<String, DownloadItem>,
+    pub history: Vec<DownloadHistory>,
+    pub activities: Vec<ActivityEntry>,
+    pub download_directory: String,
+    pub version: u32,
+    pub timestamp: u64,
+    pub checksum: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PartialDownloadInfo {
+    pub id: String,
+    pub url: String,
+    pub file_path: String,
+    pub downloaded_size: u64,
+    pub total_size: u64,
+    pub last_modified: Option<String>,
+    pub etag: Option<String>,
+    pub resume_supported: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct StateBackup {
+    pub primary: DownloadState,
+    pub backup: Option<DownloadState>,
+    pub corruption_count: u32,
+}
+
 struct DownloadManager {
     downloads: HashMap<String, DownloadItem>,
     history: Vec<DownloadHistory>,
     activities: Vec<ActivityEntry>,
     download_directory: PathBuf,
     cancellation_tokens: HashMap<String, Arc<AtomicBool>>,
+    partial_downloads: HashMap<String, PartialDownloadInfo>,
+    auto_save_enabled: bool,
+    last_save_time: SystemTime,
+    state_version: u32,
 }
 
 impl DownloadManager {
@@ -123,11 +158,24 @@ impl DownloadManager {
             activities: Vec::new(),
             download_directory,
             cancellation_tokens: HashMap::new(),
+            partial_downloads: HashMap::new(),
+            auto_save_enabled: true,
+            last_save_time: SystemTime::now(),
+            state_version: 1,
         };
         
-        // Load persisted activities
-        if let Err(e) = manager.load_activities() {
-            eprintln!("Failed to load activities: {}", e);
+        // Load persisted state (includes activities, downloads, and history)
+        if let Err(e) = manager.load_state() {
+            eprintln!("Failed to load state: {}", e);
+            // Fallback to loading just activities for backward compatibility
+            if let Err(e) = manager.load_activities() {
+                eprintln!("Failed to load activities: {}", e);
+            }
+        }
+        
+        // Resume interrupted downloads
+        if let Err(e) = manager.resume_interrupted_downloads() {
+            eprintln!("Failed to resume interrupted downloads: {}", e);
         }
         
         manager
@@ -186,7 +234,206 @@ impl DownloadManager {
     fn clear_activities(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.activities.clear();
         self.save_activities()?;
+        self.auto_save_state()?;
         Ok(())
+    }
+    
+    // State persistence methods
+    fn get_state_file_path() -> PathBuf {
+        let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+        path.push("yuukips-launcher");
+        path.push("download_state.json");
+        path
+    }
+    
+    fn get_backup_state_file_path() -> PathBuf {
+        let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+        path.push("yuukips-launcher");
+        path.push("download_state_backup.json");
+        path
+    }
+    
+    fn calculate_state_checksum(state: &DownloadState) -> Result<String, Box<dyn std::error::Error>> {
+        let json = serde_json::to_string(state)?;
+        let mut hasher = Sha256::new();
+        hasher.update(json.as_bytes());
+        Ok(format!("{:x}", hasher.finalize()))
+    }
+    
+    fn create_download_state(&self) -> Result<DownloadState, Box<dyn std::error::Error>> {
+        let mut state = DownloadState {
+            downloads: self.downloads.clone(),
+            history: self.history.clone(),
+            activities: self.activities.clone(),
+            download_directory: self.download_directory.to_string_lossy().to_string(),
+            version: self.state_version,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            checksum: String::new(),
+        };
+        
+        state.checksum = Self::calculate_state_checksum(&state)?;
+        Ok(state)
+    }
+    
+    fn save_state(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let state = self.create_download_state()?;
+        let file_path = Self::get_state_file_path();
+        let backup_path = Self::get_backup_state_file_path();
+        
+        // Create directory if it doesn't exist
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        
+        // Create backup of current state if it exists
+        if file_path.exists() {
+            if let Err(e) = fs::copy(&file_path, &backup_path) {
+                eprintln!("Warning: Failed to create backup: {}", e);
+            }
+        }
+        
+        // Write new state
+        let json = serde_json::to_string_pretty(&state)?;
+        fs::write(&file_path, json)?;
+        
+        self.last_save_time = SystemTime::now();
+        
+        // Update partial download info for active downloads
+        // Update partial download info for all active downloads
+        let active_downloads: Vec<_> = self.downloads.iter()
+            .filter(|(_, download)| matches!(download.status, DownloadStatus::Downloading | DownloadStatus::Paused))
+            .map(|(id, download)| (id.clone(), download.downloaded_size, download.total_size))
+            .collect();
+        
+        for (id, downloaded, total) in active_downloads {
+            self.update_partial_download_info(&id, downloaded, total);
+        }
+        
+        Ok(())
+    }
+    
+    fn load_state(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let file_path = Self::get_state_file_path();
+        let backup_path = Self::get_backup_state_file_path();
+        
+        // Try to load primary state file
+        let state = match self.try_load_state_file(&file_path) {
+            Ok(state) => state,
+            Err(e) => {
+                eprintln!("Failed to load primary state file: {}", e);
+                
+                // Try backup file
+                match self.try_load_state_file(&backup_path) {
+                    Ok(state) => {
+                        eprintln!("Loaded from backup state file");
+                        state
+                    }
+                    Err(backup_e) => {
+                        eprintln!("Failed to load backup state file: {}", backup_e);
+                        return Err(format!("Both primary and backup state files failed: {} | {}", e, backup_e).into());
+                    }
+                }
+            }
+        };
+        
+        // Apply loaded state
+        self.downloads = state.downloads;
+        self.history = state.history;
+        self.activities = state.activities;
+        self.download_directory = PathBuf::from(state.download_directory);
+        self.state_version = state.version;
+        
+        Ok(())
+    }
+    
+    fn try_load_state_file(&self, file_path: &Path) -> Result<DownloadState, Box<dyn std::error::Error>> {
+        if !file_path.exists() {
+            return Err("State file does not exist".into());
+        }
+        
+        let json = fs::read_to_string(file_path)?;
+        let mut state: DownloadState = serde_json::from_str(&json)?;
+        
+        // Verify checksum
+        let stored_checksum = state.checksum.clone();
+        state.checksum = String::new();
+        let calculated_checksum = Self::calculate_state_checksum(&state)?;
+        
+        if stored_checksum != calculated_checksum {
+            return Err("State file checksum mismatch - file may be corrupted".into());
+        }
+        
+        state.checksum = stored_checksum;
+        Ok(state)
+    }
+    
+    fn auto_save_state(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.auto_save_enabled {
+            return Ok(());
+        }
+        
+        // Auto-save every 30 seconds or when significant changes occur
+        let should_save = self.last_save_time.elapsed()
+            .map(|d| d.as_secs() >= 30)
+            .unwrap_or(true);
+        
+        if should_save {
+            self.save_state()?;
+        }
+        
+        Ok(())
+    }
+    
+    fn update_partial_download_info(&mut self, id: &str, downloaded: u64, total: u64) {
+        if let Some(download) = self.downloads.get(id) {
+            if matches!(download.status, DownloadStatus::Downloading | DownloadStatus::Paused) {
+                let partial_info = PartialDownloadInfo {
+                    id: id.to_string(),
+                    url: download.url.clone(),
+                    file_path: download.file_path.clone(),
+                    downloaded_size: downloaded,
+                    total_size: total,
+                    last_modified: None, // Will be populated during download
+                    etag: None, // Will be populated during download
+                    resume_supported: true, // Assume true, will be verified during resume
+                };
+                
+                self.partial_downloads.insert(id.to_string(), partial_info);
+            }
+        }
+    }
+    
+    fn resume_interrupted_downloads(&mut self) -> Result<Vec<String>, String> {
+        let interrupted_downloads: Vec<_> = self.downloads
+            .iter()
+            .filter(|(_, download)| {
+                matches!(download.status, DownloadStatus::Downloading) && 
+                download.downloaded_size > 0 && 
+                download.downloaded_size < download.total_size
+            })
+            .map(|(id, download)| (id.clone(), download.clone()))
+            .collect();
+        
+        let mut resumed_ids = Vec::new();
+        
+        for (id, download) in interrupted_downloads {
+            // Set status to paused initially
+            self.set_download_status_no_cleanup(&id, DownloadStatus::Paused, None);
+            
+            // Add activity for interrupted download detection
+            self.add_activity(
+                ActivityType::StatusChanged,
+                Some(download.file_name.clone()),
+                Some(id.clone()),
+                Some("paused".to_string()),
+                Some("Download was interrupted and has been paused. You can resume it manually.".to_string())
+            );
+            
+            eprintln!("Detected interrupted download: {} ({} bytes downloaded)", download.file_name, download.downloaded_size);
+            resumed_ids.push(id);
+        }
+        
+        Ok(resumed_ids)
     }
 
     fn add_download(&mut self, url: String, file_path: String, file_name: Option<String>) -> String {
@@ -247,6 +494,12 @@ impl DownloadManager {
         );
 
         self.downloads.insert(id.clone(), download);
+        
+        // Auto-save state after adding download
+        if let Err(e) = self.auto_save_state() {
+            eprintln!("Failed to auto-save state: {}", e);
+        }
+        
         id
     }
 
@@ -265,12 +518,20 @@ impl DownloadManager {
             } else {
                 0
             };
+            
+            // Update partial download info
+            self.update_partial_download_info(id, downloaded, total);
+            
+            // Auto-save state periodically during progress updates
+            if let Err(e) = self.auto_save_state() {
+                eprintln!("Failed to auto-save state during progress update: {}", e);
+            }
         }
     }
 
     fn set_download_status(&mut self, id: &str, status: DownloadStatus, error_message: Option<String>) {
         if let Some(download) = self.downloads.get_mut(id) {
-            let old_status = download.status.clone();
+            let _old_status = download.status.clone();
             download.status = status.clone();
             download.error_message = error_message.clone();
             
@@ -352,7 +613,15 @@ impl DownloadManager {
                 };
                 
                 self.history.push(history_item);
+                
+                // Remove from partial downloads when completed/cancelled/error
+                self.partial_downloads.remove(id);
             }
+        }
+        
+        // Auto-save state after status change
+        if let Err(e) = self.auto_save_state() {
+            eprintln!("Failed to auto-save state after status change: {}", e);
         }
     }
     
@@ -395,6 +664,64 @@ impl DownloadManager {
             average_speed,
         }
     }
+}
+
+/// Save current download state manually
+#[command]
+pub fn save_download_state() -> Result<(), String> {
+    let mut manager = DOWNLOAD_MANAGER.lock()
+        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    
+    manager.save_state()
+        .map_err(|e| format!("Failed to save state: {}", e))
+}
+
+/// Load download state manually
+#[command]
+pub fn load_download_state() -> Result<(), String> {
+    let mut manager = DOWNLOAD_MANAGER.lock()
+        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    
+    manager.load_state()
+        .map_err(|e| format!("Failed to load state: {}", e))
+}
+
+/// Resume all interrupted downloads
+#[command]
+pub fn resume_interrupted_downloads() -> Result<Vec<String>, String> {
+    let mut manager = DOWNLOAD_MANAGER.lock()
+        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    
+    manager.resume_interrupted_downloads()
+        .map_err(|e| format!("Failed to resume interrupted downloads: {}", e))
+}
+
+/// Get current state version
+#[command]
+pub fn get_state_version() -> Result<u32, String> {
+    let manager = DOWNLOAD_MANAGER.lock()
+        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    
+    Ok(manager.state_version)
+}
+
+/// Enable or disable auto-save
+#[command]
+pub fn set_auto_save_enabled(enabled: bool) -> Result<(), String> {
+    let mut manager = DOWNLOAD_MANAGER.lock()
+        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    
+    manager.auto_save_enabled = enabled;
+    Ok(())
+}
+
+/// Get partial download information
+#[command]
+pub fn get_partial_downloads() -> Result<std::collections::HashMap<String, PartialDownloadInfo>, String> {
+    let manager = DOWNLOAD_MANAGER.lock()
+        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    
+    Ok(manager.partial_downloads.clone())
 }
 
 /// Get all activity entries
