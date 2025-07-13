@@ -10,6 +10,7 @@ use std::thread;
 use std::time::Duration;
 
 use tauri::command;
+use tauri::Emitter;
 
 use crate::hoyoplay::{ remove_all_hoyo_pass};
 use crate::patch::{
@@ -1169,20 +1170,33 @@ pub fn stop_game(_game_id: Number, _channel_id: Number) -> Result<String, String
     }
 }
 
+/// Game executable mapping: (game_id, channel_id) -> executable_name
+static GAME_EXECUTABLES: &[(u64, u64, &str)] = &[
+    (1, 1, "GenshinImpact.exe"),
+    (1, 2, "YuanShen.exe"),
+    (2, 1, "StarRail.exe"),
+    (2, 2, "StarRail.exe"),
+    (3, 1, "BlueArchive.exe"),
+];
+
 /// Get game executable names based on game_id and channel_id
 #[tauri::command]
 pub fn get_game_executable_names(game_id: Number, channel_id: Number) -> Result<String, String> {
-    match (game_id.as_u64(), channel_id.as_u64()) {
-        (Some(1), Some(1)) => Ok("GenshinImpact.exe".to_string()),
-        (Some(1), Some(2)) => Ok("YuanShen.exe".to_string()),
-        (Some(2), Some(1)) => Ok("StarRail.exe".to_string()),
-        (Some(2), Some(2)) => Ok("StarRail.exe".to_string()),
-        (Some(3), Some(1)) => Ok("BlueArchive.exe".to_string()),
-        _ => Err(format!(
-            "Unsupported game ID: {} with channel ID: {}",
-            game_id, channel_id
-        )),
+    let game_id_u64 = game_id.as_u64();
+    let channel_id_u64 = channel_id.as_u64();
+    
+    if let (Some(gid), Some(cid)) = (game_id_u64, channel_id_u64) {
+        for &(g_id, c_id, exe_name) in GAME_EXECUTABLES {
+            if g_id == gid && c_id == cid {
+                return Ok(exe_name.to_string());
+            }
+        }
     }
+    
+    Err(format!(
+        "Unsupported game ID: {} with channel ID: {}",
+        game_id, channel_id
+    ))
 }
 
 /// Get game data folder name for a game ID and channel ID
@@ -1199,4 +1213,344 @@ pub fn get_game_folder(game_id: Number, channel_id: Number) -> Result<String, St
             game_id, channel_id
         )),
     }
+}
+
+/// Drive information with size details
+#[derive(serde::Serialize)]
+pub struct DriveInfo {
+    pub letter: String,
+    pub name: String,
+    pub total_size: u64,
+    pub free_size: u64,
+    pub drive_type: String,
+}
+
+/// Get all available drives on Windows with size information
+#[tauri::command]
+#[cfg(windows)]
+pub fn get_available_drives() -> Result<Vec<DriveInfo>, String> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use winapi::um::fileapi::{GetLogicalDriveStringsW, GetDiskFreeSpaceExW, GetDriveTypeW, GetVolumeInformationW};
+    use std::ptr;
+    
+    let mut drives = Vec::new();
+    let mut buffer = vec![0u16; 256];
+    
+    unsafe {
+        let result = GetLogicalDriveStringsW(buffer.len() as u32, buffer.as_mut_ptr());
+        if result == 0 {
+            return Err("Failed to get logical drives".to_string());
+        }
+        
+        let mut i = 0;
+        while i < result as usize && buffer[i] != 0 {
+            let mut end = i;
+            while end < buffer.len() && buffer[end] != 0 {
+                end += 1;
+            }
+            
+            let drive_string = OsString::from_wide(&buffer[i..end]);
+            if let Ok(drive) = drive_string.into_string() {
+                let drive_letter = drive.trim_end_matches('\\').to_string();
+                
+                // Get drive size information
+                let drive_path: Vec<u16> = drive.encode_utf16().chain(std::iter::once(0)).collect();
+                let mut free_bytes: winapi::shared::ntdef::ULARGE_INTEGER = std::mem::zeroed();
+                let mut total_bytes: winapi::shared::ntdef::ULARGE_INTEGER = std::mem::zeroed();
+                
+                let size_result = GetDiskFreeSpaceExW(
+                    drive_path.as_ptr(),
+                    &mut free_bytes,
+                    &mut total_bytes,
+                    ptr::null_mut(),
+                );
+                
+                // Get drive type
+                let drive_type_code = GetDriveTypeW(drive_path.as_ptr());
+                let drive_type = match drive_type_code {
+                    2 => "Removable".to_string(),
+                    3 => "Fixed".to_string(),
+                    4 => "Network".to_string(),
+                    5 => "CD-ROM".to_string(),
+                    6 => "RAM".to_string(),
+                    _ => "Unknown".to_string(),
+                };
+                
+                // Get volume label (disk name)
+                let mut volume_name_buffer = vec![0u16; 256];
+                let volume_info_result = GetVolumeInformationW(
+                    drive_path.as_ptr(),
+                    volume_name_buffer.as_mut_ptr(),
+                    volume_name_buffer.len() as u32,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    0,
+                );
+                
+                let disk_name = if volume_info_result != 0 {
+                    // Find the null terminator
+                    let null_pos = volume_name_buffer.iter().position(|&x| x == 0).unwrap_or(volume_name_buffer.len());
+                    let volume_name = OsString::from_wide(&volume_name_buffer[..null_pos]);
+                    volume_name.to_string_lossy().to_string()
+                } else {
+                    String::new()
+                };
+                
+                let display_name = if disk_name.is_empty() {
+                    format!("Local Disk ({})", drive_letter)
+                } else {
+                    format!("{} ({})", disk_name, drive_letter)
+                };
+                
+                if size_result != 0 {
+                    drives.push(DriveInfo {
+                        letter: drive_letter,
+                        name: display_name,
+                        total_size: *total_bytes.QuadPart(),
+                        free_size: *free_bytes.QuadPart(),
+                        drive_type,
+                    });
+                } else {
+                    // If we can't get size info, still add the drive with 0 sizes
+                    drives.push(DriveInfo {
+                        letter: drive_letter,
+                        name: display_name,
+                        total_size: 0,
+                        free_size: 0,
+                        drive_type,
+                    });
+                }
+            }
+            
+            i = end + 1;
+        }
+    }
+    
+    Ok(drives)
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn get_available_drives() -> Result<Vec<DriveInfo>, String> {
+    Err("Drive enumeration is only supported on Windows".to_string())
+}
+
+/// Scan progress information
+#[derive(serde::Serialize, Clone)]
+pub struct ScanProgress {
+    pub current_path: String,
+    pub files_scanned: u32,
+    pub directories_scanned: u32,
+    pub found_paths: Vec<String>,
+}
+
+/// Scan a drive for game executables with progress updates
+#[tauri::command]
+pub async fn scan_drive_for_games(
+    drive: String,
+    game_id: Number,
+    channel: Number,
+    window: tauri::Window,
+) -> Result<Vec<String>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::fs;
+        use std::path::{Path, PathBuf};
+        use std::sync::{Arc, Mutex};
+        use tokio::time::{sleep, Duration};
+        
+        let exe_name = get_game_executable_names(game_id, channel)?;
+        let found_paths = Arc::new(Mutex::new(Vec::new()));
+        let files_scanned = Arc::new(Mutex::new(0u32));
+        let directories_scanned = Arc::new(Mutex::new(0u32));
+        
+        // Add backslash if not present
+        let drive_path = if drive.ends_with('\\') {
+            drive
+        } else {
+            format!("{}\\", drive)
+        };
+        
+        // Async recursive function to scan directories
+        async fn scan_directory(
+            dir: &Path,
+            exe_name: &str,
+            found_paths: Arc<Mutex<Vec<String>>>,
+            files_scanned: Arc<Mutex<u32>>,
+            directories_scanned: Arc<Mutex<u32>>,
+            window: &tauri::Window,
+            max_depth: usize,
+            current_depth: usize,
+        ) {
+            if current_depth >= max_depth {
+                return;
+            }
+            
+            // Update directory count
+            {
+                let mut dir_count = directories_scanned.lock().unwrap();
+                *dir_count += 1;
+            }
+            
+            if let Ok(entries) = fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    
+                    if path.is_file() {
+                        // Update file count
+                        {
+                            let mut file_count = files_scanned.lock().unwrap();
+                            *file_count += 1;
+                        }
+                        
+                        if let Some(file_name) = path.file_name() {
+                            if file_name.to_string_lossy().eq_ignore_ascii_case(exe_name) {
+                                if let Some(parent) = path.parent() {
+                                    let parent_path = parent.to_string_lossy().to_string();
+                                    {
+                                        let mut paths = found_paths.lock().unwrap();
+                                        paths.push(parent_path);
+                                    }
+                                }
+                            }
+                        }
+                    } else if path.is_dir() {
+                        // Skip system directories and hidden directories
+                        if let Some(dir_name) = path.file_name() {
+                            let dir_name_str = dir_name.to_string_lossy();
+                            if !dir_name_str.starts_with('.') &&
+                               !dir_name_str.eq_ignore_ascii_case("windows") &&
+                               !dir_name_str.eq_ignore_ascii_case("system volume information") &&
+                               !dir_name_str.eq_ignore_ascii_case("$recycle.bin") &&
+                               !dir_name_str.eq_ignore_ascii_case("program files") &&
+                               !dir_name_str.eq_ignore_ascii_case("program files (x86)") {
+                                
+                                // Emit progress update every 10 directories
+                                let dir_count = *directories_scanned.lock().unwrap();
+                                if dir_count % 10 == 0 {
+                                    let progress = ScanProgress {
+                                        current_path: path.to_string_lossy().to_string(),
+                                        files_scanned: *files_scanned.lock().unwrap(),
+                                        directories_scanned: dir_count,
+                                        found_paths: found_paths.lock().unwrap().clone(),
+                                    };
+                                    let _ = window.emit("scan-progress", &progress);
+                                }
+                                
+                                Box::pin(scan_directory(
+                                    &path, 
+                                    exe_name, 
+                                    found_paths.clone(), 
+                                    files_scanned.clone(),
+                                    directories_scanned.clone(),
+                                    window, 
+                                    max_depth, 
+                                    current_depth + 1
+                                )).await;
+                            }
+                        }
+                    }
+                    
+                    // Small delay to prevent blocking
+                    if *files_scanned.lock().unwrap() % 100 == 0 {
+                        sleep(Duration::from_millis(1)).await;
+                    }
+                }
+            }
+        }
+        
+        let drive_path_buf = PathBuf::from(&drive_path);
+        
+        // Emit initial progress
+        let initial_progress = ScanProgress {
+            current_path: drive_path.clone(),
+            files_scanned: 0,
+            directories_scanned: 0,
+            found_paths: Vec::new(),
+        };
+        let _ = window.emit("scan-progress", &initial_progress);
+        
+        scan_directory(
+            &drive_path_buf, 
+            &exe_name, 
+            found_paths.clone(),
+            files_scanned.clone(),
+            directories_scanned.clone(),
+            &window,
+            6, // Max depth of 6
+            0
+        ).await;
+        
+        // Emit final progress
+        let final_found_paths = found_paths.lock().unwrap().clone();
+        let final_progress = ScanProgress {
+            current_path: "Scan completed".to_string(),
+            files_scanned: *files_scanned.lock().unwrap(),
+            directories_scanned: *directories_scanned.lock().unwrap(),
+            found_paths: final_found_paths.clone(),
+        };
+        let _ = window.emit("scan-progress", &final_progress);
+        
+        Ok(final_found_paths)
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Drive scanning is only supported on Windows".to_string())
+    }
+}
+
+/// Get all supported game name codes for HoyoPlay registry lookup
+#[tauri::command]
+pub fn get_all_game_name_codes() -> Result<Vec<(Number, Number, String)>, String> {
+    let mut codes = Vec::new();
+    
+    // Genshin Impact
+    codes.push((Number::from(1), Number::from(1), "hk4e_global".to_string()));
+    codes.push((Number::from(1), Number::from(2), "hk4e_cn".to_string()));
+    
+    // Honkai: Star Rail
+    codes.push((Number::from(2), Number::from(1), "hkrpg_global".to_string()));
+    codes.push((Number::from(2), Number::from(2), "hkrpg_cn".to_string()));
+    
+    Ok(codes)
+}
+
+/// Get all possible game executable names from GAME_EXECUTABLES
+fn get_all_possible_executables() -> Vec<String> {
+    let mut executables = Vec::new();
+    
+    // Get all unique executable names from the static data
+    for &(_, _, exe_name) in GAME_EXECUTABLES {
+        let exe_string = exe_name.to_string();
+        if !executables.contains(&exe_string) {
+            executables.push(exe_string);
+        }
+    }
+    
+    executables
+}
+
+/// Get MD5 hash of the main game executable in the specified path
+#[tauri::command]
+pub fn get_game_md5(path: String) -> Result<String, String> {
+    use std::path::Path;
+    use crate::utils::calculate_md5;
+    
+    let game_path = Path::new(&path);
+    
+    // Get all possible executables from get_game_executable_names to avoid duplication
+    let possible_executables = get_all_possible_executables();
+    
+    for exe_name in &possible_executables {
+        let exe_path = game_path.join(exe_name);
+        if exe_path.exists() {
+            return calculate_md5(&exe_path);
+        }
+    }
+    
+    Err("No supported game executable found in the specified path".to_string())
 }

@@ -72,6 +72,30 @@ export interface TauriCommands {
     channel: number,
     md5: string
   ): Promise<string>;
+  get_available_drives(): Promise<DriveInfo[]>;
+  scan_drive_for_games(
+    drive: string,
+    gameId: number,
+    channel: number
+  ): Promise<string[]>;
+  get_all_game_name_codes(): Promise<[number, number, string][]>
+  get_game_md5(path: string): Promise<string>
+  get_hoyoplay_list_game(): Promise<Array<[string, string]>>;
+}
+
+export interface DriveInfo {
+  letter: string;
+  name: string;
+  total_size: number;
+  free_size: number;
+  drive_type: string;
+}
+
+export interface ScanProgress {
+  current_path: string;
+  files_scanned: number;
+  directories_scanned: number;
+  found_paths: string[];
 }
 
 export {};

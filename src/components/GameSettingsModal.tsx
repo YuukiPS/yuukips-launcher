@@ -3,8 +3,8 @@ import { X, Folder, RotateCcw, HardDrive, Calendar, Clock, Check, Trash2, Plus, 
 import { Game } from '../types';
 import { GameApiService } from '../services/gameApi';
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
 import { PatchErrorModal, PatchErrorInfo } from './PatchErrorModal';
+import { DiskScanModal } from './DiskScanModal';
 
 interface GameSettingsModalProps {
   game: Game;
@@ -42,6 +42,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const [patchErrorModalOpen, setPatchErrorModalOpen] = useState(false);
   const [patchErrorInfo, setPatchErrorInfo] = useState<PatchErrorInfo | null>(null);
   const [deleteHoyoPass, setDeleteHoyoPass] = useState<boolean>(true);
+  const [diskScanModalOpen, setDiskScanModalOpen] = useState(false);
+
 
   // Get available versions dynamically from game engine data
   const availableVersions = GameApiService.getAvailableVersionsForPlatform(game, 1);
@@ -490,102 +492,99 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
     }
   };
 
-  const handleRelocate = async () => {
+  const handleDiskScanPathSelected = async (selectedPath: string) => {
     try {
-      const selectedPath = await open({
-        directory: true,
-        multiple: false,
-        defaultPath: getCurrentDirectory() || undefined,
-        title: `Select directory for ${selectedVersion} (Channel ${getChannelName(selectedChannel)})`
-      });
-
-      if (selectedPath && typeof selectedPath === 'string') {
-        // Validate the selected directory before setting it
-        const isValid = await validateGameDirectory(selectedPath);
-        if (!isValid) {
-          return; // Validation failed, error already shown
-        }
-
-        const updatedDirectories = {
-          ...versionDirectories,
-          [selectedVersion]: {
-            ...versionDirectories[selectedVersion],
-            [selectedChannel]: selectedPath
-          }
-        };
-        saveDirectories(updatedDirectories);
-        showNotification(`Directory for ${selectedVersion} (Channel ${getChannelName(selectedChannel)}) updated successfully!`);
+      // Validate the selected directory
+      const isValid = await validateGameDirectory(selectedPath);
+      if (!isValid) {
+        return; // Validation failed, error already shown
       }
+
+      // Save the selected directory
+      const updatedDirectories = {
+        ...versionDirectories,
+        [selectedVersion]: {
+          ...versionDirectories[selectedVersion],
+          [selectedChannel]: selectedPath
+        }
+      };
+      saveDirectories(updatedDirectories);
+      showNotification(`Game directory for ${selectedVersion} (Channel ${getChannelName(selectedChannel)}) set successfully!\n\nPath: ${selectedPath}`);
     } catch (error) {
-      console.error('Failed to open directory dialog:', error);
-      showNotification('Failed to open directory selection dialog', 'error');
+      console.error('Failed to set selected path:', error);
+      showNotification('Failed to set selected path', 'error');
     }
+  };
+
+  const handleRelocate = async () => {
+    // Directly open disk scan modal for automatic game detection
+    setDiskScanModalOpen(true);
   };
 
   const handleAutoDetect = async () => {
     try {
-      // Only support game_id 1 and 2 for auto detection
-      if (game.id !== 1 && game.id !== 2) {
-        showNotification('Auto detect is only supported for Genshin Impact and Honkai: Star Rail', 'error');
-        return;
-      }
-
-      // Get list of installed games from HoyoPlay
-      const installedGames = await invoke('get_hoyoplay_list_game') as Array<[string, string]>;
+      setIsValidating(true);
       
-      if (!installedGames || installedGames.length === 0) {
-        showNotification('No games found in HoyoPlay registry. Please install the game through HoyoPlay first.', 'error');
-        return;
-      }
-
-      // Filter games based on current game and channel
-      const gameNameCodes = {
-        1: { 1: 'hk4e_global', 2: 'hk4e_cn' }, // Genshin Impact
-        2: { 1: 'hkrpg_global', 2: 'hkrpg_cn' } // Honkai: Star Rail
-      };
-
-      const targetNameCode = gameNameCodes[game.id as keyof typeof gameNameCodes]?.[selectedChannel as keyof typeof gameNameCodes[1]];
-      
-      if (!targetNameCode) {
-        showNotification('Unsupported game or channel for auto detection', 'error');
-        return;
-      }
-
-      // Find matching game installation
-      const matchingGame = installedGames.find(([nameCode]) => nameCode === targetNameCode);
-      
-      if (!matchingGame) {
-        showNotification(`No installation found for ${selectedVersion} (Channel ${getChannelName(selectedChannel)}) in HoyoPlay registry`, 'error');
-        return;
-      }
-
-      const [, installPath] = matchingGame;
-      
-      // Show confirmation popup with detected path
-      const userConfirmed = window.confirm(
-        `Auto-detected game installation:\n\nPath: ${installPath}\n\nDo you want to set this as the game directory for ${selectedVersion} (Channel ${getChannelName(selectedChannel)})?`
-      );
-
-      if (userConfirmed) {
-        // Validate the auto-detected directory before setting it
-        const isValid = await validateGameDirectory(installPath);
-        if (!isValid) {
-          return; // Validation failed, error already shown
+      // First, try to get games from HoyoPlay registry
+      try {
+        const installedGamesRaw = await invoke('get_hoyoplay_list_game') as Array<[string, string]>;
+        
+        // Convert array of arrays to object for easier lookup
+        const installedGames: Record<string, string> = {};
+        if (installedGamesRaw && Array.isArray(installedGamesRaw)) {
+          installedGamesRaw.forEach(([nameCode, path]) => {
+            installedGames[nameCode] = path;
+          });
         }
+        
+        if (installedGames && Object.keys(installedGames).length > 0) {
+          // Get all supported game name codes
+          const allGameCodes = await invoke('get_all_game_name_codes') as Array<[number, number, string]>;
+          
+          // Find matching game installation for current game and channel
+          const matchingCode = allGameCodes.find(([gameId, channelId]) => 
+            gameId === game.id && channelId === selectedChannel
+          );
+          
+          if (matchingCode) {
+            const [, , nameCode] = matchingCode;
+            const installPath = installedGames[nameCode];
+            
+            if (installPath) {
+              // Automatically set the detected path without confirmation
+              const isValid = await validateGameDirectory(installPath);
+              if (!isValid) {
+                showNotification(`Auto-detected directory for ${selectedVersion} (Channel ${getChannelName(selectedChannel)}) is invalid`, 'error');
+                return;
+              }
 
-        const updatedDirectories = {
-          ...versionDirectories,
-          [selectedVersion]: {
-            ...versionDirectories[selectedVersion],
-            [selectedChannel]: installPath
+              const updatedDirectories = {
+                ...versionDirectories,
+                [selectedVersion]: {
+                  ...versionDirectories[selectedVersion],
+                  [selectedChannel]: installPath
+                }
+              };
+              saveDirectories(updatedDirectories);
+              showNotification(`Auto-detected directory for ${selectedVersion} (Channel ${getChannelName(selectedChannel)}) set successfully!`);
+            } else {
+              showNotification(`Installations of ${game.title} found on this computer, but not detected by Hoyoplay`, 'error');
+            }
+          } else {
+            showNotification(`No matching installations of ${game.title} found on this computer`, 'error');
           }
-        };
-        saveDirectories(updatedDirectories);
-        showNotification(`Auto-detected directory for ${selectedVersion} (Channel ${getChannelName(selectedChannel)}) set successfully!`);
+        } else {
+          showNotification(`No ${game.title} installations found on this computer`, 'error');
+        }
+      } catch (hoyoplayError) {
+        showNotification(`Failed to auto-detect ${game.title} directory: ${hoyoplayError}`, 'error');
       }
+      
     } catch (error) {
       console.error('Failed to auto-detect game directory:', error);
       showNotification('Failed to auto-detect game directory', 'error');
+    } finally {
+      setIsValidating(false);
     }
   };
 
@@ -862,13 +861,13 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                     <div className="flex space-x-3">
                       <button
                         onClick={handleAutoDetect}
-                        disabled={isGameRunning || isValidating || (game.id !== 1 && game.id !== 2)}
+                        disabled={isGameRunning || isValidating}
                         className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
-                          isGameRunning || isValidating || (game.id !== 1 && game.id !== 2)
+                          isGameRunning || isValidating
                             ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
                             : 'bg-blue-600 text-white hover:bg-blue-700'
                         }`}
-                        title={game.id !== 1 && game.id !== 2 ? 'Auto detect is only supported for Genshin Impact and Honkai: Star Rail' : ''}
+                        title="Auto detect game installation from HoyoPlay registry or scan drives"
                       >
                         {isValidating ? (
                           <>
@@ -1362,6 +1361,17 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
           } }
           errorInfo={patchErrorInfo} gameTitle={''}        />
       )}
+      
+      {/* Disk Scan Modal */}
+      <DiskScanModal
+        isOpen={diskScanModalOpen}
+        onClose={() => setDiskScanModalOpen(false)}
+        onPathSelected={handleDiskScanPathSelected}
+        gameId={game.id}
+        channel={selectedChannel}
+      />
+      
+
     </div>
-  );
-};
+   );
+ };
