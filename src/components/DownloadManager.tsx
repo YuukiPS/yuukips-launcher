@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Download,
   Pause,
@@ -70,18 +70,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   const [isResizing, setIsResizing] = useState(false);
   const [resizingColumn, setResizingColumn] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (isOpen) {
-      loadData();
-      loadDefaultDownloadFolder();
-      
-      // Set up polling for download updates
-      const interval = setInterval(loadData, 1000);
-      return () => clearInterval(interval);
-    }
-  }, [isOpen]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const [activeDownloads, downloadHistory, downloadStats, activityEntries] = await Promise.all([
         DownloadService.getActiveDownloads(),
@@ -97,7 +86,23 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
     } catch (error) {
       console.error('Failed to load download data:', error);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      // Resume interrupted downloads first, then load data
+      const initializeDownloads = async () => {
+        await loadData();
+      };
+      
+      initializeDownloads();
+      loadDefaultDownloadFolder();
+      
+      // Set up polling for download updates
+      const interval = setInterval(loadData, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [isOpen, loadData]);
 
   const loadActivities = async (): Promise<ActivityEntry[]> => {
     try {

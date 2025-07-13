@@ -41,6 +41,8 @@ pub struct DownloadItem {
     pub end_time: Option<u64>,
     #[serde(rename = "errorMessage")]
     pub error_message: Option<String>,
+    #[serde(rename = "userPaused", default)]
+    pub user_paused: bool, // Track if pause was initiated by user
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -404,19 +406,51 @@ impl DownloadManager {
     }
     
     fn resume_interrupted_downloads(&mut self) -> Result<Vec<String>, String> {
+        // Debug: Log all downloads and their status
+        eprintln!("=== Resume Interrupted Downloads Debug ===");
+        eprintln!("Total downloads in manager: {}", self.downloads.len());
+        for (id, download) in &self.downloads {
+            eprintln!("Download {}: status={:?}, downloaded={}, total={}, user_paused={}", 
+                id, download.status, download.downloaded_size, download.total_size, download.user_paused);
+        }
+        
         let interrupted_downloads: Vec<_> = self.downloads
             .iter()
             .filter(|(_, download)| {
-                matches!(download.status, DownloadStatus::Downloading) && 
-                download.downloaded_size > 0 && 
-                download.downloaded_size < download.total_size
+                let is_interrupted = matches!(download.status, DownloadStatus::Downloading) && 
+                    download.downloaded_size > 0 && 
+                    download.downloaded_size < download.total_size;
+                eprintln!("Checking download for interruption: status={:?}, downloaded={}, total={}, is_interrupted={}", 
+                    download.status, download.downloaded_size, download.total_size, is_interrupted);
+                is_interrupted
             })
             .map(|(id, download)| (id.clone(), download.clone()))
             .collect();
         
+        let paused_downloads: Vec<_> = self.downloads
+            .iter()
+            .filter(|(_, download)| {
+                let is_auto_resumable = matches!(download.status, DownloadStatus::Paused) && 
+                    !download.user_paused;
+                eprintln!("Checking download for auto-resume: status={:?}, user_paused={}, is_auto_resumable={}", 
+                    download.status, download.user_paused, is_auto_resumable);
+                is_auto_resumable
+            })
+            .map(|(id, download)| (id.clone(), download.clone()))
+            .collect();
+        
+        eprintln!("Found {} interrupted downloads and {} paused downloads", 
+            interrupted_downloads.len(), paused_downloads.len());
+        
         let mut resumed_ids = Vec::new();
         
+        // Handle interrupted downloads (set to paused and mark for auto-resume)
         for (id, download) in interrupted_downloads {
+            // Mark as not user-paused since this was an interruption, not user action
+            if let Some(download_mut) = self.downloads.get_mut(&id) {
+                download_mut.user_paused = false;
+            }
+            
             // Set status to paused initially
             self.set_download_status_no_cleanup(&id, DownloadStatus::Paused, None);
             
@@ -426,10 +460,27 @@ impl DownloadManager {
                 Some(download.file_name.clone()),
                 Some(id.clone()),
                 Some("paused".to_string()),
-                Some("Download was interrupted and has been paused. You can resume it manually.".to_string())
+                Some("Download was interrupted and will be auto-resumed.".to_string())
             );
             
             eprintln!("Detected interrupted download: {} ({} bytes downloaded)", download.file_name, download.downloaded_size);
+            resumed_ids.push(id.clone());
+            
+            // Mark for auto-resume but don't immediately start downloading
+            // The actual resumption will be handled by the frontend when it calls resume_download
+            eprintln!("Marked interrupted download for auto-resume: {} ({} bytes downloaded)", download.file_name, download.downloaded_size);
+        }
+        
+        // Mark paused downloads that were not manually paused for auto-resume
+        for (id, download) in paused_downloads {
+            // Reset user_paused flag but keep status as paused
+            // The frontend will handle the actual resumption
+            if let Some(download_mut) = self.downloads.get_mut(&id) {
+                download_mut.user_paused = false;
+            }
+            
+            eprintln!("Marked paused download for auto-resume: {} ({} bytes downloaded)", download.file_name, download.downloaded_size);
+            
             resumed_ids.push(id);
         }
         
@@ -473,6 +524,7 @@ impl DownloadManager {
                 .as_secs(),
             end_time: None,
             error_message: None,
+            user_paused: false,
         };
 
         // Add activity entry for file addition
@@ -790,14 +842,19 @@ pub async fn start_download(
     let file_path_clone = file_path.clone();
     
     println!("[Rust] Spawning background task for download ID: {}", download_id);
-    tauri::async_runtime::spawn(async move {
+    let _spawn_result = tauri::async_runtime::spawn(async move {
         println!("[Rust] Background task started for download ID: {}", download_id_clone);
         if let Err(e) = perform_download(download_id_clone.clone(), url_clone, file_path_clone).await {
             println!("[Rust] Download failed for ID {}: {}", download_id_clone, e);
+            // Update status to error
+            if let Ok(mut manager) = DOWNLOAD_MANAGER.lock() {
+                manager.set_download_status(&download_id_clone, DownloadStatus::Error, Some(e));
+            }
         } else {
             println!("[Rust] Download completed successfully for ID: {}", download_id_clone);
         }
     });
+    println!("[Rust] Background task spawned successfully for download ID: {}, task handle created", download_id);
 
     println!("[Rust] Download initiation completed, returning ID: {}", download_id);
     Ok(download_id)
@@ -819,6 +876,11 @@ pub fn pause_download(download_id: String) -> Result<(), String> {
             token.store(true, Ordering::Relaxed);
         }
         
+        // Set user_paused to true for manual pause
+        if let Some(download) = manager.downloads.get_mut(&download_id) {
+            download.user_paused = true;
+        }
+        
         // Set status to paused without cleaning up cancellation token
         manager.set_download_status_no_cleanup(&download_id, DownloadStatus::Paused, None);
     }
@@ -837,6 +899,11 @@ pub async fn resume_download(download_id: String) -> Result<(), String> {
             if download.status == DownloadStatus::Paused {
                 let url = download.url.clone();
                 let file_path = download.file_path.clone();
+                
+                // Reset user_paused flag when manually resuming
+                if let Some(download_mut) = manager.downloads.get_mut(&download_id) {
+                    download_mut.user_paused = false;
+                }
                 
                 // Remove old cancellation token and set status to downloading
                 manager.cancellation_tokens.remove(&download_id);
@@ -1262,7 +1329,7 @@ pub fn get_available_disk_space(path: String) -> Result<u64, String> {
 
 /// Core download function using reqwest with robust error handling
 async fn perform_download(download_id: String, url: String, file_path: String) -> Result<(), String> {
-    println!("[Rust] Starting perform_download for ID: {}, URL: {}, Path: {}", download_id, url, file_path);
+    println!("\n=== PERFORM_DOWNLOAD STARTED ===\nID: {}\nURL: {}\nPath: {}\n=== PERFORM_DOWNLOAD STARTED ===", download_id, url, file_path);
     
     // Create cancellation token
     let cancellation_token = Arc::new(AtomicBool::new(false));

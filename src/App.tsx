@@ -12,6 +12,7 @@ import { socialLinks } from './data/socialLinks';
 import { Game } from './types';
 import { GameApiService } from './services/gameApi';
 import { UpdateService, UpdateInfo } from './services/updateService';
+import { DownloadService } from './services/downloadService';
 import { Megaphone, MessageCircle, Twitter, Youtube, Tv, Loader } from 'lucide-react';
 
 function App() {
@@ -130,10 +131,23 @@ function App() {
     }
   }, [updateCheckCompleted]);
   
-  // Function to manually refresh games list and check for updates on startup
+  // Function to manually refresh games list, check for updates, and resume interrupted downloads on startup
   useEffect(() => {
-    loadGames();
-    checkForUpdates();
+    const initializeApp = async () => {
+      // Resume interrupted downloads first
+      try {
+        await DownloadService.resumeInterruptedDownloads();
+        console.log('Interrupted downloads resumed on app startup');
+      } catch (error) {
+        console.error('Failed to resume interrupted downloads on startup:', error);
+      }
+      
+      // Then load games and check for updates
+      loadGames();
+      checkForUpdates();
+    };
+    
+    initializeApp();
   }, [loadGames, checkForUpdates]);
 
   // Disable right-click context menu globally

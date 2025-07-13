@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Gamepad2, Settings, User, Bell, Download } from 'lucide-react';
+import { Gamepad2, Settings, User, Bell } from 'lucide-react';
 import { WindowControls } from './WindowControls';
 import { DebugSettingsModal } from './DebugSettingsModal';
 import { DownloadManager } from './DownloadManager';
+import { DownloadIndicator } from './DownloadIndicator';
 import packageJson from '../../package.json';
 
 interface HeaderProps {
@@ -36,13 +37,7 @@ export const Header: React.FC<HeaderProps> = ({ onForceUpdate }) => {
             <button className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors duration-200">
               <Bell className="w-5 h-5" />
             </button>
-            <button 
-              onClick={() => setIsDownloadManagerOpen(true)}
-              className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors duration-200"
-              title="Downloads"
-            >
-              <Download className="w-5 h-5" />
-            </button>
+            <DownloadIndicator onClick={() => setIsDownloadManagerOpen(true)} />
             <button 
               onClick={() => setIsDebugSettingsOpen(true)}
               className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors duration-200"

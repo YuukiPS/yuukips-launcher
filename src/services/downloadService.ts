@@ -354,4 +354,30 @@ export class DownloadService {
       throw new Error(`Failed to get available disk space: ${error}`);
     }
   }
+
+  /**
+   * Resume interrupted downloads and auto-resume them
+   */
+  static async resumeInterruptedDownloads(): Promise<string[]> {
+    console.log('[DownloadService] Resuming interrupted downloads');
+    try {
+      const interruptedIds = await invoke<string[]>('resume_interrupted_downloads');
+      console.log('[DownloadService] Found interrupted downloads:', interruptedIds);
+      
+      // Auto-resume each interrupted download
+      for (const downloadId of interruptedIds) {
+        try {
+          await this.resumeDownload(downloadId);
+          console.log('[DownloadService] Auto-resumed interrupted download:', downloadId);
+        } catch (error) {
+          console.error('[DownloadService] Failed to auto-resume download:', downloadId, error);
+        }
+      }
+      
+      return interruptedIds;
+    } catch (error) {
+      console.error('[DownloadService] Failed to resume interrupted downloads:', error);
+      throw new Error(`Failed to resume interrupted downloads: ${error}`);
+    }
+  }
 }

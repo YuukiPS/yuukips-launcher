@@ -94,6 +94,7 @@ export interface DownloadItem {
   startTime: number;
   endTime?: number;
   errorMessage?: string;
+  userPaused?: boolean; // Track if pause was initiated by user
 }
 
 export interface DownloadHistory {
