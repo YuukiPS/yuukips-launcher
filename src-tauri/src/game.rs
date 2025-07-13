@@ -9,17 +9,16 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-
 use tauri::command;
 
+use crate::hoyoplay::{ remove_all_hoyo_pass};
 use crate::patch::{
     check_and_apply_patches, cleanup_remaining_patches, restore_from_backups,
     restore_original_files,
 };
 use crate::proxy;
-use crate::hoyoplay::{get_game_executable_names, remove_all_hoyo_pass};
-use crate::utils::create_hidden_command;
 use crate::system::start_task_manager_monitor_internal;
+use crate::utils::create_hidden_command;
 
 // Global game monitoring state
 static GAME_MONITOR_STATE: once_cell::sync::Lazy<Arc<Mutex<Option<GameMonitorHandle>>>> =
@@ -102,9 +101,16 @@ pub fn check_patch_message(
         // Check patches to get message without applying them
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| format!("Failed to create async runtime: {}", e))?;
-        
+
         let result = rt.block_on(async {
-            match crate::patch::fetch_patch_info(_game_id.clone(), _version.clone(), _channel.clone(), md5_str.clone()).await {
+            match crate::patch::fetch_patch_info(
+                _game_id.clone(),
+                _version.clone(),
+                _channel.clone(),
+                md5_str.clone(),
+            )
+            .await
+            {
                 Ok(patch_response) => {
                     if !patch_response.message.is_empty() {
                         PatchCheckResult {
@@ -120,16 +126,14 @@ pub fn check_patch_message(
                         }
                     }
                 }
-                Err(_) => {
-                    PatchCheckResult {
-                        has_message: false,
-                        message: String::new(),
-                        can_proceed: true,
-                    }
-                }
+                Err(_) => PatchCheckResult {
+                    has_message: false,
+                    message: String::new(),
+                    can_proceed: true,
+                },
             }
         });
-        
+
         match serde_json::to_string(&result) {
             Ok(json) => Ok(json),
             Err(e) => Err(format!("Failed to serialize patch check result: {}", e)),
@@ -267,7 +271,11 @@ pub fn launch_game(
             match remove_all_hoyo_pass() {
                 Ok(deleted_entries) => {
                     if !deleted_entries.is_empty() {
-                        println!("🗑️ Removed {} HoyoPass registry entries: {:?}", deleted_entries.len(), deleted_entries);
+                        println!(
+                            "🗑️ Removed {} HoyoPass registry entries: {:?}",
+                            deleted_entries.len(),
+                            deleted_entries
+                        );
                     }
                 }
                 Err(e) => {
@@ -351,22 +359,20 @@ pub fn validate_game_directory(
         // Calculate MD5 for game executable (same as launch_game)
         let file_contents = std::fs::read(&game_exe_path)
             .map_err(|e| format!("Failed to read game executable for MD5 calculation: {}", e))?;
-        
+
         if file_contents.is_empty() {
             return Err(format!(
                 "Game executable appears to be corrupted (0 bytes): {}",
                 game_exe_path.display()
             ));
         }
-        
+
         let md5 = md5::compute(&file_contents);
         let md5_str = format!("{:x}", md5);
 
         Ok(format!(
             "Valid game directory: {} (executable: {}, MD5: {})",
-            _game_folder_path,
-            game_exe_name,
-            md5_str
+            _game_folder_path, game_exe_name, md5_str
         ))
     }
 
@@ -397,11 +403,14 @@ pub fn check_game_installed(_game_id: Number, _version: String, _game_folder_pat
 }
 
 /// Internal function to check if a specific game is running
-pub fn check_game_running_internal(_game_id: &Number, _channel_id: &Number) -> Result<bool, String> {
+pub fn check_game_running_internal(
+    _game_id: &Number,
+    _channel_id: &Number,
+) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
         let game_exe_name = get_game_executable_names(_game_id.clone(), _channel_id.clone())?;
-        
+
         let output = create_hidden_command("tasklist")
             .args([
                 "/FI",
@@ -429,9 +438,12 @@ pub fn check_game_running_internal(_game_id: &Number, _channel_id: &Number) -> R
         } else {
             // If tasklist fails, return the error
             let error_msg = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("tasklist failed for {}: {}", game_exe_name, error_msg));
+            return Err(format!(
+                "tasklist failed for {}: {}",
+                game_exe_name, error_msg
+            ));
         }
-        
+
         Ok(false)
     }
 
@@ -452,7 +464,7 @@ pub fn kill_game_processes(_game_id: &Number, _channel_id: &Number) -> Result<St
     #[cfg(target_os = "windows")]
     {
         let game_exe_name = get_game_executable_names(_game_id.clone(), _channel_id.clone())?;
-        
+
         // First check if the process is running
         let check_output = create_hidden_command("tasklist")
             .args([
@@ -513,20 +525,13 @@ pub fn kill_game_processes(_game_id: &Number, _channel_id: &Number) -> Result<St
                                 std::thread::sleep(Duration::from_millis(1000));
                                 Ok(format!("Force killed game process: {}", game_exe_name))
                             }
-                            _ => {
-                                Err(format!(
-                                    "Failed to kill {}: {}",
-                                    game_exe_name, error_msg
-                                ))
-                            }
+                            _ => Err(format!("Failed to kill {}: {}", game_exe_name, error_msg)),
                         }
                     }
-                    Err(e) => {
-                        Err(format!(
-                            "Failed to execute taskkill for {}: {}",
-                            game_exe_name, e
-                        ))
-                    }
+                    Err(e) => Err(format!(
+                        "Failed to execute taskkill for {}: {}",
+                        game_exe_name, e
+                    )),
                 }
             } else {
                 Ok("No game processes were running".to_string())
@@ -555,15 +560,17 @@ pub fn kill_game(game_id: Number, channel_id: Number) -> Result<String, String> 
             }
         }
     }
-    
-    
-    
+
     kill_game_processes(&game_id, &channel_id)
 }
 
 /// Start monitoring a specific game - Single source of truth for game monitoring
 #[command]
-pub fn start_game_monitor(app_handle: tauri::AppHandle, game_id: Number, channel_id: Number) -> Result<String, String> {
+pub fn start_game_monitor(
+    app_handle: tauri::AppHandle,
+    game_id: Number,
+    channel_id: Number,
+) -> Result<String, String> {
     let mut monitor_state = GAME_MONITOR_STATE
         .lock()
         .map_err(|e| format!("Failed to lock monitor state: {}", e))?;
@@ -587,7 +594,7 @@ pub fn start_game_monitor(app_handle: tauri::AppHandle, game_id: Number, channel
         let mut proxy_started_by_us = false;
         let mut consecutive_errors = 0;
         const MAX_CONSECUTIVE_ERRORS: u32 = 5;
-        
+
         // Wait for game to actually start before beginning monitoring
         let mut game_started = false;
         let mut startup_checks = 0;
@@ -616,23 +623,33 @@ pub fn start_game_monitor(app_handle: tauri::AppHandle, game_id: Number, channel
             if !game_started {
                 startup_checks += 1;
                 if startup_checks > MAX_STARTUP_CHECKS {
-                    println!("⚠️ Game {} did not start within 30 seconds, stopping monitor", game_id_clone);
+                    println!(
+                        "⚠️ Game {} did not start within 30 seconds, stopping monitor",
+                        game_id_clone
+                    );
                     break;
                 }
-                
+
                 match check_game_running_internal(&game_id_clone, &channel_id_clone) {
                     Ok(is_running) => {
                         if is_running {
                             game_started = true;
                             last_game_state = true;
-                            println!("🎮 Game {} detected as running - starting active monitoring", game_id_clone);
-                            
+                            println!(
+                                "🎮 Game {} detected as running - starting active monitoring",
+                                game_id_clone
+                            );
+
                             // Start proxy if needed
-                            let should_start_proxy = if let Ok(monitor_state) = GAME_MONITOR_STATE.lock() {
-                                if let Some(handle) = monitor_state.as_ref() {
-                                    if let Ok(response) = handle.patch_response.lock() {
-                                        if let Some(ref resp) = *response {
-                                            resp.proxy
+                            let should_start_proxy =
+                                if let Ok(monitor_state) = GAME_MONITOR_STATE.lock() {
+                                    if let Some(handle) = monitor_state.as_ref() {
+                                        if let Ok(response) = handle.patch_response.lock() {
+                                            if let Some(ref resp) = *response {
+                                                resp.proxy
+                                            } else {
+                                                true
+                                            }
                                         } else {
                                             true
                                         }
@@ -641,37 +658,47 @@ pub fn start_game_monitor(app_handle: tauri::AppHandle, game_id: Number, channel
                                     }
                                 } else {
                                     true
-                                }
-                            } else {
-                                true
-                            };
-                            
+                                };
+
                             if should_start_proxy && !proxy::is_proxy_running() {
                                 match proxy::start_proxy() {
                                     Ok(_) => {
                                         proxy_started_by_us = true;
-                                        println!("🎮 Game {} started - Proxy activated automatically", game_id_clone);
+                                        println!(
+                                            "🎮 Game {} started - Proxy activated automatically",
+                                            game_id_clone
+                                        );
                                     }
                                     Err(e) => {
-                                        eprintln!("⚠️ Failed to start proxy when game started: {}", e);
+                                        eprintln!(
+                                            "⚠️ Failed to start proxy when game started: {}",
+                                            e
+                                        );
                                     }
                                 }
                             }
-                            
+
                             // Start Task Manager monitoring when game starts
                             match start_task_manager_monitor_internal(app_handle_clone.clone()) {
                                 Ok(_) => {
-                                    println!("🔍 Task Manager monitoring started for game {}", game_id_clone);
+                                    println!(
+                                        "🔍 Task Manager monitoring started for game {}",
+                                        game_id_clone
+                                    );
                                 }
                                 Err(e) => {
                                     eprintln!("⚠️ Failed to start Task Manager monitoring: {}", e);
                                 }
                             }
-                            
+
                             // Minimize launcher window when game starts
-                            match crate::system::minimize_launcher_window(app_handle_clone.clone()) {
+                            match crate::system::minimize_launcher_window(app_handle_clone.clone())
+                            {
                                 Ok(_) => {
-                                    println!("🪟 Launcher window minimized - game {} is running", game_id_clone);
+                                    println!(
+                                        "🪟 Launcher window minimized - game {} is running",
+                                        game_id_clone
+                                    );
                                 }
                                 Err(e) => {
                                     eprintln!("⚠️ Failed to minimize launcher window: {}", e);
@@ -683,7 +710,7 @@ pub fn start_game_monitor(app_handle: tauri::AppHandle, game_id: Number, channel
                         eprintln!("⚠️ Error checking game startup status: {}", e);
                     }
                 }
-                
+
                 // Wait 1 second before next startup check
                 thread::sleep(Duration::from_secs(1));
                 continue;
@@ -710,7 +737,7 @@ pub fn start_game_monitor(app_handle: tauri::AppHandle, game_id: Number, channel
                                     patched_files: Arc::clone(&handle.patched_files),
                                     patch_response: Arc::clone(&handle.patch_response),
                                 };
-                                
+
                                 thread::spawn(move || {
                                     handle_game_stopped_cleanup_with_handle(&handle_clone);
                                 });
@@ -733,7 +760,10 @@ pub fn start_game_monitor(app_handle: tauri::AppHandle, game_id: Number, channel
                                                 println!("🎮 Proxy stopped with fallback method");
                                             }
                                             Err(e2) => {
-                                                eprintln!("⚠️ Failed to stop proxy with fallback: {}", e2);
+                                                eprintln!(
+                                                    "⚠️ Failed to stop proxy with fallback: {}",
+                                                    e2
+                                                );
                                             }
                                         }
                                     }
@@ -748,14 +778,17 @@ pub fn start_game_monitor(app_handle: tauri::AppHandle, game_id: Number, channel
                         thread::spawn(move || {
                             match crate::system::restore_launcher_window(app_handle_for_restore) {
                                 Ok(_) => {
-                                    println!("🪟 Launcher window restored - game {} has stopped", game_id_for_restore);
+                                    println!(
+                                        "🪟 Launcher window restored - game {} has stopped",
+                                        game_id_for_restore
+                                    );
                                 }
                                 Err(e) => {
                                     eprintln!("⚠️ Failed to restore launcher window: {}", e);
                                 }
                             }
                         });
-                        
+
                         // Stop monitoring after game stops
                         println!("🔧 Monitor stopped");
                         break;
@@ -777,20 +810,23 @@ pub fn start_game_monitor(app_handle: tauri::AppHandle, game_id: Number, channel
                         );
                         if proxy::is_proxy_running() && proxy_started_by_us {
                             // Spawn detached thread for proxy cleanup - don't wait for it
-                            thread::spawn(|| {
-                                match proxy::force_stop_proxy() {
-                                    Ok(_) => {
-                                        println!("🎮 Proxy force stopped due to errors");
-                                    }
-                                    Err(e) => {
-                                        eprintln!("⚠️ Failed to force stop proxy after error detection: {}", e);
-                                        match proxy::stop_proxy() {
-                                            Ok(_) => {
-                                                println!("🎮 Proxy stopped with fallback due to errors");
-                                            }
-                                            Err(e2) => {
-                                                eprintln!("⚠️ Failed to stop proxy with fallback after error detection: {}", e2);
-                                            }
+                            thread::spawn(|| match proxy::force_stop_proxy() {
+                                Ok(_) => {
+                                    println!("🎮 Proxy force stopped due to errors");
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "⚠️ Failed to force stop proxy after error detection: {}",
+                                        e
+                                    );
+                                    match proxy::stop_proxy() {
+                                        Ok(_) => {
+                                            println!(
+                                                "🎮 Proxy stopped with fallback due to errors"
+                                            );
+                                        }
+                                        Err(e2) => {
+                                            eprintln!("⚠️ Failed to stop proxy with fallback after error detection: {}", e2);
                                         }
                                     }
                                 }
@@ -811,7 +847,7 @@ pub fn start_game_monitor(app_handle: tauri::AppHandle, game_id: Number, channel
                                 }
                             }
                         });
-                        
+
                         // Stop monitoring after assuming game stopped
                         println!("🔧 Monitor stopped");
                         break;
@@ -826,14 +862,12 @@ pub fn start_game_monitor(app_handle: tauri::AppHandle, game_id: Number, channel
         // Clean up proxy if we started it when monitor stops (detached)
         if proxy_started_by_us && proxy::is_proxy_running() {
             // Spawn detached cleanup thread - don't wait for it
-            thread::spawn(|| {
-                match proxy::stop_proxy() {
-                    Ok(_) => {
-                        println!("🔧 Monitor stopped - Proxy deactivated");
-                    }
-                    Err(e) => {
-                        eprintln!("⚠️ Failed to stop proxy during cleanup: {}", e);
-                    }
+            thread::spawn(|| match proxy::stop_proxy() {
+                Ok(_) => {
+                    println!("🔧 Monitor stopped - Proxy deactivated");
+                }
+                Err(e) => {
+                    eprintln!("⚠️ Failed to stop proxy during cleanup: {}", e);
                 }
             });
         }
@@ -874,8 +908,11 @@ fn handle_game_stopped_cleanup_with_handle(handle: &GameMonitorHandle) {
 
     // Restore files if we have patch information
     if !patched_files.is_empty() {
-        println!("🔄 Starting cleanup for {} patched files...", patched_files.len());
-        
+        println!(
+            "🔄 Starting cleanup for {} patched files...",
+            patched_files.len()
+        );
+
         if let Some(response) = patch_response {
             // Try API-based restoration first
             match restore_original_files(&response, &handle.game_folder_path) {
@@ -918,7 +955,7 @@ fn handle_game_stopped_cleanup_with_handle(handle: &GameMonitorHandle) {
                 }
             }
         }
-        
+
         println!("✅ Cleanup completed");
     } else {
         println!("ℹ️ No patched files to clean up");
@@ -935,7 +972,7 @@ pub fn stop_game_monitor() -> Result<String, String> {
     if let Some(mut handle) = monitor_state.take() {
         // Signal the thread to stop first
         *handle.should_stop.lock().unwrap() = true;
-        
+
         // Perform cleanup in a separate thread to avoid blocking the UI
         // We need to clone the handle data before moving it
         let handle_clone = GameMonitorHandle {
@@ -949,18 +986,18 @@ pub fn stop_game_monitor() -> Result<String, String> {
             patched_files: Arc::clone(&handle.patched_files),
             patch_response: Arc::clone(&handle.patch_response),
         };
-        
+
         thread::spawn(move || {
             handle_game_stopped_cleanup_with_handle(&handle_clone);
         });
-        
+
         // Don't wait for thread to join - just detach it
         // The thread will clean itself up when it detects the stop signal
         if let Some(_thread_handle) = handle.thread_handle.take() {
             // Thread will stop on its own when it checks should_stop flag
             println!("🔧 Game monitor stop signal sent");
         }
-        
+
         Ok("Game monitoring stopped".to_string())
     } else {
         Err("Game monitoring is not active".to_string())
@@ -982,7 +1019,7 @@ pub fn is_any_game_running() -> Result<bool, String> {
     let monitor_state = GAME_MONITOR_STATE
         .lock()
         .map_err(|e| format!("Failed to lock monitor state: {}", e))?;
-    
+
     if let Some(handle) = monitor_state.as_ref() {
         // If monitor is active, check if the game is actually running
         match check_game_running_internal(&handle.game_id, &handle.channel) {
@@ -1000,11 +1037,11 @@ pub fn force_stop_game_monitor() -> Result<String, String> {
     let mut monitor_state = GAME_MONITOR_STATE
         .lock()
         .map_err(|e| format!("Failed to lock monitor state: {}", e))?;
-    
+
     if let Some(mut handle) = monitor_state.take() {
         // Signal the thread to stop first
         *handle.should_stop.lock().unwrap() = true;
-        
+
         // Perform cleanup in a separate thread to avoid blocking the UI
         // We need to clone the handle data before moving it
         let handle_clone = GameMonitorHandle {
@@ -1018,16 +1055,16 @@ pub fn force_stop_game_monitor() -> Result<String, String> {
             patched_files: Arc::clone(&handle.patched_files),
             patch_response: Arc::clone(&handle.patch_response),
         };
-        
+
         thread::spawn(move || {
             handle_game_stopped_cleanup_with_handle(&handle_clone);
         });
-        
+
         // Don't wait for thread to join - just detach it
         if let Some(_thread_handle) = handle.thread_handle.take() {
             println!("🔧 Game monitor force stop signal sent");
         }
-        
+
         Ok("Game monitor stopped".to_string())
     } else {
         Ok("No monitor was running".to_string())
@@ -1100,9 +1137,9 @@ pub fn stop_game(_game_id: Number, _channel_id: Number) -> Result<String, String
                 }
             }
         }
-        
+
         let game_exe_name = get_game_executable_names(_game_id.clone(), _channel_id.clone())?;
-        
+
         let output = create_hidden_command("taskkill")
             .args(["/IM", &game_exe_name, "/F"])
             .output()
@@ -1118,7 +1155,10 @@ pub fn stop_game(_game_id: Number, _channel_id: Number) -> Result<String, String
             if error_msg.contains("not found") || error_msg.contains("not running") {
                 Ok("No game processes were running".to_string())
             } else {
-                Err(format!("Failed to terminate {}: {}", game_exe_name, error_msg))
+                Err(format!(
+                    "Failed to terminate {}: {}",
+                    game_exe_name, error_msg
+                ))
             }
         }
     }
@@ -1126,5 +1166,37 @@ pub fn stop_game(_game_id: Number, _channel_id: Number) -> Result<String, String
     #[cfg(not(target_os = "windows"))]
     {
         Err("Game termination is only supported on Windows".to_string())
+    }
+}
+
+/// Get game executable names based on game_id and channel_id
+#[tauri::command]
+pub fn get_game_executable_names(game_id: Number, channel_id: Number) -> Result<String, String> {
+    match (game_id.as_u64(), channel_id.as_u64()) {
+        (Some(1), Some(1)) => Ok("GenshinImpact.exe".to_string()),
+        (Some(1), Some(2)) => Ok("YuanShen.exe".to_string()),
+        (Some(2), Some(1)) => Ok("StarRail.exe".to_string()),
+        (Some(2), Some(2)) => Ok("StarRail.exe".to_string()),
+        (Some(3), Some(1)) => Ok("BlueArchive.exe".to_string()),
+        _ => Err(format!(
+            "Unsupported game ID: {} with channel ID: {}",
+            game_id, channel_id
+        )),
+    }
+}
+
+/// Get game data folder name for a game ID and channel ID
+#[tauri::command]
+pub fn get_game_folder(game_id: Number, channel_id: Number) -> Result<String, String> {
+    match (game_id.as_u64(), channel_id.as_u64()) {
+        (Some(1), Some(1)) => Ok("GenshinImpact_Data".to_string()),
+        (Some(1), Some(2)) => Ok("YuanShen_Data".to_string()),
+        (Some(2), Some(1)) => Ok("StarRail_Data".to_string()),
+        (Some(2), Some(2)) => Ok("StarRail_Data".to_string()),
+        (Some(3), Some(1)) => Ok("BlueArchive_Data".to_string()),
+        _ => Err(format!(
+            "Unsupported game ID: {} with channel ID: {}",
+            game_id, channel_id
+        )),
     }
 }

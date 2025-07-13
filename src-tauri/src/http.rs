@@ -9,16 +9,6 @@ use std::error::Error;
 use tokio::io::AsyncWriteExt;
 use crate::utils::create_hidden_command;
 
-/// Structure to hold TLS connection details
-#[derive(Debug, Clone)]
-struct TlsConnectionInfo {
-    pub body: String,
-    pub response_time: std::time::Duration,
-    pub tls_version: String,
-    pub cipher_suite: String,
-    pub certificate_info: String,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GitHubRelease {
     pub tag_name: String,
@@ -101,80 +91,6 @@ pub fn fetch_api_data(url: String) -> Result<String, String> {
     })
 }
 
-/// Enhanced API data fetching with TLS connection details
-async fn fetch_api_data_with_tls_details(url: String) -> Result<TlsConnectionInfo, String> {
-    let client = create_tls_aware_http_client(false)?; // No proxy for API calls
-    
-    println!("📡 Fetching API data with TLS details from: {}", url);
-    
-    let start_time = std::time::Instant::now();
-    
-    match client.get(&url)
-        .header("Accept", "application/json")
-        .header("User-Agent", "YuukiPS-Launcher/1.0")
-        .send()
-        .await
-    {
-        Ok(response) => {
-            let elapsed = start_time.elapsed();
-            let status = response.status();
-            let headers = response.headers().clone();
-            
-            println!("✅ Response received in {:?} - Status: {}", elapsed, status);
-            
-            if !status.is_success() {
-                let error_body = response.text().await.unwrap_or_else(|_| "Unable to read error response".to_string());
-                return Err(format!(
-                     "🚫 API Error Details:\n• URL: {}\n• Status: {} {}\n• Response Time: {:?}\n• Server: {}\n• Content-Type: {}\n• Error Body: {}\n• Suggestion: Check if the API endpoint is correct and the server is operational",
-                     url,
-                     status.as_u16(),
-                     status.canonical_reason().unwrap_or("Unknown"),
-                     elapsed,
-                     headers.get("server").and_then(|v| v.to_str().ok()).unwrap_or("Unknown"),
-                     headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("Unknown"),
-                     if error_body.len() > 200 { format!("{}...", &error_body[..200]) } else { error_body }
-                 ));
-            }
-            
-            let body = response.text()
-                 .await
-                 .map_err(|e| format!(
-                     "🚫 Failed to read API response:\n• URL: {}\n• Error: {}\n• Response Time: {:?}\n• Suggestion: The connection may have been interrupted while reading the response",
-                     url, e, elapsed
-                 ))?;
-            
-            // Validate that it's valid JSON
-             let _: serde_json::Value = serde_json::from_str(&body)
-                 .map_err(|e| format!(
-                     "🚫 Invalid JSON Response:\n• URL: {}\n• JSON Error: {}\n• Response Length: {} bytes\n• Response Preview: {}\n• Suggestion: The API may be returning HTML error pages or malformed JSON",
-                     url,
-                     e,
-                     body.len(),
-                     if body.len() > 300 { format!("{}...", &body[..300]) } else { body.clone() }
-                 ))?;
-            
-            println!("✅ Valid JSON response received ({} bytes)", body.len());
-            
-            // Extract TLS information from headers and connection details
-            let tls_version = extract_tls_version_from_response(&headers, &url);
-            let cipher_suite = extract_cipher_suite_from_response(&headers);
-            let certificate_info = extract_certificate_info_from_response(&headers, &url);
-            
-            Ok(TlsConnectionInfo {
-                body,
-                response_time: elapsed,
-                tls_version,
-                cipher_suite,
-                certificate_info,
-            })
-        }
-        Err(e) => {
-            let elapsed = start_time.elapsed();
-            Err(format_detailed_request_error(&url, &e, elapsed))
-        }
-    }
-}
-
 /// Enhanced API data fetching with comprehensive error details
 async fn fetch_api_data_with_details(url: String) -> Result<String, String> {
     let client = create_enhanced_http_client(false)?; // No proxy for API calls
@@ -235,26 +151,6 @@ async fn fetch_api_data_with_details(url: String) -> Result<String, String> {
             Err(format_detailed_request_error(&url, &e, elapsed))
         }
     }
-}
-
-/// Create a TLS-aware HTTP client with detailed connection information
-fn create_tls_aware_http_client(use_proxy: bool) -> Result<reqwest::Client, String> {
-    let mut client_builder = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .user_agent("YuukiPS-Launcher/1.0")
-        .tcp_keepalive(std::time::Duration::from_secs(60))
-        .pool_idle_timeout(std::time::Duration::from_secs(90))
-        .pool_max_idle_per_host(10)
-        .min_tls_version(reqwest::tls::Version::TLS_1_0) // Use TLS 1.0 minimum for broader compatibility
-        .max_tls_version(reqwest::tls::Version::TLS_1_2); // Limit to TLS 1.2 maximum for compatibility
-    
-    if !use_proxy {
-        client_builder = client_builder.no_proxy();
-    }
-    
-    client_builder.build()
-        .map_err(|e| format!("Failed to create TLS-aware HTTP client: {}", e))
 }
 
 /// Create an enhanced HTTP client with better error reporting capabilities
@@ -327,92 +223,6 @@ fn format_detailed_request_error(url: &str, error: &reqwest::Error, elapsed: std
      }
     
     error_details
-}
-
-/// Extract TLS version information from response headers and URL
-fn extract_tls_version_from_response(headers: &reqwest::header::HeaderMap, url: &str) -> String {
-    // Check for TLS version in various headers
-    if let Some(server_header) = headers.get("server") {
-        if let Ok(server_str) = server_header.to_str() {
-            if server_str.contains("TLS") {
-                return format!("TLS (detected from server: {})", server_str);
-            }
-        }
-    }
-    
-    // Check for security headers that might indicate TLS version
-    if headers.get("strict-transport-security").is_some() {
-        // HSTS indicates HTTPS/TLS is being used
-        if url.starts_with("https://") {
-            return "TLS 1.0-1.2 (HTTPS with HSTS, client enforces TLS 1.0-1.2 range)".to_string();
-        }
-    }
-    
-    // Default assumption for HTTPS URLs - we enforce TLS 1.0-1.2 range
-    if url.starts_with("https://") {
-        "TLS 1.0-1.2 (HTTPS connection established, client enforces TLS 1.0-1.2 range)".to_string()
-    } else {
-        "N/A (HTTP connection)".to_string()
-    }
-}
-
-/// Extract cipher suite information from response headers
-fn extract_cipher_suite_from_response(headers: &reqwest::header::HeaderMap) -> String {
-    // Look for cipher suite information in headers
-    if let Some(server_header) = headers.get("server") {
-        if let Ok(server_str) = server_header.to_str() {
-            if server_str.contains("OpenSSL") {
-                return format!("Modern cipher suite (OpenSSL server: {})", server_str);
-            } else if server_str.contains("nginx") {
-                return "Modern cipher suite (nginx server)".to_string();
-            } else if server_str.contains("Apache") {
-                return "Modern cipher suite (Apache server)".to_string();
-            }
-        }
-    }
-    
-    // Check for security-related headers that indicate strong encryption
-    if headers.get("strict-transport-security").is_some() {
-        "Strong cipher suite (HSTS enabled)".to_string()
-    } else {
-        "Standard cipher suite (details not available)".to_string()
-    }
-}
-
-/// Extract certificate information from response headers and URL
-fn extract_certificate_info_from_response(headers: &reqwest::header::HeaderMap, url: &str) -> String {
-    let mut cert_info = Vec::new();
-    
-    // Extract domain from URL
-    if let Ok(parsed_url) = url::Url::parse(url) {
-        if let Some(domain) = parsed_url.host_str() {
-            cert_info.push(format!("Domain: {}", domain));
-        }
-    }
-    
-    // Check for security headers
-    if let Some(hsts_header) = headers.get("strict-transport-security") {
-        if let Ok(hsts_str) = hsts_header.to_str() {
-            cert_info.push(format!("HSTS: {}", hsts_str));
-        }
-    }
-    
-    if headers.get("x-frame-options").is_some() {
-        cert_info.push("Security headers present".to_string());
-    }
-    
-    // Check server information
-    if let Some(server_header) = headers.get("server") {
-        if let Ok(server_str) = server_header.to_str() {
-            cert_info.push(format!("Server: {}", server_str));
-        }
-    }
-    
-    if cert_info.is_empty() {
-        "Certificate validated (details not available in headers)".to_string()
-    } else {
-        cert_info.join(", ")
-    }
 }
 
 /// Extract TLS-specific error details from error messages
