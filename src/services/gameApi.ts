@@ -78,11 +78,13 @@ export class GameApiService {
   private static async performFetch(): Promise<Game[]> {
     try {
       const timestamp = Date.now();
-      const responseText = await invoke('fetch_api_data', { 
-        url: `https://ps.yuuki.me/json/game_all.json?time=${timestamp}` 
-      }) as string;
+      const response = await fetch(`https://ps.yuuki.me/json/game_all.json?time=${timestamp}`);
       
-      const games: Game[] = JSON.parse(responseText);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const games: Game[] = await response.json();
       
       // Filter games to only include those that support Platform 1 (PC)
       const pcSupportedGames = games.filter(game => this.gameSupportsPC(game));
@@ -103,21 +105,18 @@ export class GameApiService {
     } catch (error) {
       console.error('Failed to fetch games:', error);
       
-      // Check if this is a detailed error from our enhanced backend
       const errorMessage = error instanceof Error ? error.message : String(error);
       
-      if (errorMessage.includes('🚫')) {
-        // This is a detailed error from our enhanced backend - pass it through
-        throw new Error(errorMessage);
-      } else {
-        // Fallback for other types of errors
-        throw new Error(
-          `🚫 Game List Loading Failed:\n` +
-          `• Error: ${errorMessage}\n` +
-          `• URL: https://ps.yuuki.me/json/game_all.json\n` +
-          `• Suggestion: Check your internet connection and try again. If the problem persists, the game server may be temporarily unavailable.`
-        );
-      }
+      throw new Error(
+        `🚫 Game List Loading Failed:\n` +
+        `• Error: ${errorMessage}\n` +
+        `• URL: https://ps.yuuki.me/json/game_all.json\n\n` +
+        `Troubleshooting Steps:\n` +
+        `1. Try using a VPN like Cloudflare Warp (1.1.1.1)\n` +
+        `2. Turn off other proxy software or VPN services\n` +
+        `3. Contact your ISP to ask why ps.yuuki.me cannot be accessed\n` +
+        `4. As a last resort, consider reinstalling your operating system`
+      );
     }
   }
   

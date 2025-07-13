@@ -49,49 +49,6 @@ pub fn create_http_client(use_proxy: bool) -> Result<reqwest::Client, String> {
         .map_err(|e| format!("Failed to create HTTP client: {}", e))
 }
 
-/// Test game API connectivity with detailed error reporting and TLS information
-#[command]
-pub fn test_game_api_call() -> Result<String, String> {
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| format!("Failed to create async runtime: {}", e))?;
-    
-    rt.block_on(async {
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        
-        let url = format!("https://ps.yuuki.me/json/game_all.json?time={}", timestamp);
-        
-        match fetch_api_data_with_tls_details(url.clone()).await {
-            Ok(result) => {
-                // Try to parse the response as JSON to validate
-                match serde_json::from_str::<serde_json::Value>(&result.body) {
-                    Ok(json) => {
-                        let games_count = json.as_array().map(|arr| arr.len()).unwrap_or(0);
-                        Ok(format!(
-                             "✅ Game API Test Successful:\n• URL: {}\n• Response Size: {} bytes\n• Games Found: {}\n• Response Time: {:?}\n• TLS Version: {}\n• Cipher Suite: {}\n• Certificate Info: {}\n• Status: API is working correctly",
-                             url, result.body.len(), games_count, result.response_time, result.tls_version, result.cipher_suite, result.certificate_info
-                         ))
-                    }
-                    Err(e) => {
-                         Ok(format!(
-                             "⚠️ Game API Response Issue:\n• URL: {}\n• Response Size: {} bytes\n• JSON Parse Error: {}\n• Response Time: {:?}\n• TLS Version: {}\n• Status: Server responded but with invalid JSON",
-                             url, result.body.len(), e, result.response_time, result.tls_version
-                         ))
-                     }
-                }
-            }
-            Err(e) => {
-                 Ok(format!(
-                     "❌ Game API Test Failed:\n{}\n• Test URL: {}\n• Timestamp: {}",
-                     e, url, timestamp
-                 ))
-             }
-        }
-    })
-}
-
 /// Test proxy bypass functionality
 #[command]
 pub fn test_proxy_bypass(url: String) -> Result<String, String> {

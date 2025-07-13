@@ -47,19 +47,7 @@ export const DebugSettingsModal: React.FC<DebugSettingsModalProps> = ({
     }
   };
 
-  const testGameApiCall = async () => {
-    setIsProxyTesting(true);
-    setTestResult('');
-    
-    try {
-      const result = await invoke('test_game_api_call') as string;
-      setTestResult(result);
-    } catch (error) {
-      setTestResult(`❌ Game API Test Error: ${error}`);
-    } finally {
-      setIsProxyTesting(false);
-    }
-  };
+
 
   const handleClearData = () => {
     setShowClearDataConfirm(true);
@@ -317,23 +305,7 @@ export const DebugSettingsModal: React.FC<DebugSettingsModalProps> = ({
                         )}
                       </button>
                       
-                      <button
-                        onClick={testGameApiCall}
-                        disabled={isProxyTesting}
-                        className="w-full flex items-center justify-center space-x-2 px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-green-600/50 text-white rounded-lg transition-colors font-medium"
-                      >
-                        {isProxyTesting ? (
-                          <>
-                            <TestTube className="w-4 h-4 animate-pulse" />
-                            <span>Testing...</span>
-                          </>
-                        ) : (
-                          <>
-                            <TestTube className="w-4 h-4" />
-                            <span>Test Game API Call</span>
-                          </>
-                        )}
-                      </button>
+
                     </div>
                     
                     {testResult && (

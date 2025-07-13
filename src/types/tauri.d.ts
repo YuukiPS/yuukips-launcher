@@ -45,7 +45,6 @@ export interface TauriCommands {
   get_yuukips_data_path(): Promise<string>;
   get_app_data_path(): Promise<string>;
   get_temp_files_path(): Promise<string>;
-  test_game_api_call(): Promise<string>;
   open_devtools(): Promise<string>;
   generate_ca_files(path: string): Promise<void>;
   launch_game(
