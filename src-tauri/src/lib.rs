@@ -63,8 +63,7 @@ pub fn run() {
             download::bulk_pause_downloads,
             download::bulk_resume_downloads,
             download::bulk_cancel_downloads,
-            download::validate_download_url,
-            download::validate_download_url_with_options,
+            // URL validation functions removed
             download::get_file_size_from_url,
             download::check_file_exists,
             download::get_available_disk_space,

@@ -54,7 +54,6 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   const [urlError, setUrlError] = useState('');
   const [folderError, setFolderError] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
-  const [skipUrlCheck, setSkipUrlCheck] = useState(false);
 
   // Column width customization state
   const [columnWidths, setColumnWidths] = useState({
@@ -220,14 +219,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
 
 
 
-  const validateUrl = (url: string): boolean => {
-    try {
-      new URL(url);
-      return url.startsWith('http://') || url.startsWith('https://');
-    } catch {
-      return false;
-    }
-  };
+
 
   const handleAddDownload = async () => {
     console.log('[DownloadManager] Starting add download process', {
@@ -238,16 +230,10 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
     setUrlError('');
     setFolderError('');
 
-    // Validate URL
+    // Basic URL check - only ensure it's not empty
     if (!newDownloadUrl.trim()) {
       console.log('[DownloadManager] URL validation failed: empty URL');
       setUrlError('URL is required');
-      return;
-    }
-
-    if (!validateUrl(newDownloadUrl)) {
-      console.log('[DownloadManager] URL validation failed: invalid format');
-      setUrlError('Please enter a valid HTTP/HTTPS URL');
       return;
     }
 
@@ -262,34 +248,8 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
     console.log('[DownloadManager] Starting backend validation and download process');
 
     try {
-      // Validate URL with backend (with skip option)
-      console.log('[DownloadManager] Validating URL with backend:', newDownloadUrl, 'skipUrlCheck:', skipUrlCheck);
-      
-      if (skipUrlCheck) {
-        console.log('[DownloadManager] Skipping URL validation as requested by user');
-      } else {
-        try {
-          const isValidUrl = await DownloadService.validateDownloadUrlWithOptions(newDownloadUrl, false);
-          console.log('[DownloadManager] Backend URL validation result:', isValidUrl);
-          
-          if (!isValidUrl) {
-            console.log('[DownloadManager] Backend validation failed - URL not accessible');
-            setUrlError('URL is not accessible or invalid. You can try enabling "Skip URL Check" if you\'re sure the URL is correct.');
-            setIsAddingDownload(false);
-            return;
-          }
-        } catch (error) {
-          console.log('[DownloadManager] URL validation failed with error:', error);
-          // If validation fails with connection error, suggest skipping
-          if (error instanceof Error && error.message.includes('Connection failed')) {
-            setUrlError(error.message);
-          } else {
-            setUrlError('URL validation failed. You can try enabling "Skip URL Check" if you\'re sure the URL is correct.');
-          }
-          setIsAddingDownload(false);
-          return;
-        }
-      }
+      // URL validation removed - proceeding directly to download
+      console.log('[DownloadManager] Starting download directly without URL validation');
 
       // Extract filename from URL
       const urlObj = new URL(newDownloadUrl);
@@ -335,9 +295,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
       // Extract meaningful error message
       let errorMessage = 'Failed to start download. Please try again.';
       if (error instanceof Error) {
-        if (error.message.includes('validate')) {
-          errorMessage = 'Unable to validate the download URL. Please check the URL and your internet connection.';
-        } else if (error.message.includes('network') || error.message.includes('fetch')) {
+        if (error.message.includes('network') || error.message.includes('fetch')) {
           errorMessage = 'Network error occurred. Please check your internet connection and try again.';
         } else if (error.message.includes('permission') || error.message.includes('access')) {
           errorMessage = 'Permission denied. Please check folder permissions and try again.';
@@ -1178,23 +1136,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                   )}
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    id="skipUrlCheck"
-                    checked={skipUrlCheck}
-                    onChange={(e) => setSkipUrlCheck(e.target.checked)}
-                    className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
-                  />
-                  <label htmlFor="skipUrlCheck" className="text-sm text-gray-300 cursor-pointer">
-                    Skip URL validation (use if URL validation fails due to connection issues)
-                  </label>
-                </div>
-                <div className="text-xs text-gray-400 bg-gray-700 p-3 rounded-lg">
-                  <strong>Note:</strong> Enabling "Skip URL validation" will bypass the initial URL accessibility check. 
-                  Use this option if you're experiencing connection issues during validation but are confident the URL is correct. 
-                  The download will still fail if the URL is actually invalid.
-                </div>
+
 
 
               </div>
@@ -1209,7 +1151,6 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                   setNewDownloadFolder('');
                   setUrlError('');
                   setFolderError('');
-                  setSkipUrlCheck(false);
                 }}
                 className="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition-colors"
               >

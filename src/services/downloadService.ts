@@ -286,38 +286,7 @@ export class DownloadService {
     }
   }
 
-  /**
-   * Validate download URL
-   */
-  static async validateDownloadUrl(url: string): Promise<boolean> {
-    console.log('[DownloadService] Validating download URL:', url);
-    try {
-      const isValid = await invoke<boolean>('validate_download_url', { url });
-      console.log('[DownloadService] URL validation result:', isValid);
-      return isValid;
-    } catch (error) {
-      console.error('[DownloadService] URL validation error:', error);
-      throw new Error(`Failed to validate download URL: ${error}`);
-    }
-  }
-
-  /**
-   * Validate download URL with options
-   */
-  static async validateDownloadUrlWithOptions(url: string, skipHeadCheck: boolean = false): Promise<boolean> {
-    console.log('[DownloadService] Validating download URL with options:', { url, skipHeadCheck });
-    try {
-      const isValid = await invoke<boolean>('validate_download_url_with_options', { 
-        url, 
-        skipHeadCheck 
-      });
-      console.log('[DownloadService] URL validation result:', isValid);
-      return isValid;
-    } catch (error) {
-      console.error('[DownloadService] URL validation error:', error);
-      throw new Error(`Failed to validate download URL: ${error}`);
-    }
-  }
+  // URL validation functions removed - downloads now proceed directly
 
   /**
    * Get file size from URL without downloading
