@@ -101,8 +101,6 @@ pub fn run() {
             proxy::generate_ca_files,
             // HTTP functions
             test_proxy_bypass,
-            fetch_api_data,
-            test_network_connectivity,
             get_current_version,
             fetch_latest_release,
             download_and_install_update,

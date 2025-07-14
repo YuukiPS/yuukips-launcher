@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use tauri::{command, AppHandle, Emitter};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use std::error::Error;
 use tokio::io::AsyncWriteExt;
 use crate::utils::create_hidden_command;
 
@@ -29,14 +28,44 @@ pub struct GitHubAsset {
 pub fn create_http_client(use_proxy: bool) -> Result<reqwest::Client, String> {
     let mut client_builder = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
-        .user_agent("YuukiPS-Launcher/1.0");
+        .user_agent("YuukiPS-Launcher/1.0")
+        .danger_accept_invalid_certs(false) // Keep certificate validation enabled
+        .danger_accept_invalid_hostnames(false); // Keep hostname validation enabled
+    
+    // On Windows, configure TLS to handle certificate validation issues
+    #[cfg(target_os = "windows")]
+    {
+        client_builder = client_builder
+            .min_tls_version(reqwest::tls::Version::TLS_1_0)
+            .max_tls_version(reqwest::tls::Version::TLS_1_3)
+            .use_native_tls(); // Explicitly use native TLS (Schannel) on Windows
+    }
+    
+    // On non-Windows platforms, use rustls
+    #[cfg(not(target_os = "windows"))]
+    {
+        client_builder = client_builder
+            .min_tls_version(reqwest::tls::Version::TLS_1_0)
+            .max_tls_version(reqwest::tls::Version::TLS_1_3)
+            .use_rustls_tls();
+    }
     
     if !use_proxy {
         client_builder = client_builder.no_proxy();
     }
     
     client_builder.build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))
+        .map_err(|e| {
+            // Provide more specific error messages for Windows TLS issues
+            let error_msg = format!("{}", e);
+            if error_msg.contains("token supplied to the function is invalid") {
+                format!("Windows TLS Error: The token supplied to the function is invalid. This usually indicates a certificate validation issue. Try: 1) Update Windows certificates, 2) Check system time, 3) Run as administrator. Original error: {}", e)
+            } else if error_msg.contains("schannel") || error_msg.contains("SEC_E_") {
+                format!("Windows Schannel TLS Error: {}. This may be caused by outdated certificates or system configuration issues.", e)
+            } else {
+                format!("Failed to create HTTP client: {}", e)
+            }
+        })
 }
 
 /// Test proxy bypass functionality
@@ -80,230 +109,7 @@ pub fn test_proxy_bypass(url: String) -> Result<String, String> {
     })
 }
 
-/// Fetch data from an API endpoint with detailed error reporting
-#[command]
-pub fn fetch_api_data(url: String) -> Result<String, String> {
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| format!("Failed to create async runtime: {}", e))?;
-    
-    rt.block_on(async {
-        fetch_api_data_with_details(url).await
-    })
-}
 
-/// Enhanced API data fetching with comprehensive error details
-async fn fetch_api_data_with_details(url: String) -> Result<String, String> {
-    let client = create_enhanced_http_client(false)?; // No proxy for API calls
-    
-    println!("📡 Fetching API data from: {}", url);
-    
-    let start_time = std::time::Instant::now();
-    
-    match client.get(&url)
-        .header("Accept", "application/json")
-        .header("User-Agent", "YuukiPS-Launcher/1.0")
-        .send()
-        .await
-    {
-        Ok(response) => {
-            let elapsed = start_time.elapsed();
-            let status = response.status();
-            let headers = response.headers().clone();
-            
-            println!("✅ Response received in {:?} - Status: {}", elapsed, status);
-            
-            if !status.is_success() {
-                let error_body = response.text().await.unwrap_or_else(|_| "Unable to read error response".to_string());
-                return Err(format!(
-                     "🚫 API Error Details:\n• URL: {}\n• Status: {} {}\n• Response Time: {:?}\n• Server: {}\n• Content-Type: {}\n• Error Body: {}\n• Suggestion: Check if the API endpoint is correct and the server is operational",
-                     url,
-                     status.as_u16(),
-                     status.canonical_reason().unwrap_or("Unknown"),
-                     elapsed,
-                     headers.get("server").and_then(|v| v.to_str().ok()).unwrap_or("Unknown"),
-                     headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("Unknown"),
-                     if error_body.len() > 200 { format!("{}...", &error_body[..200]) } else { error_body }
-                 ));
-            }
-            
-            let body = response.text()
-                 .await
-                 .map_err(|e| format!(
-                     "🚫 Failed to read API response:\n• URL: {}\n• Error: {}\n• Response Time: {:?}\n• Suggestion: The connection may have been interrupted while reading the response",
-                     url, e, elapsed
-                 ))?;
-            
-            // Validate that it's valid JSON
-             let _: serde_json::Value = serde_json::from_str(&body)
-                 .map_err(|e| format!(
-                     "🚫 Invalid JSON Response:\n• URL: {}\n• JSON Error: {}\n• Response Length: {} bytes\n• Response Preview: {}\n• Suggestion: The API may be returning HTML error pages or malformed JSON",
-                     url,
-                     e,
-                     body.len(),
-                     if body.len() > 300 { format!("{}...", &body[..300]) } else { body.clone() }
-                 ))?;
-            
-            println!("✅ Valid JSON response received ({} bytes)", body.len());
-            Ok(body)
-        }
-        Err(e) => {
-            let elapsed = start_time.elapsed();
-            Err(format_detailed_request_error(&url, &e, elapsed))
-        }
-    }
-}
-
-/// Create an enhanced HTTP client with better error reporting capabilities
-fn create_enhanced_http_client(use_proxy: bool) -> Result<reqwest::Client, String> {
-    let mut client_builder = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .user_agent("YuukiPS-Launcher/1.0")
-        .tcp_keepalive(std::time::Duration::from_secs(60))
-        .pool_idle_timeout(std::time::Duration::from_secs(90))
-        .pool_max_idle_per_host(10)
-        .min_tls_version(reqwest::tls::Version::TLS_1_0) // Use TLS 1.0 minimum for broader compatibility
-        .max_tls_version(reqwest::tls::Version::TLS_1_2); // Limit to TLS 1.2 maximum for compatibility
-    
-    if !use_proxy {
-        client_builder = client_builder.no_proxy();
-    }
-    
-    client_builder.build()
-        .map_err(|e| format!("Failed to create enhanced HTTP client: {}", e))
-}
-
-/// Format detailed error information for request failures
-fn format_detailed_request_error(url: &str, error: &reqwest::Error, elapsed: std::time::Duration) -> String {
-    let mut error_details = format!("🚫 API Request Failed:\n• URL: {}\n• Duration: {:?}\n", url, elapsed);
-    
-    // Categorize the error and provide specific details
-     if error.is_timeout() {
-         error_details.push_str(&format!(
-             "• Error Type: Timeout\n• Details: {}\n• Suggestion: The server took too long to respond. Check your internet connection or try again later.\n• TLS Info: N/A (Connection timed out before TLS handshake)",
-             error
-         ));
-     } else if error.is_connect() {
-         error_details.push_str(&format!(
-             "• Error Type: Connection Failed\n• Details: {}\n• Suggestion: Cannot establish connection to server. Check if the URL is correct and the server is online.\n• TLS Info: Connection failed before TLS handshake could begin",
-             error
-         ));
-     } else if error.is_request() {
-         error_details.push_str(&format!(
-             "• Error Type: Request Error\n• Details: {}\n• Suggestion: There was an issue with the request format or headers.",
-             error
-         ));
-     } else if error.is_body() {
-         error_details.push_str(&format!(
-             "• Error Type: Response Body Error\n• Details: {}\n• Suggestion: The server response was corrupted or incomplete.",
-             error
-         ));
-     } else if error.is_decode() {
-         error_details.push_str(&format!(
-             "• Error Type: Decode Error\n• Details: {}\n• Suggestion: The server response could not be decoded properly.",
-             error
-         ));
-     } else {
-         error_details.push_str(&format!(
-             "• Error Type: Unknown\n• Details: {}\n• Suggestion: An unexpected error occurred. Please try again.",
-             error
-         ));
-     }
-     
-     // Add TLS-specific information if available
-     if let Some(_source) = error.source() {
-         // Check for TLS-related errors in the error chain
-         let error_string = format!("{:?}", error);
-         if error_string.contains("tls") || error_string.contains("ssl") || error_string.contains("certificate") {
-             error_details.push_str(&format!(
-                 "\n• TLS/SSL Issue Detected: {}\n• TLS Suggestion: This may be a certificate validation error. Check if the server's SSL certificate is valid and trusted.",
-                 extract_tls_error_details(&error_string)
-             ));
-         }
-     }
-    
-    error_details
-}
-
-/// Extract TLS-specific error details from error messages
-fn extract_tls_error_details(error_string: &str) -> String {
-    if error_string.contains("certificate verify failed") {
-        "Certificate verification failed - the server's SSL certificate is not trusted".to_string()
-    } else if error_string.contains("certificate has expired") {
-        "SSL certificate has expired".to_string()
-    } else if error_string.contains("self signed certificate") {
-        "Self-signed certificate detected - not trusted by default".to_string()
-    } else if error_string.contains("hostname verification failed") {
-        "Hostname verification failed - certificate doesn't match the domain".to_string()
-    } else if error_string.contains("protocol version") {
-        "TLS protocol version mismatch".to_string()
-    } else if error_string.contains("handshake") {
-        "TLS handshake failed".to_string()
-    } else {
-        "TLS/SSL related error detected".to_string()
-    }
-}
-
-/// Test network connectivity
-#[command]
-pub fn test_network_connectivity() -> Result<String, String> {
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| format!("Failed to create async runtime: {}", e))?;
-    
-    rt.block_on(async {
-        let client = create_http_client(false)?;
-        
-        // Test multiple endpoints to ensure connectivity
-        let test_urls = vec![
-            "https://httpbin.org/get",
-            "https://api.github.com",
-            "https://www.google.com",
-        ];
-        
-        let mut results = Vec::new();
-        
-        for url in test_urls {
-            let start_time = std::time::Instant::now();
-            
-            match client.get(url)
-                .timeout(std::time::Duration::from_secs(10))
-                .send()
-                .await
-            {
-                Ok(response) => {
-                    let duration = start_time.elapsed();
-                    results.push(serde_json::json!({
-                        "url": url,
-                        "status": response.status().as_u16(),
-                        "success": true,
-                        "duration_ms": duration.as_millis(),
-                        "error": null
-                    }));
-                }
-                Err(e) => {
-                    let duration = start_time.elapsed();
-                    results.push(serde_json::json!({
-                        "url": url,
-                        "status": null,
-                        "success": false,
-                        "duration_ms": duration.as_millis(),
-                        "error": e.to_string()
-                    }));
-                }
-            }
-        }
-        
-        let summary = serde_json::json!({
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-            "total_tests": results.len(),
-            "successful_tests": results.iter().filter(|r| r["success"].as_bool().unwrap_or(false)).count(),
-            "results": results
-        });
-        
-        serde_json::to_string(&summary)
-            .map_err(|e| format!("Failed to serialize connectivity test results: {}", e))
-    })
-}
 
 /// Get the current version from Cargo.toml
 #[command]
@@ -470,8 +276,6 @@ if %ERRORLEVEL% EQU 0 (
     echo Update installation failed
     pause
 )
-echo Cleaning up...
-del "%~f0"
 "#, file_path_str, current_exe);
     
     // Write the script to temp directory
@@ -525,8 +329,6 @@ if %ERRORLEVEL% EQU 0 (
     echo Update installation failed
     pause
 )
-echo Cleaning up...
-del "%~f0"
 "#, file_path_str, current_exe);
     
     // Write the script to temp directory
