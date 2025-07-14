@@ -7,6 +7,7 @@ import { SSLCertificateModal } from './SSLCertificateModal';
 import { PatchErrorInfo, PatchErrorModal } from './PatchErrorModal';
 import { PatchMessageModal, shouldIgnoreMessage } from './PatchMessageModal';
 import { invoke } from '@tauri-apps/api/core';
+import { confirm } from '@tauri-apps/plugin-dialog';
 // Removed startProxyWithSSLCheck import - proxy is now managed by backend after patching
 
 interface GameDetailsProps {
@@ -359,11 +360,15 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
     }
   }, [pendingLaunch, launchGameWithEngine]);
 
-  const onSSLModalClose = useCallback(() => {
+  const onSSLModalClose = useCallback(async () => {
     if (pendingLaunch) {
       const { engine, version, channel } = pendingLaunch;
-      const proceed = confirm(
-        'SSL certificate is not installed. HTTPS game traffic may not work properly. Do you want to continue anyway?'
+      const proceed = await confirm(
+        'SSL certificate is not installed. HTTPS game traffic may not work properly. Do you want to continue anyway?',
+        {
+          title: 'SSL Certificate Warning',
+          kind: 'warning'
+        }
       );
       if (proceed && engine && version && channel) {
         setPendingLaunch(null);

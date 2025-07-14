@@ -946,6 +946,55 @@ pub fn cancel_download(download_id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Cancel a download and delete the partially downloaded file
+#[command]
+pub fn cancel_and_delete_download(download_id: String) -> Result<(), String> {
+    let file_path = {
+        let mut manager = DOWNLOAD_MANAGER.lock()
+            .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+        
+        // Signal cancellation
+        if let Some(token) = manager.cancellation_tokens.get(&download_id) {
+            token.store(true, Ordering::Relaxed);
+        }
+        
+        // Get file path and file name before removing from downloads
+        let (file_path, file_name) = manager.downloads.get(&download_id)
+            .map(|download| (download.file_path.clone(), download.file_name.clone()))
+            .unwrap_or_else(|| (String::new(), String::new()));
+        
+        // Add activity for deletion before removing
+        if !file_name.is_empty() {
+            manager.add_activity(
+                ActivityType::DownloadCancelled,
+                Some(file_name),
+                Some(download_id.clone()),
+                Some("deleted".to_string()),
+                Some("Download cancelled and file deleted".to_string())
+            );
+        }
+        
+        // Remove from downloads and cancellation tokens
+         manager.downloads.remove(&download_id);
+         manager.cancellation_tokens.remove(&download_id);
+         
+         file_path
+    };
+    
+    // Delete the file if it exists
+    if !file_path.is_empty() {
+        let path = Path::new(&file_path);
+        if path.exists() {
+            match fs::remove_file(path) {
+                Ok(_) => println!("Successfully deleted file: {}", file_path),
+                Err(e) => eprintln!("Failed to delete file {}: {}", file_path, e),
+            }
+        }
+    }
+    
+    Ok(())
+}
+
 /// Restart a failed download
 #[command]
 pub async fn restart_download(download_id: String) -> Result<(), String> {
@@ -1121,6 +1170,14 @@ pub async fn bulk_resume_downloads(download_ids: Vec<String>) -> Result<(), Stri
 pub fn bulk_cancel_downloads(download_ids: Vec<String>) -> Result<(), String> {
     for id in download_ids {
         cancel_download(id)?;
+    }
+    Ok(())
+}
+
+#[command]
+pub fn bulk_cancel_and_delete_downloads(download_ids: Vec<String>) -> Result<(), String> {
+    for id in download_ids {
+        cancel_and_delete_download(id)?;
     }
     Ok(())
 }

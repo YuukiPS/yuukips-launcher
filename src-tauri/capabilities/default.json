@@ -16,6 +16,7 @@
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-message",
+    "dialog:allow-confirm",
     "opener:default"
   ]
 }

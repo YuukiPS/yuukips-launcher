@@ -50,6 +50,7 @@ pub fn run() {
             download::pause_download,
             download::resume_download,
             download::cancel_download,
+            download::cancel_and_delete_download,
             download::restart_download,
             download::get_active_downloads,
             download::get_download_status,
@@ -63,6 +64,7 @@ pub fn run() {
             download::bulk_pause_downloads,
             download::bulk_resume_downloads,
             download::bulk_cancel_downloads,
+            download::bulk_cancel_and_delete_downloads,
             // URL validation functions removed
             download::get_file_size_from_url,
             download::check_file_exists,

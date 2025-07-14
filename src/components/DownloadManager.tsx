@@ -18,7 +18,7 @@ import {
 import { DownloadItem, DownloadHistory, DownloadStats, ActivityEntry } from '../types';
 import { DownloadService } from '../services/downloadService';
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, confirm } from '@tauri-apps/plugin-dialog';
 
 interface DownloadManagerProps {
   isOpen: boolean;
@@ -263,7 +263,10 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
       console.log('[DownloadManager] File exists check result:', fileExists);
       
       if (fileExists) {
-        const overwrite = confirm(`File ${fileName} already exists. Do you want to overwrite it?`);
+        const overwrite = await confirm(`File ${fileName} already exists. Do you want to overwrite it?`, {
+          title: 'File Already Exists',
+          kind: 'warning'
+        });
         console.log('[DownloadManager] User overwrite decision:', overwrite);
         if (!overwrite) {
           console.log('[DownloadManager] User cancelled overwrite - aborting download');
@@ -425,8 +428,23 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   const handleCancel = async (id: string) => {
     try {
       const download = downloads.find(d => d.id === id);
-      await DownloadService.cancelDownload(id);
-      await addUserInteraction(`Cancelled download: ${download?.fileName || id}`);
+      const fileName = download?.fileName || 'Unknown file';
+      
+      // Show confirmation dialog with delete warning
+      const shouldCancel = await confirm(
+        `Are you sure you want to cancel the download of "${fileName}"?\n\n⚠️ Warning: This will permanently delete the download progress and any partially downloaded file.`,
+        {
+          title: 'Cancel Download',
+          kind: 'warning'
+        }
+      );
+      
+      if (!shouldCancel) {
+        return; // User chose not to cancel
+      }
+      
+      await DownloadService.cancelAndDeleteDownload(id);
+      await addUserInteraction(`Cancelled download: ${fileName}`);
       // Refresh data to show updated status
       await loadData();
     } catch (error) {
@@ -509,10 +527,24 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
           await DownloadService.bulkResumeDownloads(downloadIds);
           await addUserInteraction(`Bulk resumed ${count} downloads`);
           break;
-        case 'cancel':
-          await DownloadService.bulkCancelDownloads(downloadIds);
+        case 'cancel': {
+          // Show confirmation dialog with delete warning for bulk cancel
+          const shouldCancel = await confirm(
+            `Are you sure you want to cancel ${count} selected download${count > 1 ? 's' : ''}?\n\n⚠️ Warning: This will permanently delete the download progress and any partially downloaded files for all selected downloads.`,
+            {
+              title: 'Cancel Downloads',
+              kind: 'warning'
+            }
+          );
+          
+          if (!shouldCancel) {
+            return; // User chose not to cancel
+          }
+          
+          await DownloadService.bulkCancelAndDeleteDownloads(downloadIds);
           await addUserInteraction(`Bulk cancelled ${count} downloads`);
           break;
+        }
       }
       
       setSelectedDownloads(new Set());
@@ -947,8 +979,12 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-medium text-white">Activity Log</h3>
                   <button
-                    onClick={() => {
-                      if (window.confirm('Are you sure you want to clear all activity entries? This action cannot be undone.')) {
+                    onClick={async () => {
+                      const confirmed = await confirm('Are you sure you want to clear all activity entries? This action cannot be undone.', {
+                        title: 'Clear All Activities',
+                        kind: 'warning'
+                      });
+                      if (confirmed) {
                         clearActivities();
                         addUserInteraction('Clear Activities Confirmed', 'User confirmed clearing all activity entries');
                       } else {

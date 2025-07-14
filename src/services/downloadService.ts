@@ -81,6 +81,20 @@ export class DownloadService {
   }
 
   /**
+   * Cancel a download and delete the partially downloaded file
+   */
+  static async cancelAndDeleteDownload(downloadId: string): Promise<void> {
+    console.log('[DownloadService] Cancelling and deleting download:', downloadId);
+    try {
+      await invoke('cancel_and_delete_download', { downloadId });
+      console.log('[DownloadService] Download cancelled and deleted successfully:', downloadId);
+    } catch (error) {
+      console.error('[DownloadService] Failed to cancel and delete download:', downloadId, error);
+      throw new Error(`Failed to cancel and delete download: ${error}`);
+    }
+  }
+
+  /**
    * Remove a download
    */
   static async removeDownload(downloadId: string): Promise<void> {
@@ -238,6 +252,17 @@ export class DownloadService {
       await invoke('bulk_cancel_downloads', { downloadIds });
     } catch (error) {
       throw new Error(`Failed to bulk cancel downloads: ${error}`);
+    }
+  }
+
+  /**
+   * Bulk cancel downloads and delete the partially downloaded files
+   */
+  static async bulkCancelAndDeleteDownloads(downloadIds: string[]): Promise<void> {
+    try {
+      await invoke('bulk_cancel_and_delete_downloads', { downloadIds });
+    } catch (error) {
+      throw new Error(`Failed to bulk cancel and delete downloads: ${error}`);
     }
   }
 
