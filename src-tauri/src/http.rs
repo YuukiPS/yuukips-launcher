@@ -37,7 +37,7 @@ pub fn create_http_client(use_proxy: bool) -> Result<reqwest::Client, String> {
     {
         client_builder = client_builder
             .min_tls_version(reqwest::tls::Version::TLS_1_0)
-            .max_tls_version(reqwest::tls::Version::TLS_1_3)
+            .max_tls_version(reqwest::tls::Version::TLS_1_2)
             .use_native_tls(); // Explicitly use native TLS (Schannel) on Windows
     }
     
@@ -46,7 +46,7 @@ pub fn create_http_client(use_proxy: bool) -> Result<reqwest::Client, String> {
     {
         client_builder = client_builder
             .min_tls_version(reqwest::tls::Version::TLS_1_0)
-            .max_tls_version(reqwest::tls::Version::TLS_1_3)
+            .max_tls_version(reqwest::tls::Version::TLS_1_2)
             .use_rustls_tls();
     }
     
