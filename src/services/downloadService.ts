@@ -399,4 +399,29 @@ export class DownloadService {
       throw new Error(`Failed to set speed limit: ${error}`);
     }
   }
+
+  /**
+   * Get whether speed limit should be divided among active downloads
+   */
+  static async getDivideSpeedEnabled(): Promise<boolean> {
+    try {
+      const enabled = await invoke<boolean>('get_divide_speed_enabled');
+      return enabled;
+    } catch (error) {
+      console.error('Failed to get divide speed enabled:', error);
+      throw new Error(`Failed to get divide speed enabled: ${error}`);
+    }
+  }
+
+  /**
+   * Set whether speed limit should be divided among active downloads
+   */
+  static async setDivideSpeedEnabled(enabled: boolean): Promise<void> {
+    try {
+      await invoke('set_divide_speed_enabled', { enabled });
+    } catch (error) {
+      console.error('Failed to set divide speed enabled:', error);
+      throw new Error(`Failed to set divide speed enabled: ${error}`);
+    }
+  }
 }

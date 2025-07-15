@@ -90,7 +90,7 @@ export const DownloadIndicator: React.FC<DownloadIndicatorProps> = ({ onClick })
                 <div className="space-y-2">
                   <div className="text-gray-400 text-xs font-medium">Current Downloads:</div>
                   <div className="max-h-32 overflow-y-auto space-y-1">
-                    {activeDownloads.slice(0, 3).map((download) => (
+                    {activeDownloads.slice(0, 1).map((download) => (
                       <div key={download.id} className="bg-gray-700 rounded p-2 text-xs">
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-white truncate flex-1 mr-2">
@@ -127,9 +127,9 @@ export const DownloadIndicator: React.FC<DownloadIndicatorProps> = ({ onClick })
                         </div>
                       </div>
                     ))}
-                    {activeDownloads.length > 3 && (
+                    {activeDownloads.length > 1 && (
                       <div className="text-center text-gray-400 text-xs py-1">
-                        +{activeDownloads.length - 3} more downloads
+                        +{activeDownloads.length - 1} more downloads
                       </div>
                     )}
                   </div>

@@ -117,6 +117,7 @@ pub struct DownloadState {
     pub timestamp: u64,
     pub checksum: String,
     pub speed_limit_mbps: Option<f64>, // Speed limit in MB/s, None means use default (0.0)
+    pub divide_speed_enabled: Option<bool>, // Whether to divide speed limit among active downloads
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -149,6 +150,7 @@ struct DownloadManager {
     last_save_time: SystemTime,
     state_version: u32,
     speed_limit_mbps: f64, // Speed limit in MB/s, 0 means unlimited
+    divide_speed_enabled: bool, // Whether to divide speed limit among active downloads
 }
 
 impl DownloadManager {
@@ -167,6 +169,7 @@ impl DownloadManager {
             last_save_time: SystemTime::now(),
             state_version: 1,
             speed_limit_mbps: 0.0, // Default to unlimited speed
+            divide_speed_enabled: false, // Default to not dividing speed
         };
         
         // Load persisted state (includes activities, downloads, and history)
@@ -275,6 +278,7 @@ impl DownloadManager {
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             checksum: String::new(),
             speed_limit_mbps: Some(self.speed_limit_mbps),
+            divide_speed_enabled: Some(self.divide_speed_enabled),
         };
         
         state.checksum = Self::calculate_state_checksum(&state)?;
@@ -352,6 +356,9 @@ impl DownloadManager {
         // Restore speed limit (use default 0.0 if not present for backward compatibility)
         self.speed_limit_mbps = state.speed_limit_mbps.unwrap_or(0.0);
         
+        // Restore divide speed setting (use default false if not present for backward compatibility)
+        self.divide_speed_enabled = state.divide_speed_enabled.unwrap_or(false);
+        
         Ok(())
     }
     
@@ -406,6 +413,7 @@ impl DownloadManager {
             timestamp: legacy_state.timestamp,
             checksum: legacy_state.checksum,
             speed_limit_mbps: None, // Default for legacy files
+            divide_speed_enabled: None, // Default for legacy files
         };
         
         Ok(state)
@@ -839,6 +847,29 @@ pub fn set_speed_limit(speed_limit_mbps: f64) -> Result<(), String> {
     // Save the state to persist the speed limit setting
     manager.save_state()
         .map_err(|e| format!("Failed to save state after setting speed limit: {}", e))?;
+    
+    Ok(())
+}
+
+#[command]
+pub fn get_divide_speed_enabled() -> Result<bool, String> {
+    let manager = DOWNLOAD_MANAGER.lock()
+        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    
+    Ok(manager.divide_speed_enabled)
+}
+
+#[command]
+pub fn set_divide_speed_enabled(enabled: bool) -> Result<(), String> {
+    let mut manager = DOWNLOAD_MANAGER.lock()
+        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    
+    manager.divide_speed_enabled = enabled;
+    log::info!("[Rust] Divide speed setting set to {}", manager.divide_speed_enabled);
+    
+    // Save the state to persist the divide speed setting
+    manager.save_state()
+        .map_err(|e| format!("Failed to save state after setting divide speed: {}", e))?;
     
     Ok(())
 }
@@ -1607,14 +1638,32 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                                 downloaded += chunk.len() as u64;
 
                                 // Apply speed limiting if enabled using a sliding window approach
-                                let speed_limit = {
+                                let (speed_limit, divide_speed_enabled) = {
                                     let manager = DOWNLOAD_MANAGER.lock().unwrap();
-                                    manager.speed_limit_mbps
+                                    (manager.speed_limit_mbps, manager.divide_speed_enabled)
                                 };
                                 
-                                if speed_limit > 0.0 {
+                                let effective_speed_limit = if divide_speed_enabled && speed_limit > 0.0 {
+                                    // Count active downloads and divide speed limit among them
+                                    let active_downloads_count = {
+                                        let manager = DOWNLOAD_MANAGER.lock().unwrap();
+                                        manager.downloads.values()
+                                            .filter(|d| matches!(d.status, DownloadStatus::Downloading))
+                                            .count()
+                                    };
+                                    
+                                    if active_downloads_count > 0 {
+                                        speed_limit / active_downloads_count as f64
+                                    } else {
+                                        speed_limit
+                                    }
+                                } else {
+                                    speed_limit
+                                };
+                                
+                                if effective_speed_limit > 0.0 {
                                     // Convert speed limit from MB/s to bytes/s
-                                    let speed_limit_bytes_per_sec = speed_limit * 1024.0 * 1024.0;
+                                    let speed_limit_bytes_per_sec = effective_speed_limit * 1024.0 * 1024.0;
                                     
                                     // Add current chunk to the rate limiting window
                                     bytes_downloaded_in_window += chunk.len() as u64;

@@ -116,6 +116,9 @@ export interface TauriCommands {
   // Speed limit commands
   get_speed_limit(): Promise<number>;
   set_speed_limit(speedLimitMbps: number): Promise<void>;
+  // Divide speed commands
+  get_divide_speed_enabled(): Promise<boolean>;
+  set_divide_speed_enabled(enabled: boolean): Promise<void>;
 }
 
 export interface DriveInfo {

@@ -89,6 +89,8 @@ pub fn run() {
             download::get_partial_downloads,
             download::get_speed_limit,
             download::set_speed_limit,
+            download::get_divide_speed_enabled,
+            download::set_divide_speed_enabled,
             // Proxy functions
             proxy::get_proxy_addr,
             proxy::set_proxy_addr,

@@ -60,6 +60,8 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [speedLimit, setSpeedLimit] = useState(0);
   const [tempSpeedLimit, setTempSpeedLimit] = useState(0);
+  const [divideSpeedEnabled, setDivideSpeedEnabled] = useState(false);
+  const [tempDivideSpeedEnabled, setTempDivideSpeedEnabled] = useState(false);
 
   // Column width customization state
   const [columnWidths, setColumnWidths] = useState({
@@ -77,12 +79,13 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
 
   const loadData = useCallback(async () => {
     try {
-      const [activeDownloads, downloadHistory, downloadStats, activityEntries, currentSpeedLimit] = await Promise.all([
+      const [activeDownloads, downloadHistory, downloadStats, activityEntries, currentSpeedLimit, currentDivideSpeedEnabled] = await Promise.all([
         DownloadService.getActiveDownloads(),
         DownloadService.getDownloadHistory(),
         DownloadService.getDownloadStats(),
         loadActivities(),
-        DownloadService.getSpeedLimit()
+        DownloadService.getSpeedLimit(),
+        DownloadService.getDivideSpeedEnabled()
       ]);
       
       setDownloads(activeDownloads);
@@ -90,10 +93,12 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
       setStats(downloadStats);
       setActivities(activityEntries);
       setSpeedLimit(currentSpeedLimit);
+      setDivideSpeedEnabled(currentDivideSpeedEnabled);
       
-      // Only update tempSpeedLimit if settings modal is not open to prevent overwriting user input
+      // Only update temp values if settings modal is not open to prevent overwriting user input
       if (!showSettingsModal) {
         setTempSpeedLimit(currentSpeedLimit);
+        setTempDivideSpeedEnabled(currentDivideSpeedEnabled);
       }
     } catch (error) {
       console.error('Failed to load download data:', error);
@@ -571,10 +576,14 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   // Settings modal handlers
   const handleSaveSettings = async () => {
     try {
-      await DownloadService.setSpeedLimit(tempSpeedLimit);
+      await Promise.all([
+        DownloadService.setSpeedLimit(tempSpeedLimit),
+        DownloadService.setDivideSpeedEnabled(tempDivideSpeedEnabled)
+      ]);
       setSpeedLimit(tempSpeedLimit);
+      setDivideSpeedEnabled(tempDivideSpeedEnabled);
       setShowSettingsModal(false);
-      await addUserInteraction(`Updated speed limit to ${tempSpeedLimit === 0 ? 'unlimited' : `${tempSpeedLimit} MB/s`}`);
+      await addUserInteraction(`Updated speed limit to ${tempSpeedLimit === 0 ? 'unlimited' : `${tempSpeedLimit} MB/s`} and divide speed ${tempDivideSpeedEnabled ? 'enabled' : 'disabled'}`);
     } catch (error) {
       console.error('Failed to save settings:', error);
     }
@@ -582,6 +591,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
 
   const handleCancelSettings = () => {
     setTempSpeedLimit(speedLimit);
+    setTempDivideSpeedEnabled(divideSpeedEnabled);
     setShowSettingsModal(false);
   };
 
@@ -1298,6 +1308,29 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                   />
                   <p className="text-gray-400 text-sm mt-2">
                     Set to 0 for unlimited speed. Current: {speedLimit === 0 ? 'Unlimited' : `${speedLimit} MB/s`}
+                  </p>
+                </div>
+                
+                <div>
+                  <label className="flex items-center space-x-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={tempDivideSpeedEnabled}
+                      onChange={(e) => setTempDivideSpeedEnabled(e.target.checked)}
+                      className="w-5 h-5 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-gray-300">
+                        Divide Speed Among Downloads
+                      </span>
+                      <p className="text-gray-400 text-xs mt-1">
+                        When enabled, the speed limit will be divided equally among all active downloads.
+                        For example: 2MB limit with 2 downloads = 1MB per download.
+                      </p>
+                    </div>
+                  </label>
+                  <p className="text-gray-400 text-sm mt-2">
+                    Current: {divideSpeedEnabled ? 'Enabled' : 'Disabled'}
                   </p>
                 </div>
               </div>
