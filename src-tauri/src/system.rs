@@ -95,7 +95,7 @@ pub fn check_and_disable_windows_proxy() -> Result<String, String> {
 
             // Check if proxy is enabled (ProxyEnable = 1)
             if output_str.contains("ProxyEnable") && output_str.contains("0x1") {
-                println!("🔧 Windows proxy is enabled, attempting to disable...");
+                log::info!("🔧 Windows proxy is enabled, attempting to disable...");
 
                 // Disable proxy
                 let disable_output = create_hidden_command("reg")
@@ -148,7 +148,7 @@ pub fn install_ssl_certificate() -> Result<String, String> {
         if !cert_path.exists() {
             // Generate CA files if they don't exist
             let yuukips_dir = get_data_dir()?.join("yuukips");
-            println!("Certificate file not found, generating CA files at: {}", yuukips_dir.display());
+            log::info!("Certificate file not found, generating CA files at: {}", yuukips_dir.display());
             generate_ca_files(&yuukips_dir);
             
             // Check again if the certificate was created
@@ -343,7 +343,7 @@ fn clear_directory_selective(dir_path: &std::path::Path, preserve_files: &[&str]
         
         // Skip files that should be preserved
         if preserve_files.contains(&file_name) {
-            println!("🔒 Preserving essential file: {}", file_name);
+            log::info!("🔒 Preserving essential file: {}", file_name);
             continue;
         }
         
@@ -357,10 +357,10 @@ fn clear_directory_selective(dir_path: &std::path::Path, preserve_files: &[&str]
         match result {
             Ok(_) => {
                 cleared_count += 1;
-                println!("🗑️ Removed: {}", path.display());
+                log::info!("🗑️ Removed: {}", path.display());
             }
             Err(e) => {
-                eprintln!("⚠️ Failed to remove {}: {}", path.display(), e);
+                log::error!("⚠️ Failed to remove {}: {}", path.display(), e);
             }
         }
     }
@@ -385,11 +385,11 @@ pub fn clear_launcher_data() -> Result<String, String> {
             Ok(cleared_count) => {
                 if cleared_count > 0 {
                     cleared_items.push(format!("YuukiPS data directory ({} items)", cleared_count));
-                    println!("🧹 Cleared {} items from YuukiPS data directory: {}", cleared_count, yuukips_dir.display());
+                    log::info!("🧹 Cleared {} items from YuukiPS data directory: {}", cleared_count, yuukips_dir.display());
                 }
             }
             Err(e) => {
-                eprintln!("⚠️ Failed to clear YuukiPS data directory: {}", e);
+                log::error!("⚠️ Failed to clear YuukiPS data directory: {}", e);
             }
         }
     }
@@ -405,11 +405,11 @@ pub fn clear_launcher_data() -> Result<String, String> {
             Ok(cleared_count) => {
                 if cleared_count > 0 {
                     cleared_items.push(format!("Tauri app data ({} items)", cleared_count));
-                    println!("🧹 Cleared {} items from Tauri app data directory: {}", cleared_count, app_data_dir.display());
+                    log::info!("🧹 Cleared {} items from Tauri app data directory: {}", cleared_count, app_data_dir.display());
                 }
             }
             Err(e) => {
-                eprintln!("⚠️ Failed to clear Tauri app data: {}", e);
+                log::error!("⚠️ Failed to clear Tauri app data: {}", e);
             }
         }
     }
@@ -421,10 +421,10 @@ pub fn clear_launcher_data() -> Result<String, String> {
             match fs::remove_dir_all(&yuukips_temp) {
                 Ok(_) => {
                     cleared_items.push("temporary files".to_string());
-                    println!("🧹 Cleared temporary files: {}", yuukips_temp.display());
+                    log::info!("🧹 Cleared temporary files: {}", yuukips_temp.display());
                 }
                 Err(e) => {
-                    eprintln!("⚠️ Failed to clear temporary files: {}", e);
+                    log::error!("⚠️ Failed to clear temporary files: {}", e);
                 }
             }
         }

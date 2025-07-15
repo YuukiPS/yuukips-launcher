@@ -218,19 +218,19 @@ pub fn launch_game(
         ) {
             Ok((patch_message, response, files)) => {
                 if !patch_message.is_empty() {
-                    println!("🔧 Patch status: {}", patch_message);
+                    log::info!("🔧 Patch status: {}", patch_message);
                 }
                 let patch_response_data = response.clone();
 
                 // Check if we need to show a message to user before proceeding
                 if let Some(ref resp) = response {
                     if !resp.message.is_empty() {
-                        //println!("📢 Important message: {}", resp.message);
+                        //log::info!("📢 Important message: {}", resp.message);
                     }
 
                     // Check if proxy should be skipped
                     if !resp.proxy {
-                        println!("⚠️ Proxy disabled by patch response");
+                        log::warn!("⚠️ Proxy disabled by patch response");
                     }
                 }
                 (files, patch_response_data)
@@ -272,7 +272,7 @@ pub fn launch_game(
             match remove_all_hoyo_pass() {
                 Ok(deleted_entries) => {
                     if !deleted_entries.is_empty() {
-                        println!(
+                        log::info!(
                             "🗑️ Removed {} HoyoPass registry entries: {:?}",
                             deleted_entries.len(),
                             deleted_entries
@@ -280,7 +280,7 @@ pub fn launch_game(
                     }
                 }
                 Err(e) => {
-                    println!("⚠️ Warning: Failed to remove HoyoPass entries: {}", e);
+                    log::warn!("⚠️ Warning: Failed to remove HoyoPass entries: {}", e);
                     // Continue with game launch even if HoyoPass removal fails
                 }
             }
@@ -494,7 +494,7 @@ pub fn kill_game_processes(_game_id: &Number, _channel_id: &Number) -> Result<St
             }
 
             if process_found {
-                println!("🔪 Killing running game process: {}", game_exe_name);
+                log::info!("🔪 Killing running game process: {}", game_exe_name);
 
                 // Try to kill the process gracefully first
                 let kill_output = create_hidden_command("taskkill")
@@ -503,14 +503,14 @@ pub fn kill_game_processes(_game_id: &Number, _channel_id: &Number) -> Result<St
 
                 match kill_output {
                     Ok(output) if output.status.success() => {
-                        println!("✅ Successfully killed: {}", game_exe_name);
+                        log::info!("✅ Successfully killed: {}", game_exe_name);
                         // Wait a moment for the process to fully terminate
                         std::thread::sleep(Duration::from_millis(1000));
                         Ok(format!("Killed game process: {}", game_exe_name))
                     }
                     Ok(output) => {
                         let error_msg = String::from_utf8_lossy(&output.stderr);
-                        println!(
+                        log::warn!(
                             "⚠️ Failed to kill {} gracefully: {}",
                             game_exe_name, error_msg
                         );
@@ -522,7 +522,7 @@ pub fn kill_game_processes(_game_id: &Number, _channel_id: &Number) -> Result<St
 
                         match force_kill_output {
                             Ok(force_output) if force_output.status.success() => {
-                                println!("✅ Force killed: {}", game_exe_name);
+                                log::info!("✅ Force killed: {}", game_exe_name);
                                 std::thread::sleep(Duration::from_millis(1000));
                                 Ok(format!("Force killed game process: {}", game_exe_name))
                             }
@@ -601,7 +601,7 @@ pub fn start_game_monitor(
         let mut startup_checks = 0;
         const MAX_STARTUP_CHECKS: u32 = 30; // 30 seconds max wait for game to start
 
-        println!(
+        log::info!(
             "🔍 Started monitoring game {} - waiting for game to start",
             game_id_clone
         );
@@ -610,7 +610,7 @@ pub fn start_game_monitor(
         let _cleanup_guard = scopeguard::guard((), |_| {
             if let Ok(mut monitor_state) = GAME_MONITOR_STATE.lock() {
                 *monitor_state = None;
-                println!("🔧 Game monitor state cleared for game {}", game_id_clone);
+                log::debug!("🔧 Game monitor state cleared for game {}", game_id_clone);
             }
         });
 
@@ -624,7 +624,7 @@ pub fn start_game_monitor(
             if !game_started {
                 startup_checks += 1;
                 if startup_checks > MAX_STARTUP_CHECKS {
-                    println!(
+                    log::info!(
                         "⚠️ Game {} did not start within 30 seconds, stopping monitor",
                         game_id_clone
                     );
@@ -636,7 +636,7 @@ pub fn start_game_monitor(
                         if is_running {
                             game_started = true;
                             last_game_state = true;
-                            println!(
+                            log::info!(
                                 "🎮 Game {} detected as running - starting active monitoring",
                                 game_id_clone
                             );
@@ -665,13 +665,13 @@ pub fn start_game_monitor(
                                 match proxy::start_proxy() {
                                     Ok(_) => {
                                         proxy_started_by_us = true;
-                                        println!(
+                                        log::info!(
                                             "🎮 Game {} started - Proxy activated automatically",
                                             game_id_clone
                                         );
                                     }
                                     Err(e) => {
-                                        eprintln!(
+                                        log::error!(
                                             "⚠️ Failed to start proxy when game started: {}",
                                             e
                                         );
@@ -682,13 +682,13 @@ pub fn start_game_monitor(
                             // Start Task Manager monitoring when game starts
                             match start_task_manager_monitor_internal(app_handle_clone.clone()) {
                                 Ok(_) => {
-                                    println!(
+                                    log::info!(
                                         "🔍 Task Manager monitoring started for game {}",
                                         game_id_clone
                                     );
                                 }
                                 Err(e) => {
-                                    eprintln!("⚠️ Failed to start Task Manager monitoring: {}", e);
+                                    log::error!("⚠️ Failed to start Task Manager monitoring: {}", e);
                                 }
                             }
 
@@ -696,19 +696,19 @@ pub fn start_game_monitor(
                             match crate::system::minimize_launcher_window(app_handle_clone.clone())
                             {
                                 Ok(_) => {
-                                    println!(
+                                    log::info!(
                                         "🪟 Launcher window minimized - game {} is running",
                                         game_id_clone
                                     );
                                 }
                                 Err(e) => {
-                                    eprintln!("⚠️ Failed to minimize launcher window: {}", e);
+                                    log::error!("⚠️ Failed to minimize launcher window: {}", e);
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("⚠️ Error checking game startup status: {}", e);
+                        log::error!("⚠️ Error checking game startup status: {}", e);
                     }
                 }
 
@@ -751,17 +751,17 @@ pub fn start_game_monitor(
                             thread::spawn(|| {
                                 match proxy::force_stop_proxy() {
                                     Ok(_) => {
-                                        println!("🎮 Proxy force stopped automatically");
+                                        log::info!("🎮 Proxy force stopped automatically");
                                     }
                                     Err(e) => {
-                                        eprintln!("⚠️ Failed to force stop proxy: {}", e);
+                                        log::error!("⚠️ Failed to force stop proxy: {}", e);
                                         // Try regular stop as fallback
                                         match proxy::stop_proxy() {
                                             Ok(_) => {
-                                                println!("🎮 Proxy stopped with fallback method");
+                                                log::info!("🎮 Proxy stopped with fallback method");
                                             }
                                             Err(e2) => {
-                                                eprintln!(
+                                                log::error!(
                                                     "⚠️ Failed to stop proxy with fallback: {}",
                                                     e2
                                                 );
@@ -779,33 +779,33 @@ pub fn start_game_monitor(
                         thread::spawn(move || {
                             match crate::system::restore_launcher_window(app_handle_for_restore) {
                                 Ok(_) => {
-                                    println!(
+                                    log::info!(
                                         "🪟 Launcher window restored - game {} has stopped",
                                         game_id_for_restore
                                     );
                                 }
                                 Err(e) => {
-                                    eprintln!("⚠️ Failed to restore launcher window: {}", e);
+                                    log::error!("⚠️ Failed to restore launcher window: {}", e);
                                 }
                             }
                         });
 
                         // Stop monitoring after game stops
-                        println!("🔧 Monitor stopped");
+                        log::debug!("🔧 Monitor stopped");
                         break;
                     }
                     // Game is still running, continue monitoring
                 }
                 Err(e) => {
                     consecutive_errors += 1;
-                    eprintln!(
+                    log::error!(
                         "⚠️ Error checking game status (attempt {}): {}",
                         consecutive_errors, e
                     );
 
                     // If we have too many consecutive errors, assume game stopped
                     if consecutive_errors >= MAX_CONSECUTIVE_ERRORS && last_game_state {
-                        eprintln!(
+                        log::error!(
                             "⚠️ Too many consecutive errors, assuming game {} has stopped",
                             game_id_clone
                         );
@@ -813,21 +813,21 @@ pub fn start_game_monitor(
                             // Spawn detached thread for proxy cleanup - don't wait for it
                             thread::spawn(|| match proxy::force_stop_proxy() {
                                 Ok(_) => {
-                                    println!("🎮 Proxy force stopped due to errors");
+                                    log::info!("🎮 Proxy force stopped due to errors");
                                 }
                                 Err(e) => {
-                                    eprintln!(
+                                    log::error!(
                                         "⚠️ Failed to force stop proxy after error detection: {}",
                                         e
                                     );
                                     match proxy::stop_proxy() {
                                         Ok(_) => {
-                                            println!(
+                                            log::info!(
                                                 "🎮 Proxy stopped with fallback due to errors"
                                             );
                                         }
                                         Err(e2) => {
-                                            eprintln!("⚠️ Failed to stop proxy with fallback after error detection: {}", e2);
+                                            log::error!("⚠️ Failed to stop proxy with fallback after error detection: {}", e2);
                                         }
                                     }
                                 }
@@ -841,16 +841,16 @@ pub fn start_game_monitor(
                         thread::spawn(move || {
                             match crate::system::restore_launcher_window(app_handle_for_restore) {
                                 Ok(_) => {
-                                    println!("🪟 Launcher window restored - game {} assumed stopped due to errors", game_id_for_restore);
+                                    log::info!("🪟 Launcher window restored - game {} assumed stopped due to errors", game_id_for_restore);
                                 }
                                 Err(e) => {
-                                    eprintln!("⚠️ Failed to restore launcher window: {}", e);
+                                    log::error!("⚠️ Failed to restore launcher window: {}", e);
                                 }
                             }
                         });
 
                         // Stop monitoring after assuming game stopped
-                        println!("🔧 Monitor stopped");
+                        log::debug!("🔧 Monitor stopped");
                         break;
                     }
                 }
@@ -865,10 +865,10 @@ pub fn start_game_monitor(
             // Spawn detached cleanup thread - don't wait for it
             thread::spawn(|| match proxy::stop_proxy() {
                 Ok(_) => {
-                    println!("🔧 Monitor stopped - Proxy deactivated");
+                    log::debug!("🔧 Monitor stopped - Proxy deactivated");
                 }
                 Err(e) => {
-                    eprintln!("⚠️ Failed to stop proxy during cleanup: {}", e);
+                    log::error!("⚠️ Failed to stop proxy during cleanup: {}", e);
                 }
             });
         }
@@ -909,7 +909,7 @@ fn handle_game_stopped_cleanup_with_handle(handle: &GameMonitorHandle) {
 
     // Restore files if we have patch information
     if !patched_files.is_empty() {
-        println!(
+        log::info!(
             "🔄 Starting cleanup for {} patched files...",
             patched_files.len()
         );
@@ -918,17 +918,17 @@ fn handle_game_stopped_cleanup_with_handle(handle: &GameMonitorHandle) {
             // Try API-based restoration first
             match restore_original_files(&response, &handle.game_folder_path) {
                 Ok(message) => {
-                    println!("🔄 {}", message);
+                    log::info!("🔄 {}", message);
                 }
                 Err(e) => {
-                    println!("⚠️ API restoration failed: {}", e);
+                    log::error!("⚠️ API restoration failed: {}", e);
                     // Fallback to backup restoration
                     match restore_from_backups(&handle.game_folder_path, &patched_files) {
                         Ok(message) => {
-                            println!("🔄 {}", message);
+                            log::info!("🔄 {}", message);
                         }
                         Err(e) => {
-                            println!("⚠️ Backup restoration also failed: {}", e);
+                            log::error!("⚠️ Backup restoration also failed: {}", e);
                         }
                     }
                 }
@@ -938,28 +938,28 @@ fn handle_game_stopped_cleanup_with_handle(handle: &GameMonitorHandle) {
             match cleanup_remaining_patches(&handle.game_folder_path, &patched_files) {
                 Ok(message) => {
                     if !message.is_empty() {
-                        println!("🧹 {}", message);
+                        log::info!("🧹 {}", message);
                     }
                 }
                 Err(e) => {
-                    println!("⚠️ Patch cleanup warning: {}", e);
+                    log::warn!("⚠️ Patch cleanup warning: {}", e);
                 }
             }
         } else {
             // No patch response, try backup restoration
             match restore_from_backups(&handle.game_folder_path, &patched_files) {
                 Ok(message) => {
-                    println!("🔄 {}", message);
+                    log::info!("🔄 {}", message);
                 }
                 Err(e) => {
-                    println!("⚠️ Backup restoration failed: {}", e);
+                    log::error!("⚠️ Backup restoration failed: {}", e);
                 }
             }
         }
 
-        println!("✅ Cleanup completed");
+        log::info!("✅ Cleanup completed");
     } else {
-        println!("ℹ️ No patched files to clean up");
+        log::info!("ℹ️ No patched files to clean up");
     }
 }
 
@@ -996,7 +996,7 @@ pub fn stop_game_monitor() -> Result<String, String> {
         // The thread will clean itself up when it detects the stop signal
         if let Some(_thread_handle) = handle.thread_handle.take() {
             // Thread will stop on its own when it checks should_stop flag
-            println!("🔧 Game monitor stop signal sent");
+            log::debug!("🔧 Game monitor stop signal sent");
         }
 
         Ok("Game monitoring stopped".to_string())
@@ -1063,7 +1063,7 @@ pub fn force_stop_game_monitor() -> Result<String, String> {
 
         // Don't wait for thread to join - just detach it
         if let Some(_thread_handle) = handle.thread_handle.take() {
-            println!("🔧 Game monitor force stop signal sent");
+            log::debug!("🔧 Game monitor force stop signal sent");
         }
 
         Ok("Game monitor stopped".to_string())

@@ -136,7 +136,7 @@ pub fn check_and_apply_patches(
 ) -> Result<(String, Option<PatchResponse>, Vec<String>), String> {
     // Ensure proxy is stopped before patching
     if crate::proxy::is_proxy_running() {
-        println!("🔧 Stopping proxy before applying patches...");
+        log::info!("🔧 Stopping proxy before applying patches...");
         crate::proxy::stop_proxy()
             .map_err(|e| format!("Failed to stop proxy before patching: {}", e))?;
     }
@@ -151,9 +151,9 @@ pub fn check_and_apply_patches(
         
         // Check if game is running and try to kill it if needed
         if crate::game::check_game_running_internal(&game_id, &channel)? {
-            println!("🎮 Game is running, attempting to close it for patching...");
+            log::info!("🎮 Game is running, attempting to close it for patching...");
             match crate::game::kill_game_processes(&game_id, &channel) {
-                Ok(message) => println!("🔪 {}", message),
+                Ok(message) => log::info!("🔪 {}", message),
                 Err(e) => return Err(format!("Cannot patch while game is running. Failed to close game: {}", e)),
             }
             
@@ -170,7 +170,7 @@ pub fn check_and_apply_patches(
         let patched_files = match patch_response.metode {
             0 => {
                 // Method 0: No patching needed
-                println!("✅ No patches needed for this game version");
+                log::info!("✅ No patches needed for this game version");
                 Vec::new()
             }
             1 => {
@@ -217,7 +217,7 @@ pub async fn fetch_patch_info(
         game_id, version, channel, md5
     );
     
-    println!("🔍 Checking for patches: {}", url);
+    log::info!("🔍 Checking for patches: {}", url);
     
     let response = client.get(&url)
         .send()
@@ -252,7 +252,7 @@ pub async fn fetch_patch_info(
         .await
         .map_err(|e| format!("Failed to parse patch response: {}", e))?;
     
-    println!("📦 Patch info received: method={}, proxy={}, files={}", 
+    log::info!("📦 Patch info received: method={}, proxy={}, files={}", 
              patch_response.metode, patch_response.proxy, patch_response.patched.len());
     
     Ok(patch_response)
@@ -276,22 +276,22 @@ async fn apply_file_patches(
         let file_path = Path::new(game_folder_path).join(&patch_file.location);
         let cache_file_path = cache_dir.join(format!("{}.patch", patch_file.location.replace(['/', '\\'], "_")));
         
-        println!("🔧 Processing patch {}/{}: {}", index + 1, patch_response.patched.len(), patch_file.location);
+        log::info!("🔧 Processing patch {}/{}: {}", index + 1, patch_response.patched.len(), patch_file.location);
         
         // Check if we have a cached version with matching MD5
         let mut use_cached = false;
         if cache_file_path.exists() {
             match calculate_md5(&cache_file_path) {
                 Ok(cached_md5) if cached_md5.to_uppercase() == patch_file.md5.to_uppercase() => {
-                    println!("📦 Using cached patch for: {}", patch_file.location);
+                    log::info!("📦 Using cached patch for: {}", patch_file.location);
                     use_cached = true;
                 }
                 Ok(_) => {
-                    println!("🔄 Cache MD5 mismatch for {}, expected {} but got {}", 
+                    log::warn!("🔄 Cache MD5 mismatch for {}, expected {} but got {}", 
                         patch_file.location, patch_file.md5.to_uppercase(), calculate_md5(&cache_file_path).unwrap_or_default());
                 }
                 Err(e) => {
-                    println!("⚠️ Failed to verify cached file {}: {}", patch_file.location, e);
+                    log::error!("⚠️ Failed to verify cached file {}: {}", patch_file.location, e);
                 }
             }
         }
@@ -310,7 +310,7 @@ async fn apply_file_patches(
             if !backup_path.exists() {
                 fs::copy(&file_path, &backup_path)
                     .map_err(|e| format!("Failed to create backup for {}: {}", patch_file.location, e))?;
-                println!("💾 Created backup: {}", backup_path.display());
+                log::info!("💾 Created backup: {}", backup_path.display());
             }
         }
         
@@ -320,11 +320,11 @@ async fn apply_file_patches(
             .map_err(|e| format!("Failed to apply patch for {}: {}", patch_file.location, e))?;
         
         patched_files.push(patch_file.location.clone());
-        println!("✅ Applied patch: {}", patch_file.location);
+        log::info!("✅ Applied patch: {}", patch_file.location);
     }
     
     if !patched_files.is_empty() {
-        println!("🎉 Successfully applied {} patches", patched_files.len());
+        log::info!("🎉 Successfully applied {} patches", patched_files.len());
     }
     
     Ok(patched_files)
@@ -351,7 +351,7 @@ async fn download_and_verify_file(
         progress.percentage = 0.0;
     }
     
-    println!("⬇️ Downloading: {} -> {}", url, file_path.display());
+    log::info!("⬇️ Downloading: {} -> {}", url, file_path.display());
     
     let response = client.get(url)
         .send()
@@ -436,7 +436,7 @@ async fn download_and_verify_file(
         }
     }
     
-    println!("✅ Download verified: {}", file_path.display());
+    log::info!("✅ Download verified: {}", file_path.display());
     Ok(())
 }
 

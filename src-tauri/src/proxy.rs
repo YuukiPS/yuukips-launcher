@@ -165,7 +165,7 @@ impl HttpHandler for ProxyHandler {
                 let uri_path_and_query = match req.uri().path_and_query() {
                     Some(pq) => pq.as_str(),
                     _none => {
-                        eprintln!("⚠️ Failed to get path and query from URI");
+                        log::error!("⚠️ Failed to get path and query from URI");
                         let error_response = Response::builder()
                              .status(StatusCode::BAD_REQUEST)
                              .body(Body::empty())
@@ -178,7 +178,7 @@ impl HttpHandler for ProxyHandler {
                 let server_addr = match SERVER.lock() {
                     Ok(addr) => addr.clone(),
                     Err(e) => {
-                        eprintln!("⚠️ Failed to lock SERVER: {}", e);
+                        log::error!("⚠️ Failed to lock SERVER: {}", e);
                         let error_response = Response::builder()
                              .status(StatusCode::INTERNAL_SERVER_ERROR)
                              .body(Body::empty())
@@ -191,7 +191,7 @@ impl HttpHandler for ProxyHandler {
                 ) {
                     Ok(uri) => uri,
                     Err(e) => {
-                        eprintln!("⚠️ Failed to create new URI: {}", e);
+                        log::error!("⚠️ Failed to create new URI: {}", e);
                         let error_response = Response::builder()
                              .status(StatusCode::BAD_REQUEST)
                              .body(Body::empty())
@@ -242,7 +242,7 @@ pub async fn create_proxy_internal(
         // Try regenerating the CA stuff and read it again. If that doesn't work, quit.
         Ok(b) => b,
         Err(e) => {
-            println!("Encountered {}. Regenerating CA cert and retrying...", e);
+            log::warn!("Encountered {}. Regenerating CA cert and retrying...", e);
             let yuukips_path = crate::system::get_yuukips_data_path().expect("Could not get YuukiPS data path");
             generate_ca_files(&PathBuf::from(yuukips_path));
 
@@ -254,7 +254,7 @@ pub async fn create_proxy_internal(
         // Try regenerating the CA stuff and read it again. If that doesn't work, quit.
         Ok(b) => b,
         Err(e) => {
-            println!("Encountered {}. Regenerating CA cert and retrying...", e);
+            log::warn!("Encountered {}. Regenerating CA cert and retrying...", e);
             let yuukips_path = crate::system::get_yuukips_data_path().expect("Could not get YuukiPS data path");
             generate_ca_files(&PathBuf::from(yuukips_path));
 
@@ -327,10 +327,10 @@ pub fn connect_to_proxy(proxy_port: u16) -> Result<(), String> {
 
     // Display the proxy domains being used
     if let Ok(user_domains) = USER_PROXY_DOMAINS.lock() {
-        println!("Connected to the proxy on port {}.", proxy_port);
-        println!("Active proxy domains ({} total):", user_domains.len());
+        log::info!("Connected to the proxy on port {}.", proxy_port);
+        log::info!("Active proxy domains ({} total):", user_domains.len());
     } else {
-        println!("Connected to the proxy.");
+        log::info!("Connected to the proxy.");
     }
     Ok(())
 }
@@ -355,20 +355,20 @@ pub fn connect_to_proxy(proxy_port: u16) -> Result<(), String> {
 
     // Display the proxy domains being used
     if let Ok(user_domains) = USER_PROXY_DOMAINS.lock() {
-        println!("Connected to the proxy on port {}.", proxy_port);
-        println!("Active proxy domains ({} total):", user_domains.len());
+        log::info!("Connected to the proxy on port {}.", proxy_port);
+        log::info!("Active proxy domains ({} total):", user_domains.len());
         for (index, domain) in user_domains.iter().enumerate() {
-            println!("  {}. {}", index + 1, domain);
+            log::info!("  {}. {}", index + 1, domain);
         }
     } else {
-        println!("Connected to the proxy.");
+        log::info!("Connected to the proxy.");
     }
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
 pub fn connect_to_proxy(_proxy_port: u16) -> Result<(), String> {
-    println!("No Mac support yet. Someone mail me a Macbook and I will do it B)");
+    log::warn!("No Mac support yet. Someone mail me a Macbook and I will do it B)");
     Ok(())
 }
 
@@ -386,15 +386,15 @@ pub fn disconnect_from_proxy() {
             // Set registry values with error handling
             match settings.set_value("ProxyEnable", &Data::U32(0)) {
                 Ok(_) => {
-                    println!("Disconnected from proxy.");
+                    log::info!("Disconnected from proxy.");
                 }
                 Err(e) => {
-                    eprintln!("⚠️ Failed to disable proxy in registry: {}", e);
+                    log::error!("⚠️ Failed to disable proxy in registry: {}", e);
                 }
             }
         }
         Err(e) => {
-            eprintln!("⚠️ Failed to open Internet Settings registry key: {}", e);
+            log::error!("⚠️ Failed to open Internet Settings registry key: {}", e);
         }
     }
 }
@@ -451,15 +451,15 @@ pub fn generate_ca_files(path: &Path) {
     match fs::create_dir_all(&cert_dir) {
         Ok(_) => {}
         Err(e) => {
-            println!("{}", e);
+            log::error!("{}", e);
         }
     };
 
     // Write the certificate to a file.
     let cert_path = cert_dir.join("cert.crt");
     match fs::write(&cert_path, cert_crt) {
-        Ok(_) => println!("Wrote certificate to {}", cert_path.to_str().unwrap()),
-        Err(e) => println!(
+        Ok(_) => log::info!("Wrote certificate to {}", cert_path.to_str().unwrap()),
+        Err(e) => log::error!(
             "Error writing certificate to {}: {}",
             cert_path.to_str().unwrap(),
             e
@@ -469,11 +469,11 @@ pub fn generate_ca_files(path: &Path) {
     // Write the private key to a file.
     let private_key_path = cert_dir.join("private.key");
     match fs::write(&private_key_path, private_key) {
-        Ok(_) => println!(
+        Ok(_) => log::info!(
             "Wrote private key to {}",
             private_key_path.to_str().unwrap()
         ),
-        Err(e) => println!(
+        Err(e) => log::error!(
             "Error writing private key to {}: {}",
             private_key_path.to_str().unwrap(),
             e
@@ -493,7 +493,7 @@ pub fn install_ca_files(cert_path: &Path) {
         .args(["-addstore", "-f", "Root", &cert_path.to_string_lossy()])
         .output()
         .expect("Failed to install certificate");
-    println!("Installed certificate: {}", cert_path.to_string_lossy());
+    log::info!("Installed certificate: {}", cert_path.to_string_lossy());
 }
 
 #[cfg(target_os = "macos")]
@@ -510,7 +510,7 @@ pub fn install_ca_files(cert_path: &Path) {
         ])
         .output()
         .expect("Failed to install certificate");
-    println!("Installed certificate.");
+    log::info!("Installed certificate.");
 }
 
 #[cfg(target_os = "linux")]
@@ -560,7 +560,7 @@ fi
         .output()
         .expect("Failed to run script");
 
-    println!("Installed certificate.");
+    log::info!("Installed certificate.");
 }
 
 // Additional functions required by lib.rs
@@ -696,16 +696,16 @@ pub fn start_proxy() -> Result<String, String> {
         if user_domains.is_empty() {
             if let Ok(default_domains) = DEFAULT_PROXY_DOMAINS.lock() {
                 *user_domains = default_domains.clone();
-                println!("User proxy domains were empty, initialized with default domains");
+                log::info!("User proxy domains were empty, initialized with default domains");
             }
         }
         user_domains.clone()
     };
 
     // Log the proxy domains that will be used
-    println!("Proxy starting with the following domains:");
+    log::info!("Proxy starting with the following domains:");
     for (index, domain) in domains_to_use.iter().enumerate() {
-        println!("  {}. {}", index + 1, domain);
+        log::info!("  {}. {}", index + 1, domain);
     }
 
     let runtime = Runtime::new().map_err(|e| format!("Failed to create runtime: {}", e))?;
@@ -733,7 +733,7 @@ pub fn start_proxy() -> Result<String, String> {
 
     // Re-establish proxy connection after starting
     if let Err(e) = connect_to_proxy(proxy_port) {
-        eprintln!("⚠️ Failed to connect to proxy: {}", e);
+        log::error!("⚠️ Failed to connect to proxy: {}", e);
     }
 
     Ok(format!("Proxy started successfully on port {} with {} domains configured", proxy_port, domains_to_use.len()))
@@ -825,7 +825,7 @@ pub fn get_proxy_status_with_domains() -> Result<ProxyStatus, String> {
     let active_domains = match USER_PROXY_DOMAINS.lock() {
         Ok(domains) => domains.clone(),
         Err(e) => {
-            eprintln!("⚠️ Failed to lock USER_PROXY_DOMAINS: {}", e);
+            log::error!("⚠️ Failed to lock USER_PROXY_DOMAINS: {}", e);
             Vec::new()
         }
     };
@@ -872,5 +872,5 @@ pub fn force_stop_proxy() -> Result<String, String> {
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 pub fn install_ca_files(_cert_path: &Path) {
-    println!("CA certificate installation is not supported on this platform.");
+    log::warn!("CA certificate installation is not supported on this platform.");
 }

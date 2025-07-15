@@ -136,10 +136,10 @@ pub fn cleanup_temp_files(dir_path: &str, pattern: &str) -> Result<usize, String
                     match fs::remove_file(&file_path) {
                         Ok(_) => {
                             cleaned_count += 1;
-                            println!("🧹 Cleaned up temp file: {}", file_path.display());
+                            log::info!("🧹 Cleaned up temp file: {}", file_path.display());
                         }
                         Err(e) => {
-                            eprintln!("⚠️ Failed to remove temp file {}: {}", file_path.display(), e);
+                            log::error!("⚠️ Failed to remove temp file {}: {}", file_path.display(), e);
                         }
                     }
                 }

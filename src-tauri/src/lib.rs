@@ -26,7 +26,16 @@ pub use utils::*;
 
 /// Initialize and run the Tauri application
 pub fn run() {
+    // YuukiPS Launcher initialization    
     tauri::Builder::default()
+        .plugin(tauri_plugin_log::Builder::default()
+            .targets([
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stderr),
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: Some("yuukips-launcher".to_string()) }),
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+            ])
+            .level(log::LevelFilter::Debug)
+            .build())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             // System functions
@@ -144,12 +153,12 @@ pub fn run() {
         .setup(|app| {
             // Check admin privileges at startup - required for patch operations and proxy functionality
             if !is_running_as_admin() {
-                eprintln!("❌ Administrator privileges required!");
-                eprintln!("This launcher requires administrator access to:");
-                eprintln!("  • Copy and apply game patches");
-                eprintln!("  • Run the proxy server");
-                eprintln!("  • Modify system proxy settings");
-                eprintln!("Please restart the launcher as administrator.");
+                log::error!("❌ Administrator privileges required!");
+                log::error!("This launcher requires administrator access to:");
+                log::error!("  • Copy and apply game patches");
+                log::error!("  • Run the proxy server");
+                log::error!("  • Modify system proxy settings");
+                log::error!("Please restart the launcher as administrator.");
                 
                 // Show error dialog to user
                 use tauri_plugin_dialog::DialogExt;
@@ -161,12 +170,12 @@ pub fn run() {
                 std::process::exit(1);
             }
             
-            println!("✅ Running with administrator privileges");
+            log::info!("✅ Running with administrator privileges");
             
             // Check and disable Windows proxy on startup
             match check_and_disable_windows_proxy() {
-                Ok(message) => println!("🔧 Startup proxy check: {}", message),
-                Err(e) => eprintln!("⚠️ Startup proxy check failed: {}", e),
+                Ok(message) => log::info!("🔧 Startup proxy check: {}", message),
+                Err(e) => log::error!("⚠️ Startup proxy check failed: {}", e),
             }
             
             // Show the main window after initialization
@@ -201,7 +210,7 @@ pub fn run() {
                     }
                     Err(e) => {
                         // Error checking game status, log it but allow close
-                        eprintln!("⚠️ Error checking game status during close: {}", e);
+                        log::error!("⚠️ Error checking game status during close: {}", e);
                     }
                 }
             }

@@ -171,16 +171,16 @@ impl DownloadManager {
         
         // Load persisted state (includes activities, downloads, and history)
         if let Err(e) = manager.load_state() {
-            eprintln!("Failed to load state: {}", e);
+            log::error!("Failed to load state: {}", e);
             // Fallback to loading just activities for backward compatibility
             if let Err(e) = manager.load_activities() {
-                eprintln!("Failed to load activities: {}", e);
+                log::error!("Failed to load activities: {}", e);
             }
         }
         
         // Resume interrupted downloads
         if let Err(e) = manager.resume_interrupted_downloads() {
-            eprintln!("Failed to resume interrupted downloads: {}", e);
+            log::error!("Failed to resume interrupted downloads: {}", e);
         }
         
         manager
@@ -201,7 +201,7 @@ impl DownloadManager {
         
         // Persist activities immediately
         if let Err(e) = self.save_activities() {
-            eprintln!("Failed to save activities: {}", e);
+            log::error!("Failed to save activities: {}", e);
         }
     }
     
@@ -294,7 +294,7 @@ impl DownloadManager {
         // Create backup of current state if it exists
         if file_path.exists() {
             if let Err(e) = fs::copy(&file_path, &backup_path) {
-                eprintln!("Warning: Failed to create backup: {}", e);
+                log::warn!("Warning: Failed to create backup: {}", e);
             }
         }
         
@@ -326,16 +326,16 @@ impl DownloadManager {
         let state = match self.try_load_state_file(&file_path) {
             Ok(state) => state,
             Err(e) => {
-                eprintln!("Failed to load primary state file: {}", e);
+                log::error!("Failed to load primary state file: {}", e);
                 
                 // Try backup file
                 match self.try_load_state_file(&backup_path) {
                     Ok(state) => {
-                        eprintln!("Loaded from backup state file");
+                        log::info!("Loaded from backup state file");
                         state
                     }
                     Err(backup_e) => {
-                        eprintln!("Failed to load backup state file: {}", backup_e);
+                        log::error!("Failed to load backup state file: {}", backup_e);
                         return Err(format!("Both primary and backup state files failed: {} | {}", e, backup_e).into());
                     }
                 }
@@ -449,10 +449,10 @@ impl DownloadManager {
     
     fn resume_interrupted_downloads(&mut self) -> Result<Vec<String>, String> {
         // Debug: Log all downloads and their status
-        eprintln!("=== Resume Interrupted Downloads Debug ===");
-        eprintln!("Total downloads in manager: {}", self.downloads.len());
+        log::debug!("=== Resume Interrupted Downloads Debug ===");
+        log::debug!("Total downloads in manager: {}", self.downloads.len());
         for (id, download) in &self.downloads {
-            eprintln!("Download {}: status={:?}, downloaded={}, total={}, user_paused={}", 
+            log::debug!("Download {}: status={:?}, downloaded={}, total={}, user_paused={}", 
                 id, download.status, download.downloaded_size, download.total_size, download.user_paused);
         }
         
@@ -462,7 +462,7 @@ impl DownloadManager {
                 let is_interrupted = matches!(download.status, DownloadStatus::Downloading) && 
                     download.downloaded_size > 0 && 
                     download.downloaded_size < download.total_size;
-                eprintln!("Checking download for interruption: status={:?}, downloaded={}, total={}, is_interrupted={}", 
+                log::debug!("Checking download for interruption: status={:?}, downloaded={}, total={}, is_interrupted={}", 
                     download.status, download.downloaded_size, download.total_size, is_interrupted);
                 is_interrupted
             })
@@ -474,14 +474,14 @@ impl DownloadManager {
             .filter(|(_, download)| {
                 let is_auto_resumable = matches!(download.status, DownloadStatus::Paused) && 
                     !download.user_paused;
-                eprintln!("Checking download for auto-resume: status={:?}, user_paused={}, is_auto_resumable={}", 
+                log::debug!("Checking download for auto-resume: status={:?}, user_paused={}, is_auto_resumable={}", 
                     download.status, download.user_paused, is_auto_resumable);
                 is_auto_resumable
             })
             .map(|(id, download)| (id.clone(), download.clone()))
             .collect();
         
-        eprintln!("Found {} interrupted downloads and {} paused downloads", 
+        log::debug!("Found {} interrupted downloads and {} paused downloads", 
             interrupted_downloads.len(), paused_downloads.len());
         
         let mut resumed_ids = Vec::new();
@@ -505,12 +505,12 @@ impl DownloadManager {
                 Some("Download was interrupted and will be auto-resumed.".to_string())
             );
             
-            eprintln!("Detected interrupted download: {} ({} bytes downloaded)", download.file_name, download.downloaded_size);
+            log::info!("Detected interrupted download: {} ({} bytes downloaded)", download.file_name, download.downloaded_size);
             resumed_ids.push(id.clone());
             
             // Mark for auto-resume but don't immediately start downloading
             // The actual resumption will be handled by the frontend when it calls resume_download
-            eprintln!("Marked interrupted download for auto-resume: {} ({} bytes downloaded)", download.file_name, download.downloaded_size);
+            log::info!("Marked interrupted download for auto-resume: {} ({} bytes downloaded)", download.file_name, download.downloaded_size);
         }
         
         // Mark paused downloads that were not manually paused for auto-resume
@@ -521,7 +521,7 @@ impl DownloadManager {
                 download_mut.user_paused = false;
             }
             
-            eprintln!("Marked paused download for auto-resume: {} ({} bytes downloaded)", download.file_name, download.downloaded_size);
+            log::info!("Marked paused download for auto-resume: {} ({} bytes downloaded)", download.file_name, download.downloaded_size);
             
             resumed_ids.push(id);
         }
@@ -534,7 +534,7 @@ impl DownloadManager {
         
         // Clean the URL by trimming whitespace and removing trailing commas/semicolons
         let cleaned_url = url.trim().trim_end_matches(',').trim_end_matches(';').to_string();
-        println!("[Rust] Cleaned URL from '{}' to '{}'", url, cleaned_url);
+        log::debug!("[Rust] Cleaned URL from '{}' to '{}'", url, cleaned_url);
         
         let path = Path::new(&file_path);
         let actual_file_name = file_name.unwrap_or_else(|| {
@@ -591,7 +591,7 @@ impl DownloadManager {
         
         // Auto-save state after adding download
         if let Err(e) = self.auto_save_state() {
-            eprintln!("Failed to auto-save state: {}", e);
+            log::error!("Failed to auto-save state: {}", e);
         }
         
         id
@@ -618,7 +618,7 @@ impl DownloadManager {
             
             // Auto-save state periodically during progress updates
             if let Err(e) = self.auto_save_state() {
-                eprintln!("Failed to auto-save state during progress update: {}", e);
+                log::error!("Failed to auto-save state during progress update: {}", e);
             }
         }
     }
@@ -715,7 +715,7 @@ impl DownloadManager {
         
         // Auto-save state after status change
         if let Err(e) = self.auto_save_state() {
-            eprintln!("Failed to auto-save state after status change: {}", e);
+            log::error!("Failed to auto-save state after status change: {}", e);
         }
     }
     
@@ -834,7 +834,7 @@ pub fn set_speed_limit(speed_limit_mbps: f64) -> Result<(), String> {
         .map_err(|e| format!("Failed to lock download manager: {}", e))?;
     
     manager.speed_limit_mbps = speed_limit_mbps.max(0.0); // Ensure non-negative
-    println!("[Rust] Speed limit set to {} MB/s", manager.speed_limit_mbps);
+    log::info!("[Rust] Speed limit set to {} MB/s", manager.speed_limit_mbps);
     
     // Save the state to persist the speed limit setting
     manager.save_state()
@@ -889,17 +889,17 @@ pub async fn start_download(
     file_path: String,
     file_name: Option<String>,
 ) -> Result<String, String> {
-    println!("[Rust] Starting new download: url={}, file_path={}, file_name={:?}", url, file_path, file_name);
+    log::info!("[Rust] Starting new download: url={}, file_path={}, file_name={:?}", url, file_path, file_name);
     
     let download_id = {
         let mut manager = DOWNLOAD_MANAGER.lock()
             .map_err(|e| {
                 let error_msg = format!("Failed to lock download manager: {}", e);
-                println!("[Rust] Error: {}", error_msg);
+                log::error!("[Rust] Error: {}", error_msg);
                 error_msg
             })?;
         let id = manager.add_download(url.clone(), file_path.clone(), file_name);
-        println!("[Rust] Download added to manager with ID: {}", id);
+        log::debug!("[Rust] Download added to manager with ID: {}", id);
         id
     };
 
@@ -908,22 +908,22 @@ pub async fn start_download(
     let url_clone = url.clone();
     let file_path_clone = file_path.clone();
     
-    println!("[Rust] Spawning background task for download ID: {}", download_id);
+    log::debug!("[Rust] Spawning background task for download ID: {}", download_id);
     let _spawn_result = tauri::async_runtime::spawn(async move {
-        println!("[Rust] Background task started for download ID: {}", download_id_clone);
+        log::debug!("[Rust] Background task started for download ID: {}", download_id_clone);
         if let Err(e) = perform_download(download_id_clone.clone(), url_clone, file_path_clone).await {
-            println!("[Rust] Download failed for ID {}: {}", download_id_clone, e);
+            log::error!("[Rust] Download failed for ID {}: {}", download_id_clone, e);
             // Update status to error
             if let Ok(mut manager) = DOWNLOAD_MANAGER.lock() {
                 manager.set_download_status(&download_id_clone, DownloadStatus::Error, Some(e));
             }
         } else {
-            println!("[Rust] Download completed successfully for ID: {}", download_id_clone);
+            log::info!("[Rust] Download completed successfully for ID: {}", download_id_clone);
         }
     });
-    println!("[Rust] Background task spawned successfully for download ID: {}, task handle created", download_id);
+    log::debug!("[Rust] Background task spawned successfully for download ID: {}, task handle created", download_id);
 
-    println!("[Rust] Download initiation completed, returning ID: {}", download_id);
+    log::debug!("[Rust] Download initiation completed, returning ID: {}", download_id);
     Ok(download_id)
 }
 
@@ -990,7 +990,7 @@ pub async fn resume_download(download_id: String) -> Result<(), String> {
         // Use a separate task with tauri's async runtime
         tauri::async_runtime::spawn(async move {
             if let Err(e) = perform_download(download_id.clone(), url, file_path).await {
-                eprintln!("Resume download failed: {}", e);
+                log::error!("Resume download failed: {}", e);
             }
         });
     }
@@ -1053,8 +1053,8 @@ pub fn cancel_and_delete_download(download_id: String) -> Result<(), String> {
         let path = Path::new(&file_path);
         if path.exists() {
             match fs::remove_file(path) {
-                Ok(_) => println!("Successfully deleted file: {}", file_path),
-                Err(e) => eprintln!("Failed to delete file {}: {}", file_path, e),
+                Ok(_) => log::info!("Successfully deleted file: {}", file_path),
+        Err(e) => log::error!("Failed to delete file {}: {}", file_path, e),
             }
         }
     }
@@ -1096,7 +1096,7 @@ pub async fn restart_download(download_id: String) -> Result<(), String> {
         // Use a separate task with tauri's async runtime
         tauri::async_runtime::spawn(async move {
             if let Err(e) = perform_download(download_id.clone(), url, file_path).await {
-                eprintln!("Restart download failed: {}", e);
+                log::error!("Restart download failed: {}", e);
             }
         });
     }
@@ -1256,7 +1256,7 @@ pub fn bulk_cancel_and_delete_downloads(download_ids: Vec<String>) -> Result<(),
 pub async fn get_file_size_from_url(url: String) -> Result<u64, String> {
     // Clean the URL by trimming whitespace and removing trailing commas/semicolons
     let cleaned_url = url.trim().trim_end_matches(',').trim_end_matches(';');
-    println!("[Rust] Getting file size from URL: {} -> {}", url, cleaned_url);
+    log::debug!("[Rust] Getting file size from URL: {} -> {}", url, cleaned_url);
     
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -1280,7 +1280,7 @@ pub async fn get_file_size_from_url(url: String) -> Result<u64, String> {
         Err(e) => {
              let error_string = e.to_string();
              // If HEAD request failed, try range request fallback
-             println!("[Rust] HEAD request failed, trying range request fallback for file size");
+             log::debug!("[Rust] HEAD request failed, trying range request fallback for file size");
              
              match client.get(cleaned_url)
                  .header("Range", "bytes=0-0")
@@ -1328,22 +1328,22 @@ pub fn get_available_disk_space(path: String) -> Result<u64, String> {
 
 /// Core download function using reqwest with robust error handling
 async fn perform_download(download_id: String, url: String, file_path: String) -> Result<(), String> {
-    println!("\n=== PERFORM_DOWNLOAD STARTED ===\nID: {}\nURL: {}\nPath: {}\n=== PERFORM_DOWNLOAD STARTED ===", download_id, url, file_path);
+    log::info!("\n=== PERFORM_DOWNLOAD STARTED ===\nID: {}\nURL: {}\nPath: {}\n=== PERFORM_DOWNLOAD STARTED ===", download_id, url, file_path);
     
     // Create cancellation token
     let cancellation_token = Arc::new(AtomicBool::new(false));
-    println!("[Rust] Created cancellation token for download ID: {}", download_id);
+    log::debug!("[Rust] Created cancellation token for download ID: {}", download_id);
     
     // Store cancellation token
     {
         let mut manager = DOWNLOAD_MANAGER.lock()
             .map_err(|e| {
                 let error_msg = format!("Failed to lock download manager: {}", e);
-                println!("[Rust] Error storing cancellation token: {}", error_msg);
+                log::error!("[Rust] Error storing cancellation token: {}", error_msg);
                 error_msg
             })?;
         manager.cancellation_tokens.insert(download_id.clone(), cancellation_token.clone());
-        println!("[Rust] Stored cancellation token for download ID: {}", download_id);
+        log::debug!("[Rust] Stored cancellation token for download ID: {}", download_id);
     }
 
     // Check if download is still active
@@ -1351,24 +1351,24 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
         let manager = DOWNLOAD_MANAGER.lock()
             .map_err(|e| {
                 let error_msg = format!("Failed to lock download manager: {}", e);
-                println!("[Rust] Error checking download status: {}", error_msg);
+                log::error!("[Rust] Error checking download status: {}", error_msg);
                 error_msg
             })?;
         let status = manager.downloads.get(&download_id)
             .map(|d| d.status.clone())
             .unwrap_or(DownloadStatus::Error);
         let should_continue = matches!(status, DownloadStatus::Downloading);
-        println!("[Rust] Download status check for ID {}: status={:?}, should_continue={}", download_id, status, should_continue);
+        log::debug!("[Rust] Download status check for ID {}: status={:?}, should_continue={}", download_id, status, should_continue);
         should_continue
     };
 
     if !should_continue {
-        println!("[Rust] Download ID {} is not in downloading state, aborting", download_id);
+        log::info!("[Rust] Download ID {} is not in downloading state, aborting", download_id);
         return Ok(());
     }
 
     // Try to get file info with HEAD request, but don't fail if it doesn't work
-    println!("[Rust] Attempting to get file info with HEAD request for ID: {}", download_id);
+    log::debug!("[Rust] Attempting to get file info with HEAD request for ID: {}", download_id);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(10))
@@ -1380,21 +1380,21 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
     let mut head_request_successful = false;
     
     for attempt in 1..=max_retries {
-        println!("[Rust] HEAD request attempt {} of {} for ID: {}", attempt, max_retries, download_id);
+        log::debug!("[Rust] HEAD request attempt {} of {} for ID: {}", attempt, max_retries, download_id);
         
         match client.head(&url).send().await {
             Ok(resp) => {
                 total_size = resp.content_length().unwrap_or(0);
-                println!("[Rust] File size determined via HEAD request for ID {}: {} bytes", download_id, total_size);
+                log::debug!("[Rust] File size determined via HEAD request for ID {}: {} bytes", download_id, total_size);
                 head_request_successful = true;
                 break;
             }
             Err(e) => {
-                println!("[Rust] HEAD request failed on attempt {} for ID {}: {}", attempt, download_id, e);
+                log::debug!("[Rust] HEAD request failed on attempt {} for ID {}: {}", attempt, download_id, e);
                 if attempt == max_retries {
-                    println!("[Rust] HEAD request failed after {} attempts for ID {}. Will proceed with download and determine size during transfer.", max_retries, download_id);
+                    log::debug!("[Rust] HEAD request failed after {} attempts for ID {}. Will proceed with download and determine size during transfer.", max_retries, download_id);
                 } else {
-                    println!("[Rust] Retrying HEAD request in 2 seconds...");
+                    log::debug!("[Rust] Retrying HEAD request in 2 seconds...");
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 }
             }
@@ -1402,26 +1402,26 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
     }
     
     if !head_request_successful {
-        println!("[Rust] Could not determine file size via HEAD request for ID {}. Size will be determined during download.", download_id);
+        log::debug!("[Rust] Could not determine file size via HEAD request for ID {}. Size will be determined during download.", download_id);
     }
     
     // Update total size
     {
         let mut manager = DOWNLOAD_MANAGER.lock().unwrap();
         manager.update_download_progress(&download_id, 0, total_size, 0);
-        println!("[Rust] Updated download progress for ID {}: 0/{} bytes", download_id, total_size);
+        log::debug!("[Rust] Updated download progress for ID {}: 0/{} bytes", download_id, total_size);
     }
 
     // Create parent directories if they don't exist
     if let Some(parent) = Path::new(&file_path).parent() {
-        println!("[Rust] Creating parent directories for ID {}: {:?}", download_id, parent);
+        log::debug!("[Rust] Creating parent directories for ID {}: {:?}", download_id, parent);
         fs::create_dir_all(parent)
             .map_err(|e| {
                 let error_msg = format!("Failed to create directories: {}", e);
-                println!("[Rust] Error creating directories for ID {}: {}", download_id, error_msg);
+                log::error!("[Rust] Error creating directories for ID {}: {}", download_id, error_msg);
                 error_msg
             })?;
-        println!("[Rust] Parent directories created successfully for ID: {}", download_id);
+        log::debug!("[Rust] Parent directories created successfully for ID: {}", download_id);
     }
 
      // Use custom implementation for download
@@ -1449,7 +1449,7 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
         // Check if file already exists (for resume functionality)
         if let Ok(metadata) = std::fs::metadata(&file_path_clone) {
             downloaded = metadata.len();
-            println!("[Rust] Found existing file for ID {}: {} bytes already downloaded", download_id_clone2, downloaded);
+            log::debug!("[Rust] Found existing file for ID {}: {} bytes already downloaded", download_id_clone2, downloaded);
         }
         
         // Get file size with HEAD request
@@ -1457,20 +1457,20 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
             Ok(response) => {
                 if let Some(content_length) = response.content_length() {
                     total_size = content_length;
-                    println!("[Rust] File size determined from HEAD request for ID {}: {} bytes", download_id_clone2, total_size);
+                    log::debug!("[Rust] File size determined from HEAD request for ID {}: {} bytes", download_id_clone2, total_size);
                 } else {
-                    println!("[Rust] Content-Length not available from HEAD request for ID {}", download_id_clone2);
+                    log::debug!("[Rust] Content-Length not available from HEAD request for ID {}", download_id_clone2);
                 }
             }
             Err(e) => {
-                println!("[Rust] HEAD request failed for ID {}: {}", download_id_clone2, e);
+                log::debug!("[Rust] HEAD request failed for ID {}: {}", download_id_clone2, e);
             }
         }
         
         loop {
              // Check for cancellation
              if cancellation_token_clone2.load(Ordering::Relaxed) {
-                 println!("[Rust] Download cancellation detected for ID: {}", download_id_clone2);
+                 log::info!("[Rust] Download cancellation detected for ID: {}", download_id_clone2);
                  break;
              }
 
@@ -1484,14 +1484,14 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
              };
 
              if !should_continue {
-                 println!("[Rust] Download should not continue for ID: {}", download_id_clone2);
+                 log::info!("[Rust] Download should not continue for ID: {}", download_id_clone2);
                  break;
              }
             
             // Check for progress timeout
              if last_progress_time.elapsed() > progress_timeout {
                  let error_msg = format!("Download timeout: No progress for {} seconds", progress_timeout.as_secs());
-                 println!("[Rust] Download timeout for ID {}: {}", download_id_clone2, error_msg);
+                 log::error!("[Rust] Download timeout for ID {}: {}", download_id_clone2, error_msg);
                  return Err(error_msg);
              }
              
@@ -1500,16 +1500,16 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
              if downloaded > 0 {
                   let range_header = format!("bytes={}-", downloaded);
                   request = request.header("Range", &range_header);
-                  println!("[Rust] Using range request for resume: {} for ID {}", range_header, download_id_clone2);
+                  log::debug!("[Rust] Using range request for resume: {} for ID {}", range_header, download_id_clone2);
               } else {
-                  println!("[Rust] Starting fresh download for ID {}", download_id_clone2);
+                  log::debug!("[Rust] Starting fresh download for ID {}", download_id_clone2);
               }
             
             match request.send().await {
                 Ok(mut response) => {
                      if !response.status().is_success() && response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
                          consecutive_errors += 1;
-                         println!("[Rust] HTTP error {} for ID {}: attempt {}", response.status(), download_id_clone2, consecutive_errors);
+                         log::error!("[Rust] HTTP error {} for ID {}: attempt {}", response.status(), download_id_clone2, consecutive_errors);
                          
                          if consecutive_errors >= max_consecutive_errors {
                              return Err(format!("HTTP error after {} attempts: {}", max_consecutive_errors, response.status()));
@@ -1532,7 +1532,7 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                                      if let Some(total_part) = range_str.split('/').nth(1) {
                                          if let Ok(parsed_total) = total_part.parse::<u64>() {
                                              total_size = parsed_total;
-                                             println!("[Rust] Total file size from Content-Range for ID {}: {} bytes", download_id_clone2, total_size);
+                                             log::debug!("[Rust] Total file size from Content-Range for ID {}: {} bytes", download_id_clone2, total_size);
                                          }
                                      }
                                  }
@@ -1545,9 +1545,9 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                              } else {
                                  content_length
                              };
-                             println!("[Rust] File size determined from GET response for ID {}: {} bytes (downloaded: {})", download_id_clone2, total_size, downloaded);
+                             log::debug!("[Rust] File size determined from GET response for ID {}: {} bytes (downloaded: {})", download_id_clone2, total_size, downloaded);
                          } else {
-                             println!("[Rust] Content-Length not available for ID {}. Download size will be unknown.", download_id_clone2);
+                             log::debug!("[Rust] Content-Length not available for ID {}. Download size will be unknown.", download_id_clone2);
                          }
                          
                          // Update the download manager with the new total size
@@ -1574,7 +1574,7 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                      while let Some(chunk_result) = response.chunk().await.transpose() {
                          // Check for cancellation
                          if cancellation_token_clone2.load(Ordering::Relaxed) {
-                             println!("[Rust] Download cancellation detected during chunk read for ID: {}", download_id_clone2);
+                             log::info!("[Rust] Download cancellation detected during chunk read for ID: {}", download_id_clone2);
                              return Ok(());
                          }
                          
@@ -1588,7 +1588,7 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                          };
 
                          if !should_continue {
-                             println!("[Rust] Download should not continue during chunk read for ID: {}", download_id_clone2);
+                             log::info!("[Rust] Download should not continue during chunk read for ID: {}", download_id_clone2);
                              return Ok(());
                          }
                         
@@ -1635,7 +1635,7 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                                  
                                  // Check if download is complete
                                  if total_size > 0 && downloaded >= total_size {
-                                     println!("[Rust] Download completed: {} bytes for ID: {}", downloaded, download_id_clone2);
+                                     log::info!("[Rust] Download completed: {} bytes for ID: {}", downloaded, download_id_clone2);
                                      file.flush().await
                                          .map_err(|e| format!("Failed to flush file: {}", e))?;
                                      return Ok(());
@@ -1643,7 +1643,7 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                              }
                              Err(e) => {
                                  consecutive_errors += 1;
-                                 println!("[Rust] Chunk read error {} for ID {}: {}", consecutive_errors, download_id_clone2, e);
+                                 log::error!("[Rust] Chunk read error {} for ID {}: {}", consecutive_errors, download_id_clone2, e);
                                 
                                 if consecutive_errors >= max_consecutive_errors {
                                     return Err(format!("Download failed after {} consecutive chunk errors: {}", max_consecutive_errors, e));
@@ -1657,7 +1657,7 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                     
                     // If we reach here and total_size is 0 or unknown, consider download complete
                      if total_size == 0 {
-                         println!("[Rust] Download completed (unknown size): {} bytes for ID: {}", downloaded, download_id_clone2);
+                         log::info!("[Rust] Download completed (unknown size): {} bytes for ID: {}", downloaded, download_id_clone2);
                          file.flush().await
                              .map_err(|e| format!("Failed to flush file: {}", e))?;
                          return Ok(());
@@ -1665,7 +1665,7 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                  }
                  Err(e) => {
                      consecutive_errors += 1;
-                     println!("[Rust] Request error {} for ID {}: {}", consecutive_errors, download_id_clone2, e);
+                     log::error!("[Rust] Request error {} for ID {}: {}", consecutive_errors, download_id_clone2, e);
                     
                     if consecutive_errors >= max_consecutive_errors {
                         return Err(format!("Download failed after {} consecutive request errors: {}", max_consecutive_errors, e));
@@ -1700,14 +1700,14 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
             match final_status {
                 DownloadStatus::Downloading => {
                     // Download completed successfully
-                    println!("[Rust] Download completed successfully for ID: {}", download_id);
+                    log::info!("[Rust] Download completed successfully for ID: {}", download_id);
                     let mut manager = DOWNLOAD_MANAGER.lock().unwrap();
                     manager.set_download_status(&download_id, DownloadStatus::Completed, None);
-                    println!("[Rust] Download status set to Completed for ID: {}", download_id);
+                    log::debug!("[Rust] Download status set to Completed for ID: {}", download_id);
                 }
                 _ => {
                     // Download was paused or cancelled
-                    println!("[Rust] Download was paused or cancelled for ID: {}", download_id);
+                    log::info!("[Rust] Download was paused or cancelled for ID: {}", download_id);
                 }
             }
             Ok(())

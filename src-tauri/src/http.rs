@@ -77,7 +77,7 @@ pub fn test_proxy_bypass(url: String) -> Result<String, String> {
     rt.block_on(async {
         let client = create_http_client(false)?; // No proxy
         
-        println!("🌐 Testing proxy bypass for: {}", url);
+        log::info!("🌐 Testing proxy bypass for: {}", url);
         
         let response = client.get(&url)
             .send()
@@ -122,7 +122,7 @@ pub fn get_current_version() -> Result<String, String> {
 pub async fn fetch_latest_release(url: String) -> Result<GitHubRelease, String> {
     let client = create_http_client(false)?; // Bypass proxy for GitHub API
     
-    println!("🔍 Fetching latest release from: {}", url);
+    log::info!("🔍 Fetching latest release from: {}", url);
     
     let response = client
         .get(&url)
@@ -141,7 +141,7 @@ pub async fn fetch_latest_release(url: String) -> Result<GitHubRelease, String> 
         .await
         .map_err(|e| format!("Failed to parse release JSON: {}", e))?;
     
-    println!("✅ Found release: {} ({})", release.name, release.tag_name);
+    log::info!("✅ Found release: {} ({})", release.name, release.tag_name);
     Ok(release)
 }
 
@@ -154,7 +154,7 @@ pub async fn download_and_install_update(
 ) -> Result<(), String> {
     let client = create_http_client(false)?;
     
-    println!("📥 Starting download from: {}", download_url);
+    log::info!("📥 Starting download from: {}", download_url);
     
     // Get the response
     let response = client
@@ -215,7 +215,7 @@ pub async fn download_and_install_update(
     
     file.flush().await.map_err(|e| format!("Failed to flush file: {}", e))?;
     
-    println!("✅ Download completed: {} bytes", downloaded);
+    log::info!("✅ Download completed: {} bytes", downloaded);
     
     // Install the update with automatic launcher termination
     install_update_with_termination(&temp_file_path).await?;
@@ -230,7 +230,7 @@ async fn install_update_with_termination(file_path: &PathBuf) -> Result<(), Stri
         .and_then(|n| n.to_str())
         .unwrap_or("");
     
-    println!("🔧 Installing update with launcher termination: {}", file_name);
+    log::info!("🔧 Installing update with launcher termination: {}", file_name);
     
     // Create a batch script that will handle the installation after launcher termination
     if file_name.ends_with(".msi") {
@@ -288,7 +288,7 @@ if %ERRORLEVEL% EQU 0 (
         .spawn()
         .map_err(|e| format!("Failed to start installer script: {}", e))?;
     
-    println!("✅ Installer script started, terminating launcher...");
+    log::info!("✅ Installer script started, terminating launcher...");
     
     // Give the script time to start, then terminate this process
     tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -341,7 +341,7 @@ if %ERRORLEVEL% EQU 0 (
         .spawn()
         .map_err(|e| format!("Failed to start installer script: {}", e))?;
     
-    println!("✅ Installer script started, terminating launcher...");
+    log::info!("✅ Installer script started, terminating launcher...");
     
     // Give the script time to start, then terminate this process
     tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -372,7 +372,7 @@ async fn install_exe_with_admin(_file_path: &PathBuf) -> Result<(), String> {
 /// Restart the application
 #[command]
 pub async fn restart_application(app_handle: AppHandle) -> Result<(), String> {
-    println!("🔄 Restarting application...");
+    log::info!("🔄 Restarting application...");
     
     // Give a small delay to ensure the response is sent
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -384,7 +384,7 @@ pub async fn restart_application(app_handle: AppHandle) -> Result<(), String> {
 /// Terminate the current application process to allow installer to replace files
 #[command]
 pub async fn terminate_for_update() -> Result<(), String> {
-    println!("🔄 Terminating application for update installation...");
+    log::info!("🔄 Terminating application for update installation...");
     
     // Give a small delay to ensure the response is sent
     tokio::time::sleep(Duration::from_millis(1000)).await;

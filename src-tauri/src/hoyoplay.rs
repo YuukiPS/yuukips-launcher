@@ -105,7 +105,7 @@ pub fn remove_all_hoyo_pass() -> Result<Vec<String>, String> {
                         }
                         Err(e) => {
                             // Log error but continue with other entries
-                            eprintln!("Failed to delete {}: {}", value_name, e);
+                            log::error!("Failed to delete {}: {}", value_name, e);
                         }
                     }
                 }
