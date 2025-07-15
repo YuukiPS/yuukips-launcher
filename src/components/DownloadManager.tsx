@@ -13,7 +13,8 @@ import {
   AlertCircle,
   Clock,
   ArrowUpDown,
-  Plus
+  Plus,
+  Settings
 } from 'lucide-react';
 import { DownloadItem, DownloadHistory, DownloadStats, ActivityEntry } from '../types';
 import { DownloadService } from '../services/downloadService';
@@ -55,6 +56,11 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   const [folderError, setFolderError] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
 
+  // Settings modal state
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [speedLimit, setSpeedLimit] = useState(0);
+  const [tempSpeedLimit, setTempSpeedLimit] = useState(0);
+
   // Column width customization state
   const [columnWidths, setColumnWidths] = useState({
     checkbox: '40px',
@@ -71,21 +77,28 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
 
   const loadData = useCallback(async () => {
     try {
-      const [activeDownloads, downloadHistory, downloadStats, activityEntries] = await Promise.all([
+      const [activeDownloads, downloadHistory, downloadStats, activityEntries, currentSpeedLimit] = await Promise.all([
         DownloadService.getActiveDownloads(),
         DownloadService.getDownloadHistory(),
         DownloadService.getDownloadStats(),
-        loadActivities()
+        loadActivities(),
+        DownloadService.getSpeedLimit()
       ]);
       
       setDownloads(activeDownloads);
       setHistory(downloadHistory);
       setStats(downloadStats);
       setActivities(activityEntries);
+      setSpeedLimit(currentSpeedLimit);
+      
+      // Only update tempSpeedLimit if settings modal is not open to prevent overwriting user input
+      if (!showSettingsModal) {
+        setTempSpeedLimit(currentSpeedLimit);
+      }
     } catch (error) {
       console.error('Failed to load download data:', error);
     }
-  }, []);
+  }, [showSettingsModal]);
 
   useEffect(() => {
     if (isOpen) {
@@ -555,6 +568,23 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
     }
   };
 
+  // Settings modal handlers
+  const handleSaveSettings = async () => {
+    try {
+      await DownloadService.setSpeedLimit(tempSpeedLimit);
+      setSpeedLimit(tempSpeedLimit);
+      setShowSettingsModal(false);
+      await addUserInteraction(`Updated speed limit to ${tempSpeedLimit === 0 ? 'unlimited' : `${tempSpeedLimit} MB/s`}`);
+    } catch (error) {
+      console.error('Failed to save settings:', error);
+    }
+  };
+
+  const handleCancelSettings = () => {
+    setTempSpeedLimit(speedLimit);
+    setShowSettingsModal(false);
+  };
+
   // Filter and sort downloads
   const filteredDownloads = downloads
     .filter(download => {
@@ -735,6 +765,13 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                 >
                   <Plus className="w-4 h-4" />
                   Add New Download
+                </button>
+                <button
+                  onClick={() => setShowSettingsModal(true)}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-2"
+                >
+                  <Settings className="w-4 h-4" />
+                  Settings
                 </button>
                 <button
                   onClick={handleClearCompleted}
@@ -1208,6 +1245,78 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                     Add Download
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Settings Modal */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-md mx-4">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-6 border-b border-gray-700">
+              <h3 className="text-xl font-semibold text-white flex items-center gap-2">
+                <Settings className="w-6 h-6" />
+                Download Settings
+              </h3>
+              <button
+                onClick={handleCancelSettings}
+                className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Download Speed Limit (MB/s)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={tempSpeedLimit}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      
+                      if (value === '' || value === '.') {
+                        setTempSpeedLimit(0);
+                      } else {
+                        const numValue = parseFloat(value);
+                        if (!isNaN(numValue) && numValue >= 0) {
+                          setTempSpeedLimit(numValue);
+                        }
+                      }
+                    }}
+                    placeholder="0 = Unlimited"
+                    className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-20"
+                  />
+                  <p className="text-gray-400 text-sm mt-2">
+                    Set to 0 for unlimited speed. Current: {speedLimit === 0 ? 'Unlimited' : `${speedLimit} MB/s`}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-700">
+              <button
+                onClick={handleCancelSettings}
+                className="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveSettings}
+                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-2"
+              >
+                <Settings className="w-4 h-4" />
+                Save Settings
               </button>
             </div>
           </div>

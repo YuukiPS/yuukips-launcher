@@ -78,6 +78,8 @@ pub fn run() {
             download::get_state_version,
             download::set_auto_save_enabled,
             download::get_partial_downloads,
+            download::get_speed_limit,
+            download::set_speed_limit,
             // Proxy functions
             proxy::get_proxy_addr,
             proxy::set_proxy_addr,

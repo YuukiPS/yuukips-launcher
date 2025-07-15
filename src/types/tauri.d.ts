@@ -113,6 +113,9 @@ export interface TauriCommands {
   get_state_version(): Promise<number>;
   set_auto_save_enabled(enabled: boolean): Promise<void>;
   get_partial_downloads(): Promise<Record<string, PartialDownloadInfo>>;
+  // Speed limit commands
+  get_speed_limit(): Promise<number>;
+  set_speed_limit(speedLimitMbps: number): Promise<void>;
 }
 
 export interface DriveInfo {

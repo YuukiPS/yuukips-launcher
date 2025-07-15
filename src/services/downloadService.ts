@@ -374,4 +374,29 @@ export class DownloadService {
       throw new Error(`Failed to resume interrupted downloads: ${error}`);
     }
   }
+
+  /**
+   * Get current download speed limit in MB/s
+   */
+  static async getSpeedLimit(): Promise<number> {
+    try {
+      const speedLimit = await invoke<number>('get_speed_limit');
+      return speedLimit;
+    } catch (error) {
+      console.error('Failed to get speed limit:', error);
+      throw new Error(`Failed to get speed limit: ${error}`);
+    }
+  }
+
+  /**
+   * Set download speed limit in MB/s (0 = unlimited)
+   */
+  static async setSpeedLimit(speedLimitMbps: number): Promise<void> {
+    try {
+      await invoke('set_speed_limit', { speedLimitMbps: speedLimitMbps });
+    } catch (error) {
+      console.error('Failed to set speed limit:', error);
+      throw new Error(`Failed to set speed limit: ${error}`);
+    }
+  }
 }

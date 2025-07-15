@@ -116,6 +116,7 @@ pub struct DownloadState {
     pub version: u32,
     pub timestamp: u64,
     pub checksum: String,
+    pub speed_limit_mbps: Option<f64>, // Speed limit in MB/s, None means use default (0.0)
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -147,6 +148,7 @@ struct DownloadManager {
     auto_save_enabled: bool,
     last_save_time: SystemTime,
     state_version: u32,
+    speed_limit_mbps: f64, // Speed limit in MB/s, 0 means unlimited
 }
 
 impl DownloadManager {
@@ -164,6 +166,7 @@ impl DownloadManager {
             auto_save_enabled: true,
             last_save_time: SystemTime::now(),
             state_version: 1,
+            speed_limit_mbps: 0.0, // Default to unlimited speed
         };
         
         // Load persisted state (includes activities, downloads, and history)
@@ -271,6 +274,7 @@ impl DownloadManager {
             version: self.state_version,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             checksum: String::new(),
+            speed_limit_mbps: Some(self.speed_limit_mbps),
         };
         
         state.checksum = Self::calculate_state_checksum(&state)?;
@@ -345,6 +349,9 @@ impl DownloadManager {
         self.download_directory = PathBuf::from(state.download_directory);
         self.state_version = state.version;
         
+        // Restore speed limit (use default 0.0 if not present for backward compatibility)
+        self.speed_limit_mbps = state.speed_limit_mbps.unwrap_or(0.0);
+        
         Ok(())
     }
     
@@ -354,18 +361,53 @@ impl DownloadManager {
         }
         
         let json = fs::read_to_string(file_path)?;
-        let mut state: DownloadState = serde_json::from_str(&json)?;
         
-        // Verify checksum
-        let stored_checksum = state.checksum.clone();
-        state.checksum = String::new();
-        let calculated_checksum = Self::calculate_state_checksum(&state)?;
-        
-        if stored_checksum != calculated_checksum {
-            return Err("State file checksum mismatch - file may be corrupted".into());
+        // Try to deserialize with the current structure first
+        match serde_json::from_str::<DownloadState>(&json) {
+            Ok(mut state) => {
+                // Verify checksum
+                let stored_checksum = state.checksum.clone();
+                state.checksum = String::new();
+                let calculated_checksum = Self::calculate_state_checksum(&state)?;
+                
+                if stored_checksum == calculated_checksum {
+                    state.checksum = stored_checksum;
+                    return Ok(state);
+                }
+                // If checksum doesn't match, fall through to legacy handling
+            }
+            Err(_) => {
+                // If deserialization fails, fall through to legacy handling
+            }
         }
         
-        state.checksum = stored_checksum;
+        // Try to load as legacy format (without speed_limit_mbps)
+        #[derive(Deserialize)]
+        struct LegacyDownloadState {
+            pub downloads: HashMap<String, DownloadItem>,
+            pub history: Vec<DownloadHistory>,
+            pub activities: Vec<ActivityEntry>,
+            pub download_directory: String,
+            pub version: u32,
+            pub timestamp: u64,
+            pub checksum: String,
+        }
+        
+        let legacy_state: LegacyDownloadState = serde_json::from_str(&json)
+            .map_err(|e| format!("Failed to parse state file as legacy format: {}", e))?;
+        
+        // Convert legacy state to current format
+        let state = DownloadState {
+            downloads: legacy_state.downloads,
+            history: legacy_state.history,
+            activities: legacy_state.activities,
+            download_directory: legacy_state.download_directory,
+            version: legacy_state.version,
+            timestamp: legacy_state.timestamp,
+            checksum: legacy_state.checksum,
+            speed_limit_mbps: None, // Default for legacy files
+        };
+        
         Ok(state)
     }
     
@@ -774,6 +816,31 @@ pub fn get_partial_downloads() -> Result<std::collections::HashMap<String, Parti
         .map_err(|e| format!("Failed to lock download manager: {}", e))?;
     
     Ok(manager.partial_downloads.clone())
+}
+
+/// Get current download speed limit in MB/s
+#[command]
+pub fn get_speed_limit() -> Result<f64, String> {
+    let manager = DOWNLOAD_MANAGER.lock()
+        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    
+    Ok(manager.speed_limit_mbps)
+}
+
+/// Set download speed limit in MB/s (0 = unlimited)
+#[command]
+pub fn set_speed_limit(speed_limit_mbps: f64) -> Result<(), String> {
+    let mut manager = DOWNLOAD_MANAGER.lock()
+        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    
+    manager.speed_limit_mbps = speed_limit_mbps.max(0.0); // Ensure non-negative
+    println!("[Rust] Speed limit set to {} MB/s", manager.speed_limit_mbps);
+    
+    // Save the state to persist the speed limit setting
+    manager.save_state()
+        .map_err(|e| format!("Failed to save state after setting speed limit: {}", e))?;
+    
+    Ok(())
 }
 
 /// Get all activity entries
@@ -1534,6 +1601,20 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                                     .map_err(|e| format!("Failed to write to file: {}", e))?;
 
                                 downloaded += chunk.len() as u64;
+
+                                // Apply speed limiting if enabled
+                                let speed_limit = {
+                                    let manager = DOWNLOAD_MANAGER.lock().unwrap();
+                                    manager.speed_limit_mbps
+                                };
+                                
+                                if speed_limit > 0.0 {
+                                    let chunk_size_mb = chunk.len() as f64 / (1024.0 * 1024.0);
+                                    let required_time_ms = (chunk_size_mb / speed_limit * 1000.0) as u64;
+                                    if required_time_ms > 0 {
+                                        tokio::time::sleep(std::time::Duration::from_millis(required_time_ms)).await;
+                                    }
+                                }
 
                                 // Update progress every 500ms
                                 let now = std::time::Instant::now();

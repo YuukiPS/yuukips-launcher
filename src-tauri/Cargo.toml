@@ -62,7 +62,7 @@ libc = "0.2"
 # Profile configurations to prevent debug builds
 [profile.dev]
 opt-level = 3
-debug = false
+debug = true
 lto = true
 codegen-units = 1
 panic = "abort"
