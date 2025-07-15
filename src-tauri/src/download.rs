@@ -1570,6 +1570,10 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                              .map_err(|e| format!("Failed to create file: {}", e))?
                      };
                     
+                    // Initialize rate limiting variables
+                     let mut rate_limiter_start = std::time::Instant::now();
+                     let mut bytes_downloaded_in_window = 0u64;
+                     
                     // Download chunks
                      while let Some(chunk_result) = response.chunk().await.transpose() {
                          // Check for cancellation
@@ -1602,17 +1606,41 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
 
                                 downloaded += chunk.len() as u64;
 
-                                // Apply speed limiting if enabled
+                                // Apply speed limiting if enabled using a sliding window approach
                                 let speed_limit = {
                                     let manager = DOWNLOAD_MANAGER.lock().unwrap();
                                     manager.speed_limit_mbps
                                 };
                                 
                                 if speed_limit > 0.0 {
-                                    let chunk_size_mb = chunk.len() as f64 / (1024.0 * 1024.0);
-                                    let required_time_ms = (chunk_size_mb / speed_limit * 1000.0) as u64;
-                                    if required_time_ms > 0 {
-                                        tokio::time::sleep(std::time::Duration::from_millis(required_time_ms)).await;
+                                    // Convert speed limit from MB/s to bytes/s
+                                    let speed_limit_bytes_per_sec = speed_limit * 1024.0 * 1024.0;
+                                    
+                                    // Add current chunk to the rate limiting window
+                                    bytes_downloaded_in_window += chunk.len() as u64;
+                                    
+                                    // Calculate elapsed time in the current window
+                                    let elapsed = rate_limiter_start.elapsed();
+                                    let elapsed_secs = elapsed.as_secs_f64();
+                                    
+                                    // If we have data for at least 100ms, check if we need to throttle
+                                    if elapsed_secs >= 0.1 {
+                                        let current_rate = bytes_downloaded_in_window as f64 / elapsed_secs;
+                                        
+                                        // If we're exceeding the speed limit, calculate how long to sleep
+                                        if current_rate > speed_limit_bytes_per_sec {
+                                            let excess_bytes = bytes_downloaded_in_window as f64 - (speed_limit_bytes_per_sec * elapsed_secs);
+                                            let sleep_time_secs = excess_bytes / speed_limit_bytes_per_sec;
+                                            let sleep_time_ms = (sleep_time_secs * 1000.0).max(1.0) as u64;
+                                            
+                                            if sleep_time_ms > 0 {
+                                                tokio::time::sleep(std::time::Duration::from_millis(sleep_time_ms)).await;
+                                            }
+                                        }
+                                        
+                                        // Reset the rate limiting window
+                                        rate_limiter_start = std::time::Instant::now();
+                                        bytes_downloaded_in_window = 0;
                                     }
                                 }
 
