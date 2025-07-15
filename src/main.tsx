@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
+import { DownloadSettingsProvider } from './contexts/DownloadSettingsContext.tsx';
 import './index.css';
 
 // Hide the initial loading screen once React is ready
@@ -19,7 +20,9 @@ const hideInitialLoading = () => {
 const root = createRoot(document.getElementById('root')!);
 root.render(
   <StrictMode>
-    <App />
+    <DownloadSettingsProvider>
+      <App />
+    </DownloadSettingsProvider>
   </StrictMode>
 );
 

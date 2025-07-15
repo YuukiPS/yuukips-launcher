@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { DownloadItem, DownloadHistory, DownloadStats, ActivityEntry } from '../types';
 import { DownloadService } from '../services/downloadService';
+import { useDownloadSettingsContext } from '../contexts/DownloadSettingsContext';
 import { invoke } from '@tauri-apps/api/core';
 import { open, confirm } from '@tauri-apps/plugin-dialog';
 
@@ -31,6 +32,13 @@ type SortDirection = 'asc' | 'desc';
 type FilterStatus = 'all' | 'downloading' | 'paused' | 'completed' | 'error';
 
 export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClose }) => {
+  const { settings: globalSettings, updateSettings: updateGlobalSettings } = useDownloadSettingsContext();
+  
+  // Debug: Log context values whenever they change
+  useEffect(() => {
+    console.log('🔍 DownloadManager: globalSettings changed:', globalSettings);
+  }, [globalSettings]);
+  
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const [, setHistory] = useState<DownloadHistory[]>([]);
   const [activities, setActivities] = useState<ActivityEntry[]>([]);
@@ -58,11 +66,8 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
 
   // Settings modal state
   const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [speedLimit, setSpeedLimit] = useState(0);
   const [tempSpeedLimit, setTempSpeedLimit] = useState(0);
-  const [divideSpeedEnabled, setDivideSpeedEnabled] = useState(false);
   const [tempDivideSpeedEnabled, setTempDivideSpeedEnabled] = useState(false);
-  const [maxSimultaneousDownloads, setMaxSimultaneousDownloads] = useState(3);
   const [tempMaxSimultaneousDownloads, setTempMaxSimultaneousDownloads] = useState(3);
 
   // Column width customization state
@@ -81,37 +86,25 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
 
   const loadData = useCallback(async () => {
     try {
-      const [activeDownloads, downloadHistory, downloadStats, activityEntries, currentSpeedLimit, currentDivideSpeedEnabled, currentMaxSimultaneousDownloads] = await Promise.all([
+      const [activeDownloads, downloadHistory, downloadStats, activityEntries] = await Promise.all([
         DownloadService.getActiveDownloads(),
         DownloadService.getDownloadHistory(),
         DownloadService.getDownloadStats(),
-        loadActivities(),
-        DownloadService.getSpeedLimit(),
-        DownloadService.getDivideSpeedEnabled(),
-        DownloadService.getMaxSimultaneousDownloads()
+        loadActivities()
       ]);
       
       setDownloads(activeDownloads);
       setHistory(downloadHistory);
       setStats(downloadStats);
       setActivities(activityEntries);
-      setSpeedLimit(currentSpeedLimit);
-      setDivideSpeedEnabled(currentDivideSpeedEnabled);
-      setMaxSimultaneousDownloads(currentMaxSimultaneousDownloads);
-      
-      // Only update temp values if settings modal is not open to prevent overwriting user input
-      if (!showSettingsModal) {
-        setTempSpeedLimit(currentSpeedLimit);
-        setTempDivideSpeedEnabled(currentDivideSpeedEnabled);
-        setTempMaxSimultaneousDownloads(currentMaxSimultaneousDownloads);
-      }
     } catch (error) {
       console.error('Failed to load download data:', error);
     }
-  }, [showSettingsModal]);
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
+      console.log('📂 DownloadManager opened, initializing downloads and data...');
       // Resume interrupted downloads first, then load data
       const initializeDownloads = async () => {
         await loadData();
@@ -125,6 +118,21 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
       return () => clearInterval(interval);
     }
   }, [isOpen, loadData]);
+
+  // Simple sync when modal opens - no complex dependencies
+  useEffect(() => {
+    if (showSettingsModal) {
+      console.log('🔧 Settings modal opened, using current global settings:', globalSettings);
+      setTempSpeedLimit(globalSettings.speedLimit);
+      setTempDivideSpeedEnabled(globalSettings.divideSpeedEnabled);
+      setTempMaxSimultaneousDownloads(globalSettings.maxSimultaneousDownloads);
+      console.log('📋 Temporary settings set:', {
+        tempSpeedLimit: globalSettings.speedLimit,
+        tempDivideSpeedEnabled: globalSettings.divideSpeedEnabled,
+        tempMaxSimultaneousDownloads: globalSettings.maxSimultaneousDownloads
+      });
+    }
+  }, [showSettingsModal]); // ONLY depend on modal open/close
 
   const loadActivities = async (): Promise<ActivityEntry[]> => {
     try {
@@ -580,26 +588,27 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
 
   // Settings modal handlers
   const handleSaveSettings = async () => {
+    const settingsToSave = {
+      speedLimit: tempSpeedLimit,
+      divideSpeedEnabled: tempDivideSpeedEnabled,
+      maxSimultaneousDownloads: tempMaxSimultaneousDownloads
+    };
+    console.log('💾 User clicked Save Settings button. Saving:', settingsToSave);
+    
     try {
-      await Promise.all([
-        DownloadService.setSpeedLimit(tempSpeedLimit),
-        DownloadService.setDivideSpeedEnabled(tempDivideSpeedEnabled),
-        DownloadService.setMaxSimultaneousDownloads(tempMaxSimultaneousDownloads)
-      ]);
-      setSpeedLimit(tempSpeedLimit);
-      setDivideSpeedEnabled(tempDivideSpeedEnabled);
-      setMaxSimultaneousDownloads(tempMaxSimultaneousDownloads);
+      await updateGlobalSettings(settingsToSave);
+      console.log('✅ Settings saved successfully, closing modal');
       setShowSettingsModal(false);
       await addUserInteraction(`Updated settings: speed limit ${tempSpeedLimit === 0 ? 'unlimited' : `${tempSpeedLimit} MB/s`}, divide speed ${tempDivideSpeedEnabled ? 'enabled' : 'disabled'}, max downloads ${tempMaxSimultaneousDownloads}`);
     } catch (error) {
-      console.error('Failed to save settings:', error);
+      console.error('❌ Failed to save settings:', error);
     }
   };
 
   const handleCancelSettings = () => {
-    setTempSpeedLimit(speedLimit);
-    setTempDivideSpeedEnabled(divideSpeedEnabled);
-    setTempMaxSimultaneousDownloads(maxSimultaneousDownloads);
+    setTempSpeedLimit(globalSettings.speedLimit);
+    setTempDivideSpeedEnabled(globalSettings.divideSpeedEnabled);
+    setTempMaxSimultaneousDownloads(globalSettings.maxSimultaneousDownloads);
     setShowSettingsModal(false);
   };
 
@@ -1315,7 +1324,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                     className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-20"
                   />
                   <p className="text-gray-400 text-sm mt-2">
-                    Set to 0 for unlimited speed. Current: {speedLimit === 0 ? 'Unlimited' : `${speedLimit} MB/s`}
+                    Set to 0 for unlimited speed. Current: {globalSettings.speedLimit === 0 ? 'Unlimited' : `${globalSettings.speedLimit} MB/s`}
                   </p>
                 </div>
                 
@@ -1338,7 +1347,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                     </div>
                   </label>
                   <p className="text-gray-400 text-sm mt-2">
-                    Current: {divideSpeedEnabled ? 'Enabled' : 'Disabled'}
+                    Current: {globalSettings.divideSpeedEnabled ? 'Enabled' : 'Disabled'}
                   </p>
                 </div>
                 
@@ -1360,7 +1369,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                     className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-20"
                   />
                   <p className="text-gray-400 text-sm mt-2">
-                    Maximum number of downloads that can run simultaneously (1-10). Current: {maxSimultaneousDownloads}
+                    Maximum number of downloads that can run simultaneously (1-10). Current: {globalSettings.maxSimultaneousDownloads}
                   </p>
                 </div>
               </div>

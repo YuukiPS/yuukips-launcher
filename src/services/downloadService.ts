@@ -379,11 +379,13 @@ export class DownloadService {
    * Get current download speed limit in MB/s
    */
   static async getSpeedLimit(): Promise<number> {
+    console.log('[DownloadService] Getting speed limit from backend...');
     try {
       const speedLimit = await invoke<number>('get_speed_limit');
+      console.log('[DownloadService] Retrieved speed limit:', speedLimit);
       return speedLimit;
     } catch (error) {
-      console.error('Failed to get speed limit:', error);
+      console.error('[DownloadService] Failed to get speed limit:', error);
       throw new Error(`Failed to get speed limit: ${error}`);
     }
   }
@@ -392,10 +394,12 @@ export class DownloadService {
    * Set download speed limit in MB/s (0 = unlimited)
    */
   static async setSpeedLimit(speedLimitMbps: number): Promise<void> {
+    console.log('[DownloadService] Setting speed limit to backend:', speedLimitMbps);
     try {
       await invoke('set_speed_limit', { speedLimitMbps: speedLimitMbps });
+      console.log('[DownloadService] Speed limit set successfully:', speedLimitMbps);
     } catch (error) {
-      console.error('Failed to set speed limit:', error);
+      console.error('[DownloadService] Failed to set speed limit:', error);
       throw new Error(`Failed to set speed limit: ${error}`);
     }
   }
@@ -404,11 +408,13 @@ export class DownloadService {
    * Get whether speed limit should be divided among active downloads
    */
   static async getDivideSpeedEnabled(): Promise<boolean> {
+    console.log('[DownloadService] Getting divide speed enabled from backend...');
     try {
       const enabled = await invoke<boolean>('get_divide_speed_enabled');
+      console.log('[DownloadService] Retrieved divide speed enabled:', enabled);
       return enabled;
     } catch (error) {
-      console.error('Failed to get divide speed enabled:', error);
+      console.error('[DownloadService] Failed to get divide speed enabled:', error);
       throw new Error(`Failed to get divide speed enabled: ${error}`);
     }
   }
@@ -417,10 +423,12 @@ export class DownloadService {
    * Set whether speed limit should be divided among active downloads
    */
   static async setDivideSpeedEnabled(enabled: boolean): Promise<void> {
+    console.log('[DownloadService] Setting divide speed enabled to backend:', enabled);
     try {
       await invoke('set_divide_speed_enabled', { enabled });
+      console.log('[DownloadService] Divide speed enabled set successfully:', enabled);
     } catch (error) {
-      console.error('Failed to set divide speed enabled:', error);
+      console.error('[DownloadService] Failed to set divide speed enabled:', error);
       throw new Error(`Failed to set divide speed enabled: ${error}`);
     }
   }
@@ -429,11 +437,13 @@ export class DownloadService {
    * Get current max simultaneous downloads setting
    */
   static async getMaxSimultaneousDownloads(): Promise<number> {
+    console.log('[DownloadService] Getting max simultaneous downloads from backend...');
     try {
       const maxDownloads = await invoke<number>('get_max_simultaneous_downloads');
+      console.log('[DownloadService] Retrieved max simultaneous downloads:', maxDownloads);
       return maxDownloads;
     } catch (error) {
-      console.error('Failed to get max simultaneous downloads:', error);
+      console.error('[DownloadService] Failed to get max simultaneous downloads:', error);
       throw new Error(`Failed to get max simultaneous downloads: ${error}`);
     }
   }
@@ -442,10 +452,12 @@ export class DownloadService {
    * Set max simultaneous downloads (1-10)
    */
   static async setMaxSimultaneousDownloads(maxDownloads: number): Promise<void> {
+    console.log('[DownloadService] Setting max simultaneous downloads to backend:', maxDownloads);
     try {
       await invoke('set_max_simultaneous_downloads', { maxDownloads });
+      console.log('[DownloadService] Max simultaneous downloads set successfully:', maxDownloads);
     } catch (error) {
-      console.error('Failed to set max simultaneous downloads:', error);
+      console.error('[DownloadService] Failed to set max simultaneous downloads:', error);
       throw new Error(`Failed to set max simultaneous downloads: ${error}`);
     }
   }

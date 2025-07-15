@@ -10,6 +10,7 @@ mod hoyoplay;
 mod http;
 mod patch;
 mod proxy;
+mod settings;
 mod system;
 mod utils;
 
@@ -19,6 +20,7 @@ pub use game::*;
 pub use hoyoplay::*;
 pub use http::*;
 pub use patch::*;
+pub use settings::*;
 pub use system::*;
 pub use utils::*;
 
@@ -93,6 +95,14 @@ pub fn run() {
             download::set_divide_speed_enabled,
             download::get_max_simultaneous_downloads,
             download::set_max_simultaneous_downloads,
+            // Settings functions (new simple JSON persistence)
+            settings::get_app_speed_limit,
+            settings::set_app_speed_limit,
+            settings::get_app_divide_speed_enabled,
+            settings::set_app_divide_speed_enabled,
+            settings::get_app_max_simultaneous_downloads,
+            settings::set_app_max_simultaneous_downloads,
+            settings::get_all_app_settings,
             // Proxy functions
             proxy::get_proxy_addr,
             proxy::set_proxy_addr,

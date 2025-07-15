@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::AsyncWriteExt;
 use chrono::Utc;
 use sha2::{Sha256, Digest};
+use crate::settings::AppSettings;
 
 static DOWNLOAD_MANAGER: once_cell::sync::Lazy<Arc<Mutex<DownloadManager>>> = 
     once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(DownloadManager::new())));
@@ -117,9 +118,6 @@ pub struct DownloadState {
     pub version: u32,
     pub timestamp: u64,
     pub checksum: String,
-    pub speed_limit_mbps: Option<f64>, // Speed limit in MB/s, None means use default (0.0)
-    pub divide_speed_enabled: Option<bool>, // Whether to divide speed limit among active downloads
-    pub max_simultaneous_downloads: Option<u32>, // Max simultaneous downloads, None means use default (3)
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -151,13 +149,11 @@ struct DownloadManager {
     auto_save_enabled: bool,
     last_save_time: SystemTime,
     state_version: u32,
-    speed_limit_mbps: f64, // Speed limit in MB/s, 0 means unlimited
-    divide_speed_enabled: bool, // Whether to divide speed limit among active downloads
-    max_simultaneous_downloads: u32, // Max simultaneous downloads, default is 3
 }
 
 impl DownloadManager {
     fn new() -> Self {
+        log::info!("Initializing DownloadManager");
         let download_directory = dirs::download_dir()
             .unwrap_or_else(|| PathBuf::from("./downloads"));
         
@@ -171,23 +167,32 @@ impl DownloadManager {
             auto_save_enabled: true,
             last_save_time: SystemTime::now(),
             state_version: 1,
-            speed_limit_mbps: 0.0, // Default to unlimited speed
-            divide_speed_enabled: false, // Default to not dividing speed
-            max_simultaneous_downloads: 3, // Default to 3 simultaneous downloads
         };
         
         // Load persisted state (includes activities, downloads, and history)
-        if let Err(e) = manager.load_state() {
-            log::error!("Failed to load state: {}", e);
-            // Fallback to loading just activities for backward compatibility
-            if let Err(e) = manager.load_activities() {
-                log::error!("Failed to load activities: {}", e);
+        match manager.load_state() {
+            Ok(_) => {
+                log::info!("Successfully loaded download state");
+            },
+            Err(e) => {
+                log::error!("Failed to load state: {}", e);
+                // Fallback to loading just activities for backward compatibility
+                if let Err(e) = manager.load_activities() {
+                    log::error!("Failed to load activities: {}", e);
+                }
             }
         }
         
         // Resume interrupted downloads
         if let Err(e) = manager.resume_interrupted_downloads() {
             log::error!("Failed to resume interrupted downloads: {}", e);
+        }
+        
+        // Ensure state file exists
+        if let Err(e) = manager.save_state() {
+            log::error!("Failed to save initial state: {}", e);
+        } else {
+            log::info!("Initial state saved successfully");
         }
         
         manager
@@ -281,9 +286,6 @@ impl DownloadManager {
             version: self.state_version,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             checksum: String::new(),
-            speed_limit_mbps: Some(self.speed_limit_mbps),
-            divide_speed_enabled: Some(self.divide_speed_enabled),
-            max_simultaneous_downloads: Some(self.max_simultaneous_downloads),
         };
         
         state.checksum = Self::calculate_state_checksum(&state)?;
@@ -331,9 +333,15 @@ impl DownloadManager {
         let file_path = Self::get_state_file_path();
         let backup_path = Self::get_backup_state_file_path();
         
+        log::info!("Attempting to load state from: {:?}", file_path);
+        log::info!("Backup state file path: {:?}", backup_path);
+        
         // Try to load primary state file
         let state = match self.try_load_state_file(&file_path) {
-            Ok(state) => state,
+            Ok(state) => {
+                log::info!("Successfully loaded primary state file");
+                state
+            },
             Err(e) => {
                 log::error!("Failed to load primary state file: {}", e);
                 
@@ -357,15 +365,6 @@ impl DownloadManager {
         self.activities = state.activities;
         self.download_directory = PathBuf::from(state.download_directory);
         self.state_version = state.version;
-        
-        // Restore speed limit (use default 0.0 if not present for backward compatibility)
-        self.speed_limit_mbps = state.speed_limit_mbps.unwrap_or(0.0);
-        
-        // Restore divide speed setting (use default false if not present for backward compatibility)
-        self.divide_speed_enabled = state.divide_speed_enabled.unwrap_or(false);
-        
-        // Restore max simultaneous downloads setting (use default 3 if not present for backward compatibility)
-        self.max_simultaneous_downloads = state.max_simultaneous_downloads.unwrap_or(3);
         
         Ok(())
     }
@@ -420,9 +419,7 @@ impl DownloadManager {
             version: legacy_state.version,
             timestamp: legacy_state.timestamp,
             checksum: legacy_state.checksum,
-            speed_limit_mbps: None, // Default for legacy files
-            divide_speed_enabled: None, // Default for legacy files
-            max_simultaneous_downloads: None, // Default for legacy files
+
         };
         
         Ok(state)
@@ -567,7 +564,8 @@ impl DownloadManager {
 
         // Check if we've reached the max simultaneous downloads limit
         let active_count = self.count_active_downloads();
-        let initial_status = if active_count >= self.max_simultaneous_downloads {
+        let settings = AppSettings::load();
+        let initial_status = if active_count >= settings.max_simultaneous_downloads {
             DownloadStatus::Queued
         } else {
             DownloadStatus::Downloading
@@ -618,7 +616,7 @@ impl DownloadManager {
                 Some(actual_file_name),
                 Some(id.clone()),
                 Some("queued".to_string()),
-                Some(format!("Download queued (max {} simultaneous downloads reached): {}", self.max_simultaneous_downloads, file_path))
+                Some(format!("Download queued (max {} simultaneous downloads reached): {}", settings.max_simultaneous_downloads, file_path))
             );
         }
 
@@ -899,78 +897,65 @@ pub fn get_partial_downloads() -> Result<std::collections::HashMap<String, Parti
 /// Get current download speed limit in MB/s
 #[command]
 pub fn get_speed_limit() -> Result<f64, String> {
-    let manager = DOWNLOAD_MANAGER.lock()
-        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
-    
-    Ok(manager.speed_limit_mbps)
+    let settings = AppSettings::load();
+    Ok(settings.speed_limit_mbps)
 }
 
 /// Set download speed limit in MB/s (0 = unlimited)
 #[command]
 pub fn set_speed_limit(speed_limit_mbps: f64) -> Result<(), String> {
-    let mut manager = DOWNLOAD_MANAGER.lock()
-        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    let mut settings = AppSettings::load();
+    settings.speed_limit_mbps = speed_limit_mbps.max(0.0); // Ensure non-negative
+    log::info!("[Rust] Speed limit set to {} MB/s", settings.speed_limit_mbps);
     
-    manager.speed_limit_mbps = speed_limit_mbps.max(0.0); // Ensure non-negative
-    log::info!("[Rust] Speed limit set to {} MB/s", manager.speed_limit_mbps);
-    
-    // Save the state to persist the speed limit setting
-    manager.save_state()
-        .map_err(|e| format!("Failed to save state after setting speed limit: {}", e))?;
+    settings.save()
+        .map_err(|e| format!("Failed to save settings after setting speed limit: {}", e))?;
     
     Ok(())
 }
 
 #[command]
 pub fn get_divide_speed_enabled() -> Result<bool, String> {
-    let manager = DOWNLOAD_MANAGER.lock()
-        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
-    
-    Ok(manager.divide_speed_enabled)
+    let settings = AppSettings::load();
+    Ok(settings.divide_speed_enabled)
 }
 
 #[command]
 pub fn set_divide_speed_enabled(enabled: bool) -> Result<(), String> {
-    let mut manager = DOWNLOAD_MANAGER.lock()
-        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    let mut settings = AppSettings::load();
+    settings.divide_speed_enabled = enabled;
+    log::info!("[Rust] Divide speed setting set to {}", settings.divide_speed_enabled);
     
-    manager.divide_speed_enabled = enabled;
-    log::info!("[Rust] Divide speed setting set to {}", manager.divide_speed_enabled);
-    
-    // Save the state to persist the divide speed setting
-    manager.save_state()
-        .map_err(|e| format!("Failed to save state after setting divide speed: {}", e))?;
+    settings.save()
+        .map_err(|e| format!("Failed to save settings after setting divide speed: {}", e))?;
     
     Ok(())
 }
 
 #[command]
 pub fn get_max_simultaneous_downloads() -> Result<u32, String> {
-    let manager = DOWNLOAD_MANAGER.lock()
-        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
-    
-    Ok(manager.max_simultaneous_downloads)
+    let settings = AppSettings::load();
+    Ok(settings.max_simultaneous_downloads)
 }
 
 #[command]
 pub fn set_max_simultaneous_downloads(max_downloads: u32) -> Result<(), String> {
-    let mut manager = DOWNLOAD_MANAGER.lock()
-        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
-    
     // Validate the input (minimum 1, maximum 10 for reasonable limits)
     if max_downloads < 1 || max_downloads > 10 {
         return Err("Max simultaneous downloads must be between 1 and 10".to_string());
     }
     
-    manager.max_simultaneous_downloads = max_downloads;
-    log::info!("[Rust] Max simultaneous downloads set to {}", manager.max_simultaneous_downloads);
+    let mut settings = AppSettings::load();
+    settings.max_simultaneous_downloads = max_downloads;
+    log::info!("[Rust] Max simultaneous downloads set to {}", settings.max_simultaneous_downloads);
+    
+    settings.save()
+        .map_err(|e| format!("Failed to save settings after setting max downloads: {}", e))?;
     
     // If we increased the limit, try to start queued downloads
+    let mut manager = DOWNLOAD_MANAGER.lock()
+        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
     manager.start_next_queued_download();
-    
-    // Save the state to persist the setting
-    manager.save_state()
-        .map_err(|e| format!("Failed to save state after setting max downloads: {}", e))?;
     
     Ok(())
 }
@@ -1751,10 +1736,8 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                                 downloaded += chunk.len() as u64;
 
                                 // Apply speed limiting if enabled using a sliding window approach
-                                let (speed_limit, divide_speed_enabled) = {
-                                    let manager = DOWNLOAD_MANAGER.lock().unwrap();
-                                    (manager.speed_limit_mbps, manager.divide_speed_enabled)
-                                };
+                                let settings = AppSettings::load();
+                                let (speed_limit, divide_speed_enabled) = (settings.speed_limit_mbps, settings.divide_speed_enabled);
                                 
                                 let effective_speed_limit = if divide_speed_enabled && speed_limit > 0.0 {
                                     // Count active downloads and divide speed limit among them
