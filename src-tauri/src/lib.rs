@@ -28,7 +28,50 @@ pub use utils::*;
 
 /// Initialize and run the Tauri application
 pub fn run() {
-    // YuukiPS Launcher initialization    
+    // YuukiPS Launcher initialization
+    // Determine log level based on environment variable
+    let log_level = match std::env::var("TAURI_LOG_LEVEL").as_deref() {
+        Ok(level) => {
+            let level_lower = level.to_lowercase();
+            match level_lower.as_str() {
+                "error" => {
+                    println!("🚨 Error-only logging enabled via TAURI_LOG_LEVEL={}", level);
+                    log::LevelFilter::Error
+                },
+                "warn" => {
+                    println!("⚠️ Warning+ logging enabled via TAURI_LOG_LEVEL={}", level);
+                    log::LevelFilter::Warn
+                },
+                "info" => {
+                    println!("ℹ️ Info+ logging enabled via TAURI_LOG_LEVEL={}", level);
+                    log::LevelFilter::Info
+                },
+                "debug" => {
+                    println!("🔍 Debug logging enabled via TAURI_LOG_LEVEL={}", level);
+                    log::LevelFilter::Debug
+                },
+                "trace" => {
+                    println!("🔬 Trace logging enabled via TAURI_LOG_LEVEL={}", level);
+                    log::LevelFilter::Trace
+                },
+                "off" => {
+                    println!("🔇 Logging disabled via TAURI_LOG_LEVEL={}", level);
+                    log::LevelFilter::Off
+                },
+                _ => {
+                    println!("⚠️ Unknown log level '{}', defaulting to Info", level);
+                    println!("   Valid levels: error, warn, info, debug, trace, off");
+                    log::LevelFilter::Info
+                }
+            }
+        },
+        Err(_) => {
+            println!("ℹ️ Using default Info log level (set TAURI_LOG_LEVEL to change)");
+            println!("   Available npm scripts: tauri:dev:error, tauri:dev:warn, tauri:dev:info, tauri:dev:debug, tauri:dev:trace, tauri:dev:off");
+            log::LevelFilter::Info
+        }
+    };
+    
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::default()
             .targets([
@@ -36,7 +79,7 @@ pub fn run() {
                 tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: Some("yuukips-launcher".to_string()) }),
                 tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
             ])
-            .level(log::LevelFilter::Debug)
+            .level(log_level)
             .build())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![

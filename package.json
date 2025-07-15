@@ -11,6 +11,12 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
+    "tauri:dev:error": "cross-env TAURI_LOG_LEVEL=error tauri dev",
+    "tauri:dev:warn": "cross-env TAURI_LOG_LEVEL=warn tauri dev",
+    "tauri:dev:info": "cross-env TAURI_LOG_LEVEL=info tauri dev",
+    "tauri:dev:debug": "cross-env TAURI_LOG_LEVEL=debug tauri dev",
+    "tauri:dev:trace": "cross-env TAURI_LOG_LEVEL=trace tauri dev",
+    "tauri:dev:off": "cross-env TAURI_LOG_LEVEL=off tauri dev",
     "tauri:build": "tauri build"
   },
   "dependencies": {
@@ -29,6 +35,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.18",
+    "cross-env": "^7.0.3",
     "eslint": "^9.9.1",
     "eslint-plugin-react-hooks": "^5.1.0-rc.0",
     "eslint-plugin-react-refresh": "^0.4.11",

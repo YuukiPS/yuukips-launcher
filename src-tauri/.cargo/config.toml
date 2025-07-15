@@ -1,20 +1,21 @@
 [build]
-# Force all builds to use release profile to prevent debug folder creation
+# Standard target directory
 target-dir = "target"
 
-[env]
-# Force release mode for all builds
-CARGO_PROFILE = "release"
+# Cargo aliases for convenient verbose building
+[alias]
+vbuild = "build --verbose --message-format=human --timings"
+vcheck = "check --verbose --message-format=human"
+vtest = "test --verbose"
+vrun = "run --verbose"
 
-[profile.dev]
-# Override dev profile to match release settings exactly
-opt-level = 3
-debug = false
-lto = true
-codegen-units = 1
-panic = "abort"
-overflow-checks = false
-incremental = false
+# Removed forced release mode to allow proper dev builds
+# [env]
+# CARGO_PROFILE = "release"
+
+# Removed dev profile override to use Cargo.toml settings
+# [profile.dev]
+# Let Cargo.toml handle dev profile configuration
 
 [profile.release]
 # Ensure release profile is optimized

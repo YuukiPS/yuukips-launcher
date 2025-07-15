@@ -59,13 +59,14 @@ registry = "1.2"
 [target.'cfg(not(windows))'.dependencies]
 libc = "0.2"
 
-# Profile configurations to prevent debug builds
+# Profile configurations optimized for development speed
 [profile.dev]
-opt-level = 3
-debug = true
-lto = true
-codegen-units = 1
-panic = "abort"
+opt-level = 0          # No optimization for faster builds
+debug = true           # Keep debug info
+lto = false            # Disable LTO for dev builds
+codegen-units = 16     # Use multiple cores for compilation
+incremental = true     # Enable incremental compilation
+panic = "unwind"       # Faster than abort for dev
 
 [profile.release]
 opt-level = 3

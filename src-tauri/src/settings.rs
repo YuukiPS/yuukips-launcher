@@ -1,8 +1,8 @@
+use crate::system::get_yuukips_data_path;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 use tauri::command;
-use crate::system::get_yuukips_data_path;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppSettings {
@@ -23,20 +23,19 @@ impl Default for AppSettings {
 
 impl AppSettings {
     fn get_settings_file_path() -> PathBuf {
-        let config_dir = get_yuukips_data_path()
-            .unwrap_or_else(|_| ".".to_string());
+        let config_dir = get_yuukips_data_path().unwrap_or_else(|_| ".".to_string());
         PathBuf::from(config_dir).join("app_settings.json")
     }
 
     pub fn load() -> Self {
         let file_path = Self::get_settings_file_path();
-        log::info!("Loading settings from: {:?}", file_path);
-        
+        log::debug!("Loading settings from: {:?}", file_path);
+
         match fs::read_to_string(&file_path) {
             Ok(content) => {
                 match serde_json::from_str::<AppSettings>(&content) {
                     Ok(settings) => {
-                        log::info!("Successfully loaded settings: speed_limit={}, divide_speed={}, max_downloads={}", 
+                        log::debug!("Successfully loaded settings: speed_limit={}, divide_speed={}, max_downloads={}", 
                                   settings.speed_limit_mbps, settings.divide_speed_enabled, settings.max_simultaneous_downloads);
                         settings
                     }
@@ -52,8 +51,12 @@ impl AppSettings {
             Err(e) => {
                 log::info!("Settings file not found or unreadable: {}", e);
                 let default_settings = Self::default();
-                log::info!("Using default settings: speed_limit={}, divide_speed={}, max_downloads={}", 
-                          default_settings.speed_limit_mbps, default_settings.divide_speed_enabled, default_settings.max_simultaneous_downloads);
+                log::info!(
+                    "Using default settings: speed_limit={}, divide_speed={}, max_downloads={}",
+                    default_settings.speed_limit_mbps,
+                    default_settings.divide_speed_enabled,
+                    default_settings.max_simultaneous_downloads
+                );
                 default_settings
             }
         }
@@ -61,24 +64,28 @@ impl AppSettings {
 
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
         let file_path = Self::get_settings_file_path();
-        
+
         // Create directory if it doesn't exist
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        
+
         let json = serde_json::to_string_pretty(self)?;
         fs::write(&file_path, json)?;
-        
-        log::info!("Settings saved successfully: speed_limit={}, divide_speed={}, max_downloads={}", 
-                  self.speed_limit_mbps, self.divide_speed_enabled, self.max_simultaneous_downloads);
-        
+
+        log::info!(
+            "Settings saved successfully: speed_limit={}, divide_speed={}, max_downloads={}",
+            self.speed_limit_mbps,
+            self.divide_speed_enabled,
+            self.max_simultaneous_downloads
+        );
+
         Ok(())
     }
 }
 
 // Global settings instance
-static SETTINGS: once_cell::sync::Lazy<std::sync::Mutex<AppSettings>> = 
+static SETTINGS: once_cell::sync::Lazy<std::sync::Mutex<AppSettings>> =
     once_cell::sync::Lazy::new(|| std::sync::Mutex::new(AppSettings::load()));
 
 #[command]
