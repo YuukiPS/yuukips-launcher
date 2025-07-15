@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tauri::command;
+use crate::system::get_yuukips_data_path;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppSettings {
@@ -22,10 +23,9 @@ impl Default for AppSettings {
 
 impl AppSettings {
     fn get_settings_file_path() -> PathBuf {
-        let config_dir = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("yuukips-launcher");
-        config_dir.join("app_settings.json")
+        let config_dir = get_yuukips_data_path()
+            .unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(config_dir).join("app_settings.json")
     }
 
     pub fn load() -> Self {

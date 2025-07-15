@@ -13,6 +13,7 @@ use tokio::io::AsyncWriteExt;
 use chrono::Utc;
 use sha2::{Sha256, Digest};
 use crate::settings::AppSettings;
+use crate::system::get_yuukips_data_path;
 
 static DOWNLOAD_MANAGER: once_cell::sync::Lazy<Arc<Mutex<DownloadManager>>> = 
     once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(DownloadManager::new())));
@@ -218,10 +219,9 @@ impl DownloadManager {
     }
     
     fn get_activities_file_path() -> PathBuf {
-        let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-        path.push("yuukips-launcher");
-        path.push("activities.json");
-        path
+        let yuukips_dir = get_yuukips_data_path()
+            .unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(yuukips_dir).join("activities.json")
     }
     
     fn save_activities(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -257,17 +257,15 @@ impl DownloadManager {
     
     // State persistence methods
     fn get_state_file_path() -> PathBuf {
-        let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-        path.push("yuukips-launcher");
-        path.push("download_state.json");
-        path
+        let yuukips_dir = get_yuukips_data_path()
+            .unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(yuukips_dir).join("download_state.json")
     }
     
     fn get_backup_state_file_path() -> PathBuf {
-        let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-        path.push("yuukips-launcher");
-        path.push("download_state_backup.json");
-        path
+        let yuukips_dir = get_yuukips_data_path()
+            .unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(yuukips_dir).join("download_state_backup.json")
     }
     
     fn calculate_state_checksum(state: &DownloadState) -> Result<String, Box<dyn std::error::Error>> {

@@ -140,14 +140,14 @@ pub fn install_ssl_certificate() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         // Get the certificate path from the data directory
-        let cert_path = get_data_dir()?
-            .join("yuukips")
+        let yuukips_dir = PathBuf::from(get_yuukips_data_path()?);
+        let cert_path = yuukips_dir
             .join("ca")
             .join("cert.crt");
 
         if !cert_path.exists() {
             // Generate CA files if they don't exist
-            let yuukips_dir = get_data_dir()?.join("yuukips");
+            let yuukips_dir = PathBuf::from(get_yuukips_data_path()?);
             log::info!("Certificate file not found, generating CA files at: {}", yuukips_dir.display());
             generate_ca_files(&yuukips_dir);
             
@@ -376,7 +376,7 @@ pub fn clear_launcher_data() -> Result<String, String> {
     let mut cleared_items = Vec::new();
     
     // Clear YuukiPS data directory (preserve essential launcher files)
-    let yuukips_dir = get_data_dir()?.join("yuukips");
+    let yuukips_dir = PathBuf::from(get_yuukips_data_path()?);
     if yuukips_dir.exists() {
         // Files to preserve (essential launcher files)
         let preserve_files = ["yuukips-launcher.exe", "uninstall.exe"];
