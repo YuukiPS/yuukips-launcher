@@ -983,9 +983,9 @@ pub fn get_max_simultaneous_downloads() -> Result<u32, String> {
 
 #[command]
 pub fn set_max_simultaneous_downloads(max_downloads: u32) -> Result<(), String> {
-    // Validate the input (minimum 1, maximum 10 for reasonable limits)
-    if max_downloads < 1 || max_downloads > 10 {
-        return Err("Max simultaneous downloads must be between 1 and 10".to_string());
+    // Validate the input (minimum 1, maximum 64 for reasonable limits)
+    if max_downloads < 1 || max_downloads > 64 {
+        return Err("Max simultaneous downloads must be between 1 and 64".to_string());
     }
     
     let mut settings = AppSettings::load();
