@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, ReactNode } from 'react';
 import { SettingsService } from '../services/settingsService';
 
 interface DownloadSettings {
@@ -7,14 +7,14 @@ interface DownloadSettings {
   maxSimultaneousDownloads: number;
 }
 
-interface DownloadSettingsContextType {
+export interface DownloadSettingsContextType {
   settings: DownloadSettings;
   updateSettings: (newSettings: Partial<DownloadSettings>) => Promise<void>;
   reloadSettings: () => Promise<void>;
   isLoading: boolean;
 }
 
-const DownloadSettingsContext = createContext<DownloadSettingsContextType | undefined>(undefined);
+export const DownloadSettingsContext = createContext<DownloadSettingsContextType | undefined>(undefined);
 
 interface DownloadSettingsProviderProps {
   children: ReactNode;
@@ -99,12 +99,4 @@ export const DownloadSettingsProvider: React.FC<DownloadSettingsProviderProps> =
       {children}
     </DownloadSettingsContext.Provider>
   );
-};
-
-export const useDownloadSettingsContext = (): DownloadSettingsContextType => {
-  const context = useContext(DownloadSettingsContext);
-  if (context === undefined) {
-    throw new Error('useDownloadSettingsContext must be used within a DownloadSettingsProvider');
-  }
-  return context;
 };

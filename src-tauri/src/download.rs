@@ -561,9 +561,9 @@ impl DownloadManager {
             .unwrap_or_default();
 
         // Check if we've reached the max simultaneous downloads limit
-        let active_count = self.count_active_downloads();
-        let settings = AppSettings::load();
-        let initial_status = if active_count >= settings.max_simultaneous_downloads {
+        let downloading_count = self.count_downloading_only();
+        let max_downloads = crate::settings::get_app_max_simultaneous_downloads().unwrap_or(3);
+        let initial_status = if downloading_count >= max_downloads {
             DownloadStatus::Queued
         } else {
             DownloadStatus::Downloading
@@ -614,7 +614,7 @@ impl DownloadManager {
                 Some(actual_file_name),
                 Some(id.clone()),
                 Some("queued".to_string()),
-                Some(format!("Download queued (max {} simultaneous downloads reached): {}", settings.max_simultaneous_downloads, file_path))
+                Some(format!("Download queued (max {} simultaneous downloads reached): {}", max_downloads, file_path))
             );
         }
 
@@ -795,40 +795,85 @@ impl DownloadManager {
         }
     }
     
-    fn count_active_downloads(&self) -> u32 {
+    fn count_downloading_only(&self) -> u32 {
         self.downloads.values()
             .filter(|d| matches!(d.status, DownloadStatus::Downloading))
             .count() as u32
     }
     
     fn start_next_queued_download(&mut self) {
-        // Find the oldest queued download
-        let next_queued = self.downloads.iter()
-            .filter(|(_, download)| matches!(download.status, DownloadStatus::Queued))
-            .min_by_key(|(_, download)| download.start_time)
-            .map(|(id, _)| id.clone());
+        // Check if we have capacity for more downloads
+        let mut downloading_count = self.count_downloading_only();
+        let max_downloads = crate::settings::get_app_max_simultaneous_downloads().unwrap_or(3);
         
-        if let Some(download_id) = next_queued {
-            if let Some(download) = self.downloads.get(&download_id) {
-                let url = download.url.clone();
-                let file_path = download.file_path.clone();
-                
-                // Update status to downloading
-                self.set_download_status_no_cleanup(&download_id, DownloadStatus::Downloading, None);
-                
-                // Start the download in a background task
-                let download_id_clone = download_id.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = perform_download(download_id_clone.clone(), url, file_path).await {
-                        log::error!("[Rust] Queued download failed for ID {}: {}", download_id_clone, e);
-                        // Update status to error
-                        if let Ok(mut manager) = DOWNLOAD_MANAGER.lock() {
-                            manager.set_download_status(&download_id_clone, DownloadStatus::Error, Some(e));
+        // Start multiple downloads to fill available slots
+        while downloading_count < max_downloads {
+            // Find the oldest queued download
+            let next_queued = self.downloads.iter()
+                .filter(|(_, download)| matches!(download.status, DownloadStatus::Queued))
+                .min_by_key(|(_, download)| download.start_time)
+                .map(|(id, _)| id.clone());
+            
+            if let Some(download_id) = next_queued {
+                if let Some(download) = self.downloads.get(&download_id) {
+                    let url = download.url.clone();
+                    let file_path = download.file_path.clone();
+                    
+                    // Update status to downloading
+                    self.set_download_status_no_cleanup(&download_id, DownloadStatus::Downloading, None);
+                    
+                    // Start the download in a background task
+                    let download_id_clone = download_id.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = perform_download(download_id_clone.clone(), url, file_path).await {
+                            log::error!("[Rust] Queued download failed for ID {}: {}", download_id_clone, e);
+                            // Update status to error
+                            if let Ok(mut manager) = DOWNLOAD_MANAGER.lock() {
+                                manager.set_download_status(&download_id_clone, DownloadStatus::Error, Some(e));
+                            }
                         }
+                    });
+                    
+                    log::info!("[Rust] Started queued download with ID: {}", download_id);
+                    downloading_count += 1; // Update our local count
+                } else {
+                    break; // Download not found, stop trying
+                }
+            } else {
+                break; // No more queued downloads
+            }
+        }
+    }
+    
+    fn enforce_download_limit(&mut self) {
+        let max_downloads = crate::settings::get_app_max_simultaneous_downloads().unwrap_or(3);
+        let downloading_only: Vec<_> = self.downloads.iter()
+            .filter(|(_, download)| matches!(download.status, DownloadStatus::Downloading))
+            .map(|(id, download)| (id.clone(), download.start_time))
+            .collect();
+        
+        if downloading_only.len() > max_downloads as usize {
+            // Sort by start time to queue the newest downloads first
+            let mut sorted_downloads = downloading_only;
+            sorted_downloads.sort_by_key(|(_, start_time)| *start_time);
+            
+            // Queue the excess downloads (newest ones)
+            let excess_count = sorted_downloads.len() - max_downloads as usize;
+            for (download_id, _) in sorted_downloads.iter().rev().take(excess_count) {
+                if let Some(download) = self.downloads.get(download_id) {
+                    // Only queue downloads that are currently downloading (not paused by user)
+                    if matches!(download.status, DownloadStatus::Downloading) {
+                        // Cancel the download task if it's running
+                        if let Some(token) = self.cancellation_tokens.get(download_id) {
+                            token.store(true, Ordering::Relaxed);
+                        }
+                        
+                        // Set status to queued
+                        self.set_download_status_no_cleanup(download_id, DownloadStatus::Queued, None);
+                        
+                        log::info!("[Rust] Download {} moved to queue due to reduced simultaneous download limit", download_id);
                     }
-                });
-                
-                log::info!("[Rust] Started queued download with ID: {}", download_id);
+                }
             }
         }
     }
@@ -944,16 +989,29 @@ pub fn set_max_simultaneous_downloads(max_downloads: u32) -> Result<(), String> 
     }
     
     let mut settings = AppSettings::load();
+    let old_limit = settings.max_simultaneous_downloads;
     settings.max_simultaneous_downloads = max_downloads;
     log::info!("[Rust] Max simultaneous downloads set to {}", settings.max_simultaneous_downloads);
     
     settings.save()
         .map_err(|e| format!("Failed to save settings after setting max downloads: {}", e))?;
     
-    // If we increased the limit, try to start queued downloads
+    trigger_queue_management_on_settings_change(max_downloads, old_limit)
+}
+
+/// Trigger queue management when download limit settings change
+/// This function is called from both the download manager and settings module
+pub fn trigger_queue_management_on_settings_change(max_downloads: u32, old_limit: u32) -> Result<(), String> {
     let mut manager = DOWNLOAD_MANAGER.lock()
         .map_err(|e| format!("Failed to lock download manager: {}", e))?;
-    manager.start_next_queued_download();
+    
+    if max_downloads < old_limit {
+        // If we reduced the limit, enforce the new limit by queuing excess downloads
+        manager.enforce_download_limit();
+    } else if max_downloads > old_limit {
+        // If we increased the limit, try to start queued downloads
+        manager.start_next_queued_download();
+    }
     
     Ok(())
 }
@@ -1077,6 +1135,9 @@ pub fn pause_download(download_id: String) -> Result<(), String> {
         
         // Set status to paused without cleaning up cancellation token
         manager.set_download_status_no_cleanup(&download_id, DownloadStatus::Paused, None);
+        
+        // Try to start next queued download since we freed up a slot
+        manager.start_next_queued_download();
     }
     
     Ok(())
@@ -1091,6 +1152,16 @@ pub async fn resume_download(download_id: String) -> Result<(), String> {
         
         if let Some(download) = manager.downloads.get(&download_id) {
             if download.status == DownloadStatus::Paused {
+                // Check if we have capacity to resume this download
+                let downloading_count = manager.count_downloading_only();
+                let max_downloads = crate::settings::get_app_max_simultaneous_downloads().unwrap_or(3);
+                
+                if downloading_count >= max_downloads {
+                    // No capacity, set to queued instead
+                    manager.set_download_status_no_cleanup(&download_id, DownloadStatus::Queued, None);
+                    return Ok(());
+                }
+                
                 let url = download.url.clone();
                 let file_path = download.file_path.clone();
                 
@@ -1131,12 +1202,23 @@ pub fn cancel_download(download_id: String) -> Result<(), String> {
     let mut manager = DOWNLOAD_MANAGER.lock()
         .map_err(|e| format!("Failed to lock download manager: {}", e))?;
     
+    // Check if this was an active download before cancelling
+    let was_downloading = manager.downloads.get(&download_id)
+        .map(|d| d.status == DownloadStatus::Downloading)
+        .unwrap_or(false);
+    
     // Signal cancellation
     if let Some(token) = manager.cancellation_tokens.get(&download_id) {
         token.store(true, Ordering::Relaxed);
     }
     
     manager.set_download_status(&download_id, DownloadStatus::Cancelled, None);
+    
+    // If we cancelled an active download, try to start next queued download
+    if was_downloading {
+        manager.start_next_queued_download();
+    }
+    
     Ok(())
 }
 

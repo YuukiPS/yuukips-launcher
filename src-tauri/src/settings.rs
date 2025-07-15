@@ -124,9 +124,27 @@ pub fn get_app_max_simultaneous_downloads() -> Result<u32, String> {
 
 #[command]
 pub fn set_app_max_simultaneous_downloads(max_downloads: u32) -> Result<(), String> {
+    // Validate the input (minimum 1, maximum 64 for reasonable limits)
+    if max_downloads < 1 || max_downloads > 64 {
+        return Err("Max simultaneous downloads must be between 1 and 64".to_string());
+    }
+    
+    let old_limit = {
+        let settings = SETTINGS.lock().map_err(|e| format!("Lock error: {}", e))?;
+        settings.max_simultaneous_downloads
+    };
+    
     let mut settings = SETTINGS.lock().map_err(|e| format!("Lock error: {}", e))?;
     settings.max_simultaneous_downloads = max_downloads;
     settings.save().map_err(|e| format!("Save error: {}", e))?;
+    
+    // Release the settings lock before calling download manager
+    drop(settings);
+    
+    // Trigger queue management in download manager
+    crate::download::trigger_queue_management_on_settings_change(max_downloads, old_limit)
+        .map_err(|e| format!("Failed to update download queue: {}", e))?;
+    
     Ok(())
 }
 

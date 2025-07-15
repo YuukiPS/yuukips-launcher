@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { DownloadItem, DownloadHistory, DownloadStats, ActivityEntry } from '../types';
 import { DownloadService } from '../services/downloadService';
-import { useDownloadSettingsContext } from '../contexts/DownloadSettingsContext';
+import { useDownloadSettingsContext } from '../hooks/useDownloadSettingsContext';
 import { invoke } from '@tauri-apps/api/core';
 import { open, confirm } from '@tauri-apps/plugin-dialog';
 
@@ -29,7 +29,7 @@ interface DownloadManagerProps {
 
 type SortField = 'fileName' | 'progress' | 'size' | 'speed' | 'status' | 'startTime';
 type SortDirection = 'asc' | 'desc';
-type FilterStatus = 'all' | 'downloading' | 'paused' | 'completed' | 'error';
+type FilterStatus = 'all' | 'downloading' | 'paused' | 'completed' | 'error' | 'queued';
 
 export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClose }) => {
   const { settings: globalSettings, updateSettings: updateGlobalSettings } = useDownloadSettingsContext();
@@ -132,7 +132,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
         tempMaxSimultaneousDownloads: globalSettings.maxSimultaneousDownloads
       });
     }
-  }, [showSettingsModal]); // ONLY depend on modal open/close
+  }, [showSettingsModal, globalSettings]); // Include globalSettings dependency
 
   const loadActivities = async (): Promise<ActivityEntry[]> => {
     try {
@@ -431,6 +431,8 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
         return <AlertCircle className="w-4 h-4 text-red-500" />;
       case 'cancelled':
         return <X className="w-4 h-4 text-gray-500" />;
+      case 'queued':
+        return <Clock className="w-4 h-4 text-orange-500" />;
       default:
         return <Clock className="w-4 h-4 text-gray-500" />;
     }
@@ -754,6 +756,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                     <option value="all">All Status</option>
                     <option value="downloading">Downloading</option>
                     <option value="paused">Paused</option>
+                    <option value="queued">Queued</option>
                     <option value="completed">Completed</option>
                     <option value="error">Error</option>
                   </select>

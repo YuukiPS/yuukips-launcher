@@ -87,7 +87,7 @@ export interface DownloadItem {
   downloadedSize: number;
   progress: number;
   speed: number; // bytes per second
-  status: 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled';
+  status: 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled' | 'queued';
   timeRemaining: number; // seconds
   url: string;
   filePath: string;
