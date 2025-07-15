@@ -424,4 +424,29 @@ export class DownloadService {
       throw new Error(`Failed to set divide speed enabled: ${error}`);
     }
   }
+
+  /**
+   * Get current max simultaneous downloads setting
+   */
+  static async getMaxSimultaneousDownloads(): Promise<number> {
+    try {
+      const maxDownloads = await invoke<number>('get_max_simultaneous_downloads');
+      return maxDownloads;
+    } catch (error) {
+      console.error('Failed to get max simultaneous downloads:', error);
+      throw new Error(`Failed to get max simultaneous downloads: ${error}`);
+    }
+  }
+
+  /**
+   * Set max simultaneous downloads (1-10)
+   */
+  static async setMaxSimultaneousDownloads(maxDownloads: number): Promise<void> {
+    try {
+      await invoke('set_max_simultaneous_downloads', { maxDownloads });
+    } catch (error) {
+      console.error('Failed to set max simultaneous downloads:', error);
+      throw new Error(`Failed to set max simultaneous downloads: ${error}`);
+    }
+  }
 }

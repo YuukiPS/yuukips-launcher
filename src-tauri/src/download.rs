@@ -78,6 +78,7 @@ pub enum DownloadStatus {
     Completed,
     Error,
     Cancelled,
+    Queued,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -118,6 +119,7 @@ pub struct DownloadState {
     pub checksum: String,
     pub speed_limit_mbps: Option<f64>, // Speed limit in MB/s, None means use default (0.0)
     pub divide_speed_enabled: Option<bool>, // Whether to divide speed limit among active downloads
+    pub max_simultaneous_downloads: Option<u32>, // Max simultaneous downloads, None means use default (3)
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -151,6 +153,7 @@ struct DownloadManager {
     state_version: u32,
     speed_limit_mbps: f64, // Speed limit in MB/s, 0 means unlimited
     divide_speed_enabled: bool, // Whether to divide speed limit among active downloads
+    max_simultaneous_downloads: u32, // Max simultaneous downloads, default is 3
 }
 
 impl DownloadManager {
@@ -170,6 +173,7 @@ impl DownloadManager {
             state_version: 1,
             speed_limit_mbps: 0.0, // Default to unlimited speed
             divide_speed_enabled: false, // Default to not dividing speed
+            max_simultaneous_downloads: 3, // Default to 3 simultaneous downloads
         };
         
         // Load persisted state (includes activities, downloads, and history)
@@ -279,6 +283,7 @@ impl DownloadManager {
             checksum: String::new(),
             speed_limit_mbps: Some(self.speed_limit_mbps),
             divide_speed_enabled: Some(self.divide_speed_enabled),
+            max_simultaneous_downloads: Some(self.max_simultaneous_downloads),
         };
         
         state.checksum = Self::calculate_state_checksum(&state)?;
@@ -359,6 +364,9 @@ impl DownloadManager {
         // Restore divide speed setting (use default false if not present for backward compatibility)
         self.divide_speed_enabled = state.divide_speed_enabled.unwrap_or(false);
         
+        // Restore max simultaneous downloads setting (use default 3 if not present for backward compatibility)
+        self.max_simultaneous_downloads = state.max_simultaneous_downloads.unwrap_or(3);
+        
         Ok(())
     }
     
@@ -414,6 +422,7 @@ impl DownloadManager {
             checksum: legacy_state.checksum,
             speed_limit_mbps: None, // Default for legacy files
             divide_speed_enabled: None, // Default for legacy files
+            max_simultaneous_downloads: None, // Default for legacy files
         };
         
         Ok(state)
@@ -556,6 +565,14 @@ impl DownloadManager {
             .map(|s| format!(".{}", s))
             .unwrap_or_default();
 
+        // Check if we've reached the max simultaneous downloads limit
+        let active_count = self.count_active_downloads();
+        let initial_status = if active_count >= self.max_simultaneous_downloads {
+            DownloadStatus::Queued
+        } else {
+            DownloadStatus::Downloading
+        };
+
         let download = DownloadItem {
             id: id.clone(),
             file_name: actual_file_name.clone(),
@@ -564,7 +581,7 @@ impl DownloadManager {
             downloaded_size: 0,
             progress: 0.0,
             speed: 0,
-            status: DownloadStatus::Downloading,
+            status: initial_status.clone(),
             time_remaining: 0,
             url: cleaned_url.clone(),
             file_path: file_path.clone(),
@@ -586,14 +603,24 @@ impl DownloadManager {
             Some(format!("Added download from URL: {}", cleaned_url))
         );
         
-        // Add activity entry for download start
-        self.add_activity(
-            ActivityType::DownloadStarted,
-            Some(actual_file_name),
-            Some(id.clone()),
-            Some("downloading".to_string()),
-            Some(format!("Download started for file: {}", file_path))
-        );
+        // Add activity entry for download start or queue
+        if matches!(initial_status, DownloadStatus::Downloading) {
+            self.add_activity(
+                ActivityType::DownloadStarted,
+                Some(actual_file_name),
+                Some(id.clone()),
+                Some("downloading".to_string()),
+                Some(format!("Download started for file: {}", file_path))
+            );
+        } else {
+            self.add_activity(
+                ActivityType::StatusChanged,
+                Some(actual_file_name),
+                Some(id.clone()),
+                Some("queued".to_string()),
+                Some(format!("Download queued (max {} simultaneous downloads reached): {}", self.max_simultaneous_downloads, file_path))
+            );
+        }
 
         self.downloads.insert(id.clone(), download);
         
@@ -653,6 +680,7 @@ impl DownloadManager {
                 DownloadStatus::Error => ActivityType::DownloadError,
                 DownloadStatus::Cancelled => ActivityType::DownloadCancelled,
                 DownloadStatus::Paused => ActivityType::DownloadPaused,
+                DownloadStatus::Queued => ActivityType::StatusChanged,
                 DownloadStatus::Downloading => {
                     if matches!(old_status, DownloadStatus::Paused) {
                         ActivityType::DownloadResumed
@@ -668,6 +696,7 @@ impl DownloadManager {
                 DownloadStatus::Cancelled => "cancelled".to_string(),
                 DownloadStatus::Paused => "paused".to_string(),
                 DownloadStatus::Downloading => "downloading".to_string(),
+                DownloadStatus::Queued => "queued".to_string(),
             };
             
             let details = if let Some(ref err_msg) = error_message {
@@ -685,7 +714,7 @@ impl DownloadManager {
             );
         }
         
-        // Handle final state cleanup
+        // Handle final state cleanup and queue management
         if let Some(download) = self.downloads.get_mut(id) {
             if matches!(status, DownloadStatus::Completed | DownloadStatus::Error | DownloadStatus::Cancelled) {
                 download.end_time = Some(
@@ -718,6 +747,9 @@ impl DownloadManager {
                 
                 // Remove from partial downloads when completed/cancelled/error
                 self.partial_downloads.remove(id);
+                
+                // Start next queued download if a download slot is now available
+                self.start_next_queued_download();
             }
         }
         
@@ -764,6 +796,44 @@ impl DownloadManager {
             completed_downloads,
             total_downloaded_size,
             average_speed,
+        }
+    }
+    
+    fn count_active_downloads(&self) -> u32 {
+        self.downloads.values()
+            .filter(|d| matches!(d.status, DownloadStatus::Downloading))
+            .count() as u32
+    }
+    
+    fn start_next_queued_download(&mut self) {
+        // Find the oldest queued download
+        let next_queued = self.downloads.iter()
+            .filter(|(_, download)| matches!(download.status, DownloadStatus::Queued))
+            .min_by_key(|(_, download)| download.start_time)
+            .map(|(id, _)| id.clone());
+        
+        if let Some(download_id) = next_queued {
+            if let Some(download) = self.downloads.get(&download_id) {
+                let url = download.url.clone();
+                let file_path = download.file_path.clone();
+                
+                // Update status to downloading
+                self.set_download_status_no_cleanup(&download_id, DownloadStatus::Downloading, None);
+                
+                // Start the download in a background task
+                let download_id_clone = download_id.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = perform_download(download_id_clone.clone(), url, file_path).await {
+                        log::error!("[Rust] Queued download failed for ID {}: {}", download_id_clone, e);
+                        // Update status to error
+                        if let Ok(mut manager) = DOWNLOAD_MANAGER.lock() {
+                            manager.set_download_status(&download_id_clone, DownloadStatus::Error, Some(e));
+                        }
+                    }
+                });
+                
+                log::info!("[Rust] Started queued download with ID: {}", download_id);
+            }
         }
     }
 }
@@ -874,6 +944,37 @@ pub fn set_divide_speed_enabled(enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+#[command]
+pub fn get_max_simultaneous_downloads() -> Result<u32, String> {
+    let manager = DOWNLOAD_MANAGER.lock()
+        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    
+    Ok(manager.max_simultaneous_downloads)
+}
+
+#[command]
+pub fn set_max_simultaneous_downloads(max_downloads: u32) -> Result<(), String> {
+    let mut manager = DOWNLOAD_MANAGER.lock()
+        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
+    
+    // Validate the input (minimum 1, maximum 10 for reasonable limits)
+    if max_downloads < 1 || max_downloads > 10 {
+        return Err("Max simultaneous downloads must be between 1 and 10".to_string());
+    }
+    
+    manager.max_simultaneous_downloads = max_downloads;
+    log::info!("[Rust] Max simultaneous downloads set to {}", manager.max_simultaneous_downloads);
+    
+    // If we increased the limit, try to start queued downloads
+    manager.start_next_queued_download();
+    
+    // Save the state to persist the setting
+    manager.save_state()
+        .map_err(|e| format!("Failed to save state after setting max downloads: {}", e))?;
+    
+    Ok(())
+}
+
 /// Get all activity entries
 #[command]
 pub fn get_activities() -> Result<Vec<ActivityEntry>, String> {
@@ -922,7 +1023,7 @@ pub async fn start_download(
 ) -> Result<String, String> {
     log::info!("[Rust] Starting new download: url={}, file_path={}, file_name={:?}", url, file_path, file_name);
     
-    let download_id = {
+    let (download_id, should_start_immediately) = {
         let mut manager = DOWNLOAD_MANAGER.lock()
             .map_err(|e| {
                 let error_msg = format!("Failed to lock download manager: {}", e);
@@ -931,28 +1032,40 @@ pub async fn start_download(
             })?;
         let id = manager.add_download(url.clone(), file_path.clone(), file_name);
         log::debug!("[Rust] Download added to manager with ID: {}", id);
-        id
+        
+        // Check if the download should start immediately or is queued
+        let should_start = if let Some(download) = manager.downloads.get(&id) {
+            matches!(download.status, DownloadStatus::Downloading)
+        } else {
+            false
+        };
+        
+        (id, should_start)
     };
 
-    // Start the download in a background task
-    let download_id_clone = download_id.clone();
-    let url_clone = url.clone();
-    let file_path_clone = file_path.clone();
-    
-    log::debug!("[Rust] Spawning background task for download ID: {}", download_id);
-    let _spawn_result = tauri::async_runtime::spawn(async move {
-        log::debug!("[Rust] Background task started for download ID: {}", download_id_clone);
-        if let Err(e) = perform_download(download_id_clone.clone(), url_clone, file_path_clone).await {
-            log::error!("[Rust] Download failed for ID {}: {}", download_id_clone, e);
-            // Update status to error
-            if let Ok(mut manager) = DOWNLOAD_MANAGER.lock() {
-                manager.set_download_status(&download_id_clone, DownloadStatus::Error, Some(e));
+    // Start the download in a background task only if not queued
+    if should_start_immediately {
+        let download_id_clone = download_id.clone();
+        let url_clone = url.clone();
+        let file_path_clone = file_path.clone();
+        
+        log::debug!("[Rust] Spawning background task for download ID: {}", download_id);
+        let _spawn_result = tauri::async_runtime::spawn(async move {
+            log::debug!("[Rust] Background task started for download ID: {}", download_id_clone);
+            if let Err(e) = perform_download(download_id_clone.clone(), url_clone, file_path_clone).await {
+                log::error!("[Rust] Download failed for ID {}: {}", download_id_clone, e);
+                // Update status to error
+                if let Ok(mut manager) = DOWNLOAD_MANAGER.lock() {
+                    manager.set_download_status(&download_id_clone, DownloadStatus::Error, Some(e));
+                }
+            } else {
+                log::info!("[Rust] Download completed successfully for ID: {}", download_id_clone);
             }
-        } else {
-            log::info!("[Rust] Download completed successfully for ID: {}", download_id_clone);
-        }
-    });
-    log::debug!("[Rust] Background task spawned successfully for download ID: {}, task handle created", download_id);
+        });
+        log::debug!("[Rust] Background task spawned successfully for download ID: {}, task handle created", download_id);
+    } else {
+        log::info!("[Rust] Download queued with ID: {} (max simultaneous downloads reached)", download_id);
+    }
 
     log::debug!("[Rust] Download initiation completed, returning ID: {}", download_id);
     Ok(download_id)

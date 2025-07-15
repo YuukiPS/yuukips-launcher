@@ -119,6 +119,9 @@ export interface TauriCommands {
   // Divide speed commands
   get_divide_speed_enabled(): Promise<boolean>;
   set_divide_speed_enabled(enabled: boolean): Promise<void>;
+  // Max simultaneous downloads commands
+  get_max_simultaneous_downloads(): Promise<number>;
+  set_max_simultaneous_downloads(maxDownloads: number): Promise<void>;
 }
 
 export interface DriveInfo {

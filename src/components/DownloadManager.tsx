@@ -62,6 +62,8 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   const [tempSpeedLimit, setTempSpeedLimit] = useState(0);
   const [divideSpeedEnabled, setDivideSpeedEnabled] = useState(false);
   const [tempDivideSpeedEnabled, setTempDivideSpeedEnabled] = useState(false);
+  const [maxSimultaneousDownloads, setMaxSimultaneousDownloads] = useState(3);
+  const [tempMaxSimultaneousDownloads, setTempMaxSimultaneousDownloads] = useState(3);
 
   // Column width customization state
   const [columnWidths, setColumnWidths] = useState({
@@ -79,13 +81,14 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
 
   const loadData = useCallback(async () => {
     try {
-      const [activeDownloads, downloadHistory, downloadStats, activityEntries, currentSpeedLimit, currentDivideSpeedEnabled] = await Promise.all([
+      const [activeDownloads, downloadHistory, downloadStats, activityEntries, currentSpeedLimit, currentDivideSpeedEnabled, currentMaxSimultaneousDownloads] = await Promise.all([
         DownloadService.getActiveDownloads(),
         DownloadService.getDownloadHistory(),
         DownloadService.getDownloadStats(),
         loadActivities(),
         DownloadService.getSpeedLimit(),
-        DownloadService.getDivideSpeedEnabled()
+        DownloadService.getDivideSpeedEnabled(),
+        DownloadService.getMaxSimultaneousDownloads()
       ]);
       
       setDownloads(activeDownloads);
@@ -94,11 +97,13 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
       setActivities(activityEntries);
       setSpeedLimit(currentSpeedLimit);
       setDivideSpeedEnabled(currentDivideSpeedEnabled);
+      setMaxSimultaneousDownloads(currentMaxSimultaneousDownloads);
       
       // Only update temp values if settings modal is not open to prevent overwriting user input
       if (!showSettingsModal) {
         setTempSpeedLimit(currentSpeedLimit);
         setTempDivideSpeedEnabled(currentDivideSpeedEnabled);
+        setTempMaxSimultaneousDownloads(currentMaxSimultaneousDownloads);
       }
     } catch (error) {
       console.error('Failed to load download data:', error);
@@ -578,12 +583,14 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
     try {
       await Promise.all([
         DownloadService.setSpeedLimit(tempSpeedLimit),
-        DownloadService.setDivideSpeedEnabled(tempDivideSpeedEnabled)
+        DownloadService.setDivideSpeedEnabled(tempDivideSpeedEnabled),
+        DownloadService.setMaxSimultaneousDownloads(tempMaxSimultaneousDownloads)
       ]);
       setSpeedLimit(tempSpeedLimit);
       setDivideSpeedEnabled(tempDivideSpeedEnabled);
+      setMaxSimultaneousDownloads(tempMaxSimultaneousDownloads);
       setShowSettingsModal(false);
-      await addUserInteraction(`Updated speed limit to ${tempSpeedLimit === 0 ? 'unlimited' : `${tempSpeedLimit} MB/s`} and divide speed ${tempDivideSpeedEnabled ? 'enabled' : 'disabled'}`);
+      await addUserInteraction(`Updated settings: speed limit ${tempSpeedLimit === 0 ? 'unlimited' : `${tempSpeedLimit} MB/s`}, divide speed ${tempDivideSpeedEnabled ? 'enabled' : 'disabled'}, max downloads ${tempMaxSimultaneousDownloads}`);
     } catch (error) {
       console.error('Failed to save settings:', error);
     }
@@ -592,6 +599,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   const handleCancelSettings = () => {
     setTempSpeedLimit(speedLimit);
     setTempDivideSpeedEnabled(divideSpeedEnabled);
+    setTempMaxSimultaneousDownloads(maxSimultaneousDownloads);
     setShowSettingsModal(false);
   };
 
@@ -1331,6 +1339,28 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                   </label>
                   <p className="text-gray-400 text-sm mt-2">
                     Current: {divideSpeedEnabled ? 'Enabled' : 'Disabled'}
+                  </p>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Max Simultaneous Downloads
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={tempMaxSimultaneousDownloads}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value);
+                      if (!isNaN(value) && value >= 1 && value <= 10) {
+                        setTempMaxSimultaneousDownloads(value);
+                      }
+                    }}
+                    className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-opacity-20"
+                  />
+                  <p className="text-gray-400 text-sm mt-2">
+                    Maximum number of downloads that can run simultaneously (1-10). Current: {maxSimultaneousDownloads}
                   </p>
                 </div>
               </div>
