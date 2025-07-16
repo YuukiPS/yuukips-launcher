@@ -4,6 +4,7 @@ export interface AppSettings {
   speedLimit: number;
   divideSpeedEnabled: boolean;
   maxSimultaneousDownloads: number;
+  disableRangeRequests: boolean;
 }
 
 export class SettingsService {
@@ -17,12 +18,14 @@ export class SettingsService {
         speed_limit_mbps: number;
         divide_speed_enabled: boolean;
         max_simultaneous_downloads: number;
+        disable_range_requests: boolean;
       }>('get_all_app_settings');
       
       const result = {
         speedLimit: settings.speed_limit_mbps,
         divideSpeedEnabled: settings.divide_speed_enabled,
-        maxSimultaneousDownloads: settings.max_simultaneous_downloads
+        maxSimultaneousDownloads: settings.max_simultaneous_downloads,
+        disableRangeRequests: settings.disable_range_requests
       };
       
       console.log('[SettingsService] Retrieved settings:', result);
@@ -116,6 +119,35 @@ export class SettingsService {
       console.log('[SettingsService] Max simultaneous downloads set successfully');
     } catch (error) {
       console.error('[SettingsService] Failed to set max simultaneous downloads:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get disable range requests setting
+   */
+  static async getDisableRangeRequests(): Promise<boolean> {
+    try {
+      console.log('[SettingsService] Getting disable range requests setting...');
+      const result = await invoke<boolean>('get_app_disable_range_requests');
+      console.log('[SettingsService] Disable range requests setting retrieved:', result);
+      return result;
+    } catch (error) {
+      console.error('[SettingsService] Failed to get disable range requests setting:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Set disable range requests setting
+   */
+  static async setDisableRangeRequests(disableRange: boolean): Promise<void> {
+    try {
+      console.log('[SettingsService] Setting disable range requests to:', disableRange);
+      await invoke('set_app_disable_range_requests', { disableRange });
+      console.log('[SettingsService] Disable range requests setting set successfully');
+    } catch (error) {
+      console.error('[SettingsService] Failed to set disable range requests setting:', error);
       throw error;
     }
   }

@@ -97,15 +97,7 @@ export interface DownloadItem {
   userPaused?: boolean; // Track if pause was initiated by user
 }
 
-export interface DownloadHistory {
-  id: string;
-  fileName: string;
-  fileSize: number;
-  downloadDate: string;
-  status: 'completed' | 'cancelled' | 'error';
-  filePath: string;
-  errorMessage?: string;
-}
+
 
 export interface DownloadStats {
   total_downloads: number;

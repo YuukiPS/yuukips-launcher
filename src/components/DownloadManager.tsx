@@ -14,9 +14,10 @@ import {
   Clock,
   ArrowUpDown,
   Plus,
-  Settings
+  Settings,
+  RefreshCw
 } from 'lucide-react';
-import { DownloadItem, DownloadHistory, DownloadStats, ActivityEntry } from '../types';
+import { DownloadItem, DownloadStats, ActivityEntry } from '../types';
 import { DownloadService } from '../services/downloadService';
 import { useDownloadSettingsContext } from '../hooks/useDownloadSettingsContext';
 import { invoke } from '@tauri-apps/api/core';
@@ -40,7 +41,6 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   }, [globalSettings]);
   
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
-  const [, setHistory] = useState<DownloadHistory[]>([]);
   const [activities, setActivities] = useState<ActivityEntry[]>([]);
   const [stats, setStats] = useState<DownloadStats>({
     total_downloads: 0,
@@ -69,6 +69,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   const [tempSpeedLimit, setTempSpeedLimit] = useState(0);
   const [tempDivideSpeedEnabled, setTempDivideSpeedEnabled] = useState(false);
   const [tempMaxSimultaneousDownloads, setTempMaxSimultaneousDownloads] = useState(3);
+  const [tempDisableRangeRequests, setTempDisableRangeRequests] = useState(false);
 
   // Column width customization state
   const [columnWidths, setColumnWidths] = useState({
@@ -86,15 +87,13 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
 
   const loadData = useCallback(async () => {
     try {
-      const [activeDownloads, downloadHistory, downloadStats, activityEntries] = await Promise.all([
+      const [activeDownloads, downloadStats, activityEntries] = await Promise.all([
         DownloadService.getActiveDownloads(),
-        DownloadService.getDownloadHistory(),
         DownloadService.getDownloadStats(),
         loadActivities()
       ]);
       
       setDownloads(activeDownloads);
-      setHistory(downloadHistory);
       setStats(downloadStats);
       setActivities(activityEntries);
     } catch (error) {
@@ -126,10 +125,13 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
       setTempSpeedLimit(globalSettings.speedLimit);
       setTempDivideSpeedEnabled(globalSettings.divideSpeedEnabled);
       setTempMaxSimultaneousDownloads(globalSettings.maxSimultaneousDownloads);
-      console.log('📋 Temporary settings set:', {
+      setTempDisableRangeRequests(globalSettings.disableRangeRequests);
+      
+      console.log('🔧 Temp settings initialized:', {
         tempSpeedLimit: globalSettings.speedLimit,
         tempDivideSpeedEnabled: globalSettings.divideSpeedEnabled,
-        tempMaxSimultaneousDownloads: globalSettings.maxSimultaneousDownloads
+        tempMaxSimultaneousDownloads: globalSettings.maxSimultaneousDownloads,
+        tempDisableRangeRequests: globalSettings.disableRangeRequests
       });
     }
   }, [showSettingsModal, globalSettings]); // Include globalSettings dependency
@@ -509,6 +511,18 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
     }
   };
 
+  const handleCheckStalledDownloads = async () => {
+    try {
+      console.log('Checking for stalled downloads...');
+      await invoke('check_and_fix_stalled_downloads');
+      await addUserInteraction('Checked and fixed stalled downloads');
+      // Refresh data to show updated list
+      await loadData();
+    } catch (error) {
+      console.error('Failed to check stalled downloads:', error);
+    }
+  };
+
   const handleOpenLocation = async (filePath: string) => {
     try {
       await DownloadService.openDownloadLocation(filePath);
@@ -593,7 +607,8 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
     const settingsToSave = {
       speedLimit: tempSpeedLimit,
       divideSpeedEnabled: tempDivideSpeedEnabled,
-      maxSimultaneousDownloads: tempMaxSimultaneousDownloads
+      maxSimultaneousDownloads: tempMaxSimultaneousDownloads,
+      disableRangeRequests: tempDisableRangeRequests
     };
     console.log('💾 User clicked Save Settings button. Saving:', settingsToSave);
     
@@ -601,7 +616,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
       await updateGlobalSettings(settingsToSave);
       console.log('✅ Settings saved successfully, closing modal');
       setShowSettingsModal(false);
-      await addUserInteraction(`Updated settings: speed limit ${tempSpeedLimit === 0 ? 'unlimited' : `${tempSpeedLimit} MB/s`}, divide speed ${tempDivideSpeedEnabled ? 'enabled' : 'disabled'}, max downloads ${tempMaxSimultaneousDownloads}`);
+      await addUserInteraction(`Updated settings: speed limit ${tempSpeedLimit === 0 ? 'unlimited' : `${tempSpeedLimit} MB/s`}, divide speed ${tempDivideSpeedEnabled ? 'enabled' : 'disabled'}, max downloads ${tempMaxSimultaneousDownloads}, range requests ${tempDisableRangeRequests ? 'disabled' : 'enabled'}`);
     } catch (error) {
       console.error('❌ Failed to save settings:', error);
     }
@@ -611,6 +626,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
     setTempSpeedLimit(globalSettings.speedLimit);
     setTempDivideSpeedEnabled(globalSettings.divideSpeedEnabled);
     setTempMaxSimultaneousDownloads(globalSettings.maxSimultaneousDownloads);
+    setTempDisableRangeRequests(globalSettings.disableRangeRequests);
     setShowSettingsModal(false);
   };
 
@@ -802,6 +818,14 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                 >
                   <Settings className="w-4 h-4" />
                   Settings
+                </button>
+                <button
+                  onClick={handleCheckStalledDownloads}
+                  className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors flex items-center gap-2"
+                  title="Check for downloads that appear stalled but are actually complete"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Fix Stalled
                 </button>
                 <button
                   onClick={handleClearCompleted}
@@ -1373,6 +1397,29 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                   />
                   <p className="text-gray-400 text-sm mt-2">
                     Maximum number of downloads that can run simultaneously (1-10). Current: {globalSettings.maxSimultaneousDownloads}
+                  </p>
+                </div>
+                
+                <div>
+                  <label className="flex items-center space-x-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={tempDisableRangeRequests}
+                      onChange={(e) => setTempDisableRangeRequests(e.target.checked)}
+                      className="w-5 h-5 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-gray-300">
+                        Disable Range Requests (Direct Download)
+                      </span>
+                      <p className="text-gray-400 text-xs mt-1">
+                        When enabled, downloads will always start from the beginning without using HTTP Range headers.
+                        This can help resolve file corruption issues but prevents resuming interrupted downloads.
+                      </p>
+                    </div>
+                  </label>
+                  <p className="text-gray-400 text-sm mt-2">
+                    Current: {globalSettings.disableRangeRequests ? 'Disabled (Direct Download)' : 'Enabled (Resumable)'}
                   </p>
                 </div>
               </div>

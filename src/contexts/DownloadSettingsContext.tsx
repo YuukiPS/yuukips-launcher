@@ -5,6 +5,7 @@ interface DownloadSettings {
   speedLimit: number;
   divideSpeedEnabled: boolean;
   maxSimultaneousDownloads: number;
+  disableRangeRequests: boolean;
 }
 
 export interface DownloadSettingsContextType {
@@ -24,7 +25,8 @@ export const DownloadSettingsProvider: React.FC<DownloadSettingsProviderProps> =
   const [settings, setSettings] = useState<DownloadSettings>({
     speedLimit: 0,
     divideSpeedEnabled: false,
-    maxSimultaneousDownloads: 3
+    maxSimultaneousDownloads: 3,
+    disableRangeRequests: false
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -73,6 +75,11 @@ export const DownloadSettingsProvider: React.FC<DownloadSettingsProviderProps> =
       if (newSettings.maxSimultaneousDownloads !== undefined) {
         console.log('Setting max simultaneous downloads:', newSettings.maxSimultaneousDownloads);
         promises.push(SettingsService.setMaxSimultaneousDownloads(newSettings.maxSimultaneousDownloads));
+      }
+      
+      if (newSettings.disableRangeRequests !== undefined) {
+        console.log('Setting disable range requests:', newSettings.disableRangeRequests);
+        promises.push(SettingsService.setDisableRangeRequests(newSettings.disableRangeRequests));
       }
       
       await Promise.all(promises);

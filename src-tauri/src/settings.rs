@@ -9,6 +9,7 @@ pub struct AppSettings {
     pub speed_limit_mbps: f64,
     pub divide_speed_enabled: bool,
     pub max_simultaneous_downloads: u32,
+    pub disable_range_requests: bool,
 }
 
 impl Default for AppSettings {
@@ -17,6 +18,7 @@ impl Default for AppSettings {
             speed_limit_mbps: 0.0,
             divide_speed_enabled: false,
             max_simultaneous_downloads: 3,
+            disable_range_requests: false,
         }
     }
 }
@@ -35,15 +37,15 @@ impl AppSettings {
             Ok(content) => {
                 match serde_json::from_str::<AppSettings>(&content) {
                     Ok(settings) => {
-                        log::debug!("Successfully loaded settings: speed_limit={}, divide_speed={}, max_downloads={}", 
-                                  settings.speed_limit_mbps, settings.divide_speed_enabled, settings.max_simultaneous_downloads);
+                        log::debug!("Successfully loaded settings: speed_limit={}, divide_speed={}, max_downloads={}, disable_range={}", 
+                                  settings.speed_limit_mbps, settings.divide_speed_enabled, settings.max_simultaneous_downloads, settings.disable_range_requests);
                         settings
                     }
                     Err(e) => {
                         log::error!("Failed to parse settings JSON: {}", e);
                         let default_settings = Self::default();
-                        log::info!("Using default settings: speed_limit={}, divide_speed={}, max_downloads={}", 
-                                  default_settings.speed_limit_mbps, default_settings.divide_speed_enabled, default_settings.max_simultaneous_downloads);
+                        log::info!("Using default settings: speed_limit={}, divide_speed={}, max_downloads={}, disable_range={}", 
+                                  default_settings.speed_limit_mbps, default_settings.divide_speed_enabled, default_settings.max_simultaneous_downloads, default_settings.disable_range_requests);
                         default_settings
                     }
                 }
@@ -52,10 +54,11 @@ impl AppSettings {
                 log::info!("Settings file not found or unreadable: {}", e);
                 let default_settings = Self::default();
                 log::info!(
-                    "Using default settings: speed_limit={}, divide_speed={}, max_downloads={}",
+                    "Using default settings: speed_limit={}, divide_speed={}, max_downloads={}, disable_range={}",
                     default_settings.speed_limit_mbps,
                     default_settings.divide_speed_enabled,
-                    default_settings.max_simultaneous_downloads
+                    default_settings.max_simultaneous_downloads,
+                    default_settings.disable_range_requests
                 );
                 default_settings
             }
@@ -74,10 +77,11 @@ impl AppSettings {
         fs::write(&file_path, json)?;
 
         log::info!(
-            "Settings saved successfully: speed_limit={}, divide_speed={}, max_downloads={}",
+            "Settings saved successfully: speed_limit={}, divide_speed={}, max_downloads={}, disable_range={}",
             self.speed_limit_mbps,
             self.divide_speed_enabled,
-            self.max_simultaneous_downloads
+            self.max_simultaneous_downloads,
+            self.disable_range_requests
         );
 
         Ok(())
@@ -85,7 +89,7 @@ impl AppSettings {
 }
 
 // Global settings instance
-static SETTINGS: once_cell::sync::Lazy<std::sync::Mutex<AppSettings>> =
+pub static SETTINGS: once_cell::sync::Lazy<std::sync::Mutex<AppSettings>> =
     once_cell::sync::Lazy::new(|| std::sync::Mutex::new(AppSettings::load()));
 
 #[command]
@@ -145,6 +149,20 @@ pub fn set_app_max_simultaneous_downloads(max_downloads: u32) -> Result<(), Stri
     crate::download::trigger_queue_management_on_settings_change(max_downloads, old_limit)
         .map_err(|e| format!("Failed to update download queue: {}", e))?;
     
+    Ok(())
+}
+
+#[command]
+pub fn get_app_disable_range_requests() -> Result<bool, String> {
+    let settings = SETTINGS.lock().map_err(|e| format!("Lock error: {}", e))?;
+    Ok(settings.disable_range_requests)
+}
+
+#[command]
+pub fn set_app_disable_range_requests(disable_range: bool) -> Result<(), String> {
+    let mut settings = SETTINGS.lock().map_err(|e| format!("Lock error: {}", e))?;
+    settings.disable_range_requests = disable_range;
+    settings.save().map_err(|e| format!("Save error: {}", e))?;
     Ok(())
 }
 

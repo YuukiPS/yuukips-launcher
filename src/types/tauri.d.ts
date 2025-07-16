@@ -122,6 +122,8 @@ export interface TauriCommands {
   // Max simultaneous downloads commands
   get_max_simultaneous_downloads(): Promise<number>;
   set_max_simultaneous_downloads(maxDownloads: number): Promise<void>;
+  // Stalled download detection and fixing
+  check_and_fix_stalled_downloads(): Promise<string[]>;
 }
 
 export interface DriveInfo {

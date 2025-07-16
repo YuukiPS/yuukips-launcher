@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { DownloadItem, DownloadHistory, DownloadStats } from '../types';
+import { DownloadItem, DownloadStats } from '../types';
 
 /**
  * Service for managing downloads through Tauri backend
@@ -112,10 +112,10 @@ export class DownloadService {
    * Get all active downloads
    */
   static async getActiveDownloads(): Promise<DownloadItem[]> {
-    console.log('[DownloadService] Getting active downloads');
+    //console.log('[DownloadService] Getting active downloads');
     try {
       const downloads = await invoke<DownloadItem[]>('get_active_downloads');
-      console.log('[DownloadService] Retrieved active downloads count:', downloads.length);
+      //console.log('[DownloadService] Retrieved active downloads count:', downloads.length);
       return downloads;
     } catch (error) {
       console.error('[DownloadService] Failed to get active downloads:', error);
@@ -138,17 +138,7 @@ export class DownloadService {
     }
   }
 
-  /**
-   * Get download history
-   */
-  static async getDownloadHistory(): Promise<DownloadHistory[]> {
-    try {
-      const history = await invoke<DownloadHistory[]>('get_download_history');
-      return history;
-    } catch (error) {
-      throw new Error(`Failed to get download history: ${error}`);
-    }
-  }
+
 
   /**
    * Clear completed downloads
@@ -164,16 +154,7 @@ export class DownloadService {
     }
   }
 
-  /**
-   * Clear download history
-   */
-  static async clearDownloadHistory(): Promise<void> {
-    try {
-      await invoke('clear_download_history');
-    } catch (error) {
-      throw new Error(`Failed to clear download history: ${error}`);
-    }
-  }
+
 
   /**
    * Get download statistics

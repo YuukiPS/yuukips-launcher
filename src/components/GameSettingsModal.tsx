@@ -1,8 +1,10 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, Folder, RotateCcw, HardDrive, Calendar, Clock, Check, Trash2, Plus, RefreshCw, Trash, Search } from 'lucide-react';
+import { X, Folder, RotateCcw, HardDrive, Calendar, Clock, Check, Trash2, Plus, RefreshCw, Trash, Search, Download, FolderOpen, Loader2, CheckCircle, AlertTriangle } from 'lucide-react';
 import { Game } from '../types';
 import { GameApiService } from '../services/gameApi';
 import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 import { PatchErrorModal, PatchErrorInfo } from './PatchErrorModal';
 import { DiskScanModal } from './DiskScanModal';
 
@@ -43,6 +45,12 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const [patchErrorInfo, setPatchErrorInfo] = useState<PatchErrorInfo | null>(null);
   const [deleteHoyoPass, setDeleteHoyoPass] = useState<boolean>(true);
   const [diskScanModalOpen, setDiskScanModalOpen] = useState(false);
+  const [downloadModalOpen, setDownloadModalOpen] = useState(false);
+  const [downloadData, setDownloadData] = useState<any>(null);
+  const [isCheckingDownload, setIsCheckingDownload] = useState(false);
+  const [selectedDownloadFolder, setSelectedDownloadFolder] = useState<string>('');
+  const [isCheckingFiles, setIsCheckingFiles] = useState(false);
+  const [fileCheckResults, setFileCheckResults] = useState<{[key: string]: {exists: boolean, md5Match: boolean}}>({});
 
   // Get available versions dynamically from game engine data
   const availableVersions = GameApiService.getAvailableVersionsForPlatform(game, 1);
@@ -449,14 +457,14 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
         channel: selectedChannel,
         gameFolderPath: path
       }) as string;
-      
+
       // Extract MD5 from validation result
       const md5Match = validationResult.match(/MD5: ([a-fA-F0-9]{32})/);
       if (!md5Match) {
         throw new Error('Could not extract MD5 hash from validation result');
       }
       const md5 = md5Match[1];
-      
+
       // Then fetch patch info (this can take a long time)
       showNotification('Validating directory and checking patch status...', 'success');
       await invoke('fetch_patch_info_command', {
@@ -465,11 +473,11 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
         channel: selectedChannel,
         md5: md5
       });
-      
+
       return true;
     } catch (error) {
       console.error('Directory validation failed:', error);
-      
+
       // Check if this is a patch error with detailed info
       const errorString = String(error);
       if (errorString.includes('PATCH_ERROR_404:')) {
@@ -483,7 +491,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
           console.error('Failed to parse patch error info:', parseError);
         }
       }
-      
+
       showNotification(`Invalid game directory: ${error}`, 'error');
       return false;
     } finally {
@@ -523,11 +531,11 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const handleAutoDetect = async () => {
     try {
       setIsValidating(true);
-      
+
       // First, try to get games from HoyoPlay registry
       try {
         const installedGamesRaw = await invoke('get_hoyoplay_list_game') as Array<[string, string]>;
-        
+
         // Convert array of arrays to object for easier lookup
         const installedGames: Record<string, string> = {};
         if (installedGamesRaw && Array.isArray(installedGamesRaw)) {
@@ -535,20 +543,20 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
             installedGames[nameCode] = path;
           });
         }
-        
+
         if (installedGames && Object.keys(installedGames).length > 0) {
           // Get all supported game name codes
           const allGameCodes = await invoke('get_all_game_name_codes') as Array<[number, number, string]>;
-          
+
           // Find matching game installation for current game and channel
-          const matchingCode = allGameCodes.find(([gameId, channelId]) => 
+          const matchingCode = allGameCodes.find(([gameId, channelId]) =>
             gameId === game.id && channelId === selectedChannel
           );
-          
+
           if (matchingCode) {
             const [, , nameCode] = matchingCode;
             const installPath = installedGames[nameCode];
-            
+
             if (installPath) {
               // Automatically set the detected path without confirmation
               const isValid = await validateGameDirectory(installPath);
@@ -578,12 +586,104 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
       } catch (hoyoplayError) {
         showNotification(`Failed to auto-detect ${game.title} directory: ${hoyoplayError}`, 'error');
       }
-      
+
     } catch (error) {
       console.error('Failed to auto-detect game directory:', error);
       showNotification('Failed to auto-detect game directory', 'error');
     } finally {
       setIsValidating(false);
+    }
+  };
+
+  // Handle download game data check
+  const handleDownloadGameCheck = async () => {
+    if (!selectedVersion || selectedChannel === undefined) {
+      showNotification('Please select a version and channel first', 'error');
+      return;
+    }
+
+    setIsCheckingDownload(true);
+    try {
+      const apiUrl = `https://ps.yuuki.me/game/download/pc/${game.id}/${selectedChannel}/${selectedVersion}.json`;
+      const response = await fetch(apiUrl);
+      const data = await response.json();
+
+      if (data.retcode === -1) {
+        showNotification(`Download not available: ${data.message}`, 'error');
+        return;
+      }
+
+      setDownloadData(data);
+      setDownloadModalOpen(true);
+    } catch (error) {
+      console.error('Failed to check download data:', error);
+      showNotification('Failed to check download data', 'error');
+    } finally {
+      setIsCheckingDownload(false);
+    }
+  };
+
+  const handleSelectDownloadFolder = async () => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: selectedDownloadFolder || undefined
+      });
+      
+      if (selected && typeof selected === 'string') {
+        setSelectedDownloadFolder(selected);
+        // Check files in the selected folder
+        await checkFilesInFolder(selected);
+      }
+    } catch (error) {
+      console.error('Failed to select folder:', error);
+      showNotification('Failed to select folder', 'error');
+    }
+  };
+
+  const checkFilesInFolder = async (folderPath: string) => {
+    if (!downloadData?.file) {
+      return;
+    }
+
+    setIsCheckingFiles(true);
+    const results: {[key: string]: {exists: boolean, md5Match: boolean}} = {};
+
+    try {
+        for (const file of downloadData.file) {
+          const filePath = `${folderPath}\\${file.file}`;
+        
+        try {
+          // Check if file exists
+          const exists = await invoke<boolean>('check_file_exists', { filePath });
+          
+          if (exists) {
+            // Check MD5 if file exists
+            try {
+               const fileMd5 = await invoke<string>('get_game_md5', { filePath });
+               console.log(`MD5 for ${file.file}: ${fileMd5} > ${file.md5}`);
+               const md5Match = fileMd5.toLowerCase() === file.md5.toLowerCase();
+               results[file.file] = { exists: true, md5Match };
+             } catch (md5Error) {
+               console.error(`Failed to get MD5 for ${file.file}:`, md5Error);
+               results[file.file] = { exists: true, md5Match: false };
+             }
+           } else {
+             results[file.file] = { exists: false, md5Match: false };
+           }
+         } catch (error) {
+           console.error(`Failed to check file ${file.file}:`, error);
+           results[file.file] = { exists: false, md5Match: false };
+        }
+      }
+      
+      setFileCheckResults(results);
+    } catch (error) {
+      console.error('Failed to check files:', error);
+      showNotification('Failed to check files in folder', 'error');
+    } finally {
+      setIsCheckingFiles(false);
     }
   };
 
@@ -747,8 +847,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                       <label
                         key={version}
                         className={`flex items-center space-x-3 p-3 bg-gray-700/50 rounded-lg transition-colors ${isGameRunning || isValidating
-                            ? 'cursor-not-allowed'
-                            : 'hover:bg-gray-700/70 cursor-pointer'
+                          ? 'cursor-not-allowed'
+                          : 'hover:bg-gray-700/70 cursor-pointer'
                           }`}
                       >
                         <input
@@ -788,8 +888,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                         <label
                           key={channel}
                           className={`flex items-center space-x-3 p-3 bg-gray-700/50 rounded-lg transition-colors ${isGameRunning || isValidating
-                              ? 'cursor-not-allowed'
-                              : 'hover:bg-gray-700/70 cursor-pointer'
+                            ? 'cursor-not-allowed'
+                            : 'hover:bg-gray-700/70 cursor-pointer'
                             }`}
                         >
                           <input
@@ -829,8 +929,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                       onClick={handleOpenDirectory}
                       disabled={isGameRunning || isValidating}
                       className={`flex items-center space-x-2 px-3 py-1 rounded transition-colors ${isGameRunning || isValidating
-                          ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
-                          : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                         }`}
                     >
                       <Folder className="w-4 h-4" />
@@ -861,11 +961,10 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                       <button
                         onClick={handleAutoDetect}
                         disabled={isGameRunning || isValidating}
-                        className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
-                          isGameRunning || isValidating
-                            ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
-                            : 'bg-blue-600 text-white hover:bg-blue-700'
-                        }`}
+                        className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${isGameRunning || isValidating
+                          ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
+                          : 'bg-blue-600 text-white hover:bg-blue-700'
+                          }`}
                         title="Auto detect game installation from HoyoPlay registry or scan drives"
                       >
                         {isValidating ? (
@@ -884,8 +983,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                         onClick={handleRelocate}
                         disabled={isGameRunning || isValidating}
                         className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${isGameRunning || isValidating
-                            ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
-                            : 'bg-purple-600 text-white hover:bg-purple-700'
+                          ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
+                          : 'bg-purple-600 text-white hover:bg-purple-700'
                           }`}
                       >
                         {isValidating ? (
@@ -904,6 +1003,38 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                   </div>
                 </div>
 
+                {/* Download Game Data */}
+                <div className={`bg-gray-800/50 rounded-lg p-4 ${isGameRunning || isValidating ? 'opacity-60' : ''}`}>
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-white font-semibold">Download Game Data</h4>
+                  </div>
+                  
+                  <p className="text-gray-400 text-sm mb-3">
+                    Check and download game data files for {selectedVersion} ({getChannelName(selectedChannel)}). This will fetch the latest game files from the server.
+                  </p>
+                  
+                  <button
+                    onClick={handleDownloadGameCheck}
+                    disabled={isGameRunning || isValidating || isCheckingDownload || !selectedVersion}
+                    className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
+                      isGameRunning || isValidating || isCheckingDownload || !selectedVersion
+                        ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
+                        : 'bg-green-600 text-white hover:bg-green-700'
+                    }`}
+                  >
+                    {isCheckingDownload ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                        <span>Checking...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4" />
+                        <span>Download Game</span>
+                      </>
+                    )}
+                  </button>
+                </div>
 
               </div>
             )}
@@ -980,8 +1111,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                         onClick={handleFindAvailablePort}
                         disabled={isProxyRunning}
                         className={`flex items-center justify-center space-x-2 px-4 py-2 rounded-lg font-medium transition-colors ${isProxyRunning
-                            ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                            : 'bg-blue-600 text-white hover:bg-blue-700'
+                          ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                          : 'bg-blue-600 text-white hover:bg-blue-700'
                           }`}
                       >
                         <RefreshCw className="w-4 h-4" />
@@ -1006,8 +1137,8 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                           onClick={handleSetCustomPort}
                           disabled={isProxyRunning || !customPortInput.trim()}
                           className={`px-3 py-2 rounded-lg font-medium transition-colors ${isProxyRunning || !customPortInput.trim()
-                              ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                              : 'bg-purple-600 text-white hover:bg-purple-700'
+                            ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                            : 'bg-purple-600 text-white hover:bg-purple-700'
                             }`}
                         >
                           Set
@@ -1271,12 +1402,12 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                       <label htmlFor="compatibility" className="text-gray-300">Compatibility Mode</label>
                     </div>
                     <div className="flex items-center space-x-3">
-                      <input 
-                        type="checkbox" 
-                        id="deleteHoyoPass" 
+                      <input
+                        type="checkbox"
+                        id="deleteHoyoPass"
                         checked={deleteHoyoPass}
                         onChange={(e) => saveDeleteHoyoPassSetting(e.target.checked)}
-                        className="text-purple-600 focus:ring-purple-500" 
+                        className="text-purple-600 focus:ring-purple-500"
                       />
                       <label htmlFor="deleteHoyoPass" className="text-gray-300">Delete hoyo pass</label>
                     </div>
@@ -1349,7 +1480,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
           </div>
         </div>
       </div>
-      
+
       {/* Patch Error Modal */}
       {patchErrorModalOpen && patchErrorInfo && (
         <PatchErrorModal
@@ -1357,10 +1488,10 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
           onClose={() => {
             setPatchErrorModalOpen(false);
             setPatchErrorInfo(null);
-          } }
-          errorInfo={patchErrorInfo} gameTitle={''}        />
+          }}
+          errorInfo={patchErrorInfo} gameTitle={''} />
       )}
-      
+
       {/* Disk Scan Modal */}
       <DiskScanModal
         isOpen={diskScanModalOpen}
@@ -1369,8 +1500,207 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
         gameId={game.id}
         channel={selectedChannel}
       />
-      
+
+      {/* Download Game Modal */}
+      {downloadModalOpen && downloadData && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-hidden">
+            <div className="flex items-center justify-between p-6 border-b border-gray-700">
+              <h2 className="text-xl font-semibold text-white">Download Game Data</h2>
+              <button
+                onClick={() => {
+                  setDownloadModalOpen(false);
+                  setDownloadData(null);
+                }}
+                className="text-gray-400 hover:text-white transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto max-h-[calc(90vh-120px)]">
+              <div className="space-y-6">
+                {/* Download Info */}
+                <div className="bg-gray-700/50 rounded-lg p-4">
+                  <h3 className="text-white font-semibold mb-2">Download Information</h3>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-400">Game:</span>
+                      <span className="text-white ml-2">{game.title}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Version:</span>
+                      <span className="text-white ml-2">{selectedVersion}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Channel:</span>
+                      <span className="text-white ml-2">{getChannelName(selectedChannel)}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Method:</span>
+                      <span className="text-white ml-2">{downloadData.metode}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* File List */}
+                <div className="bg-gray-700/50 rounded-lg p-4">
+                  <h3 className="text-white font-semibold mb-4">Files to Download</h3>
+                  
+                  {/* Summary */}
+                  <div className="bg-gray-800/50 rounded-lg p-3 mb-4">
+                    <div className="grid grid-cols-3 gap-4 text-sm">
+                      <div>
+                        <span className="text-gray-400">Total Files:</span>
+                        <span className="text-white ml-2">{downloadData.file?.length || 0}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">Total Size:</span>
+                        <span className="text-white ml-2">
+                          {downloadData.file ? 
+                            (downloadData.file.reduce((sum: number, file: any) => sum + file.package_size, 0) / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+                            : '0 GB'
+                          }
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">Estimated Unzipped:</span>
+                        <span className="text-white ml-2">
+                          {downloadData.file ? 
+                            (downloadData.file.reduce((sum: number, file: any) => sum + file.package_size, 0) * 2 / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+                            : '0 GB'
+                          }
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* File List Table */}
+                  <div className="bg-gray-800/50 rounded-lg overflow-hidden">
+                    <div className="max-h-64 overflow-y-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-700/50 sticky top-0">
+                          <tr>
+                            <th className="text-left p-3 text-gray-300 font-medium">File Name</th>
+                            <th className="text-left p-3 text-gray-300 font-medium">Size</th>
+                            <th className="text-left p-3 text-gray-300 font-medium">MD5</th>
+                            <th className="text-left p-3 text-gray-300 font-medium">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {downloadData.file?.map((file: any, index: number) => {
+                            const result = fileCheckResults[file.file];
+                            let rowClassName = "border-t border-gray-700/50 hover:bg-gray-700/30";
+                            
+                            if (selectedDownloadFolder && result) {
+                              if (result.exists && result.md5Match) {
+                                rowClassName = "border-t border-gray-700/50 bg-green-900/20 hover:bg-green-900/30";
+                              } else if (result.exists && !result.md5Match) {
+                                rowClassName = "border-t border-gray-700/50 bg-yellow-900/20 hover:bg-yellow-900/30";
+                              } else {
+                                rowClassName = "border-t border-gray-700/50 bg-red-900/20 hover:bg-red-900/30";
+                              }
+                            }
+                            
+                            return (
+                              <tr key={index} className={rowClassName}>
+                                <td className="p-3 text-white font-mono text-xs">{file.file}</td>
+                                <td className="p-3 text-gray-300">
+                                  {(file.package_size / (1024 * 1024)).toFixed(2)} MB
+                                </td>
+                                <td className="p-3 text-gray-400 font-mono text-xs">{file.md5}</td>
+                                <td className="p-3">
+                                  {selectedDownloadFolder && result ? (
+                                    result.exists ? (
+                                      result.md5Match ? (
+                                        <div className="flex items-center space-x-1 text-green-400">
+                                          <CheckCircle className="w-3 h-3" />
+                                          <span className="text-xs">Valid</span>
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center space-x-1 text-yellow-400">
+                                          <AlertTriangle className="w-3 h-3" />
+                                          <span className="text-xs">MD5 Mismatch</span>
+                                        </div>
+                                      )
+                                    ) : (
+                                      <div className="flex items-center space-x-1 text-red-400">
+                                        <X className="w-3 h-3" />
+                                        <span className="text-xs">Missing</span>
+                                      </div>
+                                    )
+                                  ) : (
+                                    <span className="text-gray-500 text-xs">-</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Download Location */}
+                <div className="bg-gray-700/50 rounded-lg p-4">
+                  <h3 className="text-white font-semibold mb-3">Download Location</h3>
+                  <p className="text-gray-400 text-sm mb-3">
+                    Select the folder where you want to save the downloaded files. The system will check for existing files and verify their MD5 checksums.
+                  </p>
+                  
+                  {/* Selected Folder Display */}
+                  {selectedDownloadFolder && (
+                    <div className="bg-gray-800/50 rounded-lg p-3 mb-3">
+                      <div className="flex items-center space-x-2">
+                        <FolderOpen className="w-4 h-4 text-purple-400" />
+                        <span className="text-white text-sm font-mono">{selectedDownloadFolder}</span>
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div className="flex space-x-3 mb-4">
+                    <button
+                      onClick={handleSelectDownloadFolder}
+                      disabled={isCheckingFiles}
+                      className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isCheckingFiles ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Checking Files...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Folder className="w-4 h-4" />
+                          <span>Select Download Folder</span>
+                        </>
+                      )}
+                    </button>
+                    
+                    <button
+                      onClick={() => {
+                        setDownloadModalOpen(false);
+                        setDownloadData(null);
+                        setSelectedDownloadFolder('');
+                        setFileCheckResults({});
+                        showNotification('Download cancelled');
+                      }}
+                      className="flex items-center space-x-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                      <span>Cancel</span>
+                    </button>
+                  </div>
+
+
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
-   );
- };
+  );
+};

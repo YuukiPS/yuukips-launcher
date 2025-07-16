@@ -108,9 +108,7 @@ pub fn run() {
             download::restart_download,
             download::get_active_downloads,
             download::get_download_status,
-            download::get_download_history,
             download::clear_completed_downloads,
-            download::clear_download_history,
             download::get_download_stats,
             download::open_download_location,
             download::set_download_directory,
@@ -138,6 +136,7 @@ pub fn run() {
             download::set_divide_speed_enabled,
             download::get_max_simultaneous_downloads,
             download::set_max_simultaneous_downloads,
+            download::check_and_fix_stalled_downloads,
             // Settings functions (new simple JSON persistence)
             settings::get_app_speed_limit,
             settings::set_app_speed_limit,
@@ -145,6 +144,8 @@ pub fn run() {
             settings::set_app_divide_speed_enabled,
             settings::get_app_max_simultaneous_downloads,
             settings::set_app_max_simultaneous_downloads,
+            settings::get_app_disable_range_requests,
+            settings::set_app_disable_range_requests,
             settings::get_all_app_settings,
             // Proxy functions
             proxy::get_proxy_addr,
