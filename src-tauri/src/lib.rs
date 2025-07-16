@@ -195,6 +195,7 @@ pub fn run() {
             scan_drive_for_games,
             get_all_game_name_codes,
             get_game_md5,
+            get_file_md5,
             // Patch functions
             get_download_progress,
             clear_download_progress,

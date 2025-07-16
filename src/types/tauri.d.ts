@@ -101,6 +101,7 @@ export interface TauriCommands {
   ): Promise<string[]>;
   get_all_game_name_codes(): Promise<[number, number, string][]>
   get_game_md5(path: string): Promise<string>
+  get_file_md5(filePath: string): Promise<string>
   get_hoyoplay_list_game(): Promise<Array<[string, string]>>;
   // Activity commands
   get_activities(): Promise<ActivityEntry[]>;

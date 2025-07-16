@@ -50,6 +50,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const [isCheckingDownload, setIsCheckingDownload] = useState(false);
   const [selectedDownloadFolder, setSelectedDownloadFolder] = useState<string>('');
   const [isCheckingFiles, setIsCheckingFiles] = useState(false);
+  const [fileCheckProgress, setFileCheckProgress] = useState({ current: 0, total: 0 });
   const [fileCheckResults, setFileCheckResults] = useState<{[key: string]: {exists: boolean, md5Match: boolean}}>({});
 
   // Get available versions dynamically from game engine data
@@ -602,6 +603,12 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
       return;
     }
 
+    // Reset all download modal state to ensure fresh start
+    setSelectedDownloadFolder('');
+    setFileCheckResults({});
+    setDownloadData(null);
+    setFileCheckProgress({ current: 0, total: 0 });
+
     setIsCheckingDownload(true);
     try {
       const apiUrl = `https://ps.yuuki.me/game/download/pc/${game.id}/${selectedChannel}/${selectedVersion}.json`;
@@ -648,11 +655,16 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
     }
 
     setIsCheckingFiles(true);
+    setFileCheckProgress({ current: 0, total: downloadData.file.length });
     const results: {[key: string]: {exists: boolean, md5Match: boolean}} = {};
 
     try {
-        for (const file of downloadData.file) {
+        for (let i = 0; i < downloadData.file.length; i++) {
+          const file = downloadData.file[i];
           const filePath = `${folderPath}\\${file.file}`;
+          
+          // Update progress
+          setFileCheckProgress({ current: i + 1, total: downloadData.file.length });
         
         try {
           // Check if file exists
@@ -661,7 +673,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
           if (exists) {
             // Check MD5 if file exists
             try {
-               const fileMd5 = await invoke<string>('get_game_md5', { filePath });
+               const fileMd5 = await invoke<string>('get_file_md5', { filePath: filePath });
                console.log(`MD5 for ${file.file}: ${fileMd5} > ${file.md5}`);
                const md5Match = fileMd5.toLowerCase() === file.md5.toLowerCase();
                results[file.file] = { exists: true, md5Match };
@@ -676,6 +688,9 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
            console.error(`Failed to check file ${file.file}:`, error);
            results[file.file] = { exists: false, md5Match: false };
         }
+        
+        // Add small delay to prevent UI blocking
+        await new Promise(resolve => setTimeout(resolve, 10));
       }
       
       setFileCheckResults(results);
@@ -1543,104 +1558,106 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                   </div>
                 </div>
 
-                {/* File List */}
-                <div className="bg-gray-700/50 rounded-lg p-4">
-                  <h3 className="text-white font-semibold mb-4">Files to Download</h3>
-                  
-                  {/* Summary */}
-                  <div className="bg-gray-800/50 rounded-lg p-3 mb-4">
-                    <div className="grid grid-cols-3 gap-4 text-sm">
-                      <div>
-                        <span className="text-gray-400">Total Files:</span>
-                        <span className="text-white ml-2">{downloadData.file?.length || 0}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-400">Total Size:</span>
-                        <span className="text-white ml-2">
-                          {downloadData.file ? 
-                            (downloadData.file.reduce((sum: number, file: any) => sum + file.package_size, 0) / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
-                            : '0 GB'
-                          }
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-gray-400">Estimated Unzipped:</span>
-                        <span className="text-white ml-2">
-                          {downloadData.file ? 
-                            (downloadData.file.reduce((sum: number, file: any) => sum + file.package_size, 0) * 2 / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
-                            : '0 GB'
-                          }
-                        </span>
+                {/* File List - Only show after folder selection and file checking */}
+                {selectedDownloadFolder && Object.keys(fileCheckResults).length > 0 && (
+                  <div className="bg-gray-700/50 rounded-lg p-4">
+                    <h3 className="text-white font-semibold mb-4">Files to Download</h3>
+                    
+                    {/* Summary */}
+                    <div className="bg-gray-800/50 rounded-lg p-3 mb-4">
+                      <div className="grid grid-cols-3 gap-4 text-sm">
+                        <div>
+                          <span className="text-gray-400">Total Files:</span>
+                          <span className="text-white ml-2">{downloadData.file?.length || 0}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-400">Total Size:</span>
+                          <span className="text-white ml-2">
+                            {downloadData.file ? 
+                              (downloadData.file.reduce((sum: number, file: any) => sum + file.package_size, 0) / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+                              : '0 GB'
+                            }
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-gray-400">Estimated Unzipped:</span>
+                          <span className="text-white ml-2">
+                            {downloadData.file ? 
+                              (downloadData.file.reduce((sum: number, file: any) => sum + file.package_size, 0) * 2 / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+                              : '0 GB'
+                            }
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* File List Table */}
-                  <div className="bg-gray-800/50 rounded-lg overflow-hidden">
-                    <div className="max-h-64 overflow-y-auto">
-                      <table className="w-full text-sm">
-                        <thead className="bg-gray-700/50 sticky top-0">
-                          <tr>
-                            <th className="text-left p-3 text-gray-300 font-medium">File Name</th>
-                            <th className="text-left p-3 text-gray-300 font-medium">Size</th>
-                            <th className="text-left p-3 text-gray-300 font-medium">MD5</th>
-                            <th className="text-left p-3 text-gray-300 font-medium">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {downloadData.file?.map((file: any, index: number) => {
-                            const result = fileCheckResults[file.file];
-                            let rowClassName = "border-t border-gray-700/50 hover:bg-gray-700/30";
-                            
-                            if (selectedDownloadFolder && result) {
-                              if (result.exists && result.md5Match) {
-                                rowClassName = "border-t border-gray-700/50 bg-green-900/20 hover:bg-green-900/30";
-                              } else if (result.exists && !result.md5Match) {
-                                rowClassName = "border-t border-gray-700/50 bg-yellow-900/20 hover:bg-yellow-900/30";
-                              } else {
-                                rowClassName = "border-t border-gray-700/50 bg-red-900/20 hover:bg-red-900/30";
+                    {/* File List Table */}
+                    <div className="bg-gray-800/50 rounded-lg overflow-hidden">
+                      <div className="max-h-64 overflow-y-auto">
+                        <table className="w-full text-sm">
+                          <thead className="bg-gray-700/50 sticky top-0">
+                            <tr>
+                              <th className="text-left p-3 text-gray-300 font-medium">File Name</th>
+                              <th className="text-left p-3 text-gray-300 font-medium">Size</th>
+                              <th className="text-left p-3 text-gray-300 font-medium">MD5</th>
+                              <th className="text-left p-3 text-gray-300 font-medium">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {downloadData.file?.map((file: any, index: number) => {
+                              const result = fileCheckResults[file.file];
+                              let rowClassName = "border-t border-gray-700/50 hover:bg-gray-700/30";
+                              
+                              if (selectedDownloadFolder && result) {
+                                if (result.exists && result.md5Match) {
+                                  rowClassName = "border-t border-gray-700/50 bg-green-900/20 hover:bg-green-900/30";
+                                } else if (result.exists && !result.md5Match) {
+                                  rowClassName = "border-t border-gray-700/50 bg-yellow-900/20 hover:bg-yellow-900/30";
+                                } else {
+                                  rowClassName = "border-t border-gray-700/50 bg-red-900/20 hover:bg-red-900/30";
+                                }
                               }
-                            }
-                            
-                            return (
-                              <tr key={index} className={rowClassName}>
-                                <td className="p-3 text-white font-mono text-xs">{file.file}</td>
-                                <td className="p-3 text-gray-300">
-                                  {(file.package_size / (1024 * 1024)).toFixed(2)} MB
-                                </td>
-                                <td className="p-3 text-gray-400 font-mono text-xs">{file.md5}</td>
-                                <td className="p-3">
-                                  {selectedDownloadFolder && result ? (
-                                    result.exists ? (
-                                      result.md5Match ? (
-                                        <div className="flex items-center space-x-1 text-green-400">
-                                          <CheckCircle className="w-3 h-3" />
-                                          <span className="text-xs">Valid</span>
-                                        </div>
+                              
+                              return (
+                                <tr key={index} className={rowClassName}>
+                                  <td className="p-3 text-white font-mono text-xs">{file.file}</td>
+                                  <td className="p-3 text-gray-300">
+                                    {(file.package_size / (1024 * 1024)).toFixed(2)} MB
+                                  </td>
+                                  <td className="p-3 text-gray-400 font-mono text-xs">{file.md5}</td>
+                                  <td className="p-3">
+                                    {selectedDownloadFolder && result ? (
+                                      result.exists ? (
+                                        result.md5Match ? (
+                                          <div className="flex items-center space-x-1 text-green-400">
+                                            <CheckCircle className="w-3 h-3" />
+                                            <span className="text-xs">Valid</span>
+                                          </div>
+                                        ) : (
+                                          <div className="flex items-center space-x-1 text-yellow-400">
+                                            <AlertTriangle className="w-3 h-3" />
+                                            <span className="text-xs">MD5 Mismatch</span>
+                                          </div>
+                                        )
                                       ) : (
-                                        <div className="flex items-center space-x-1 text-yellow-400">
-                                          <AlertTriangle className="w-3 h-3" />
-                                          <span className="text-xs">MD5 Mismatch</span>
+                                        <div className="flex items-center space-x-1 text-red-400">
+                                          <X className="w-3 h-3" />
+                                          <span className="text-xs">Missing</span>
                                         </div>
                                       )
                                     ) : (
-                                      <div className="flex items-center space-x-1 text-red-400">
-                                        <X className="w-3 h-3" />
-                                        <span className="text-xs">Missing</span>
-                                      </div>
-                                    )
-                                  ) : (
-                                    <span className="text-gray-500 text-xs">-</span>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                                      <span className="text-gray-500 text-xs">-</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
 
                 {/* Download Location */}
                 <div className="bg-gray-700/50 rounded-lg p-4">
@@ -1668,7 +1685,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                       {isCheckingFiles ? (
                         <>
                           <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>Checking Files...</span>
+                          <span>Check {fileCheckProgress.current}/{fileCheckProgress.total}</span>
                         </>
                       ) : (
                         <>

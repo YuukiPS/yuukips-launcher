@@ -1554,3 +1554,21 @@ pub fn get_game_md5(path: String) -> Result<String, String> {
     
     Err("No supported game executable found in the specified path".to_string())
 }
+
+#[tauri::command]
+pub fn get_file_md5(file_path: String) -> Result<String, String> {
+    use std::path::Path;
+    use crate::utils::calculate_md5;
+    
+    let path = Path::new(&file_path);
+    
+    if !path.exists() {
+        return Err(format!("File does not exist: {}", file_path));
+    }
+    
+    if !path.is_file() {
+        return Err(format!("Path is not a file: {}", file_path));
+    }
+    
+    calculate_md5(path)
+}
