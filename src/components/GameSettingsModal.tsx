@@ -4,9 +4,12 @@ import { X, Folder, RotateCcw, HardDrive, Calendar, Clock, Check, Trash2, Plus, 
 import { Game } from '../types';
 import { GameApiService } from '../services/gameApi';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open } from '@tauri-apps/plugin-dialog';
 import { PatchErrorModal, PatchErrorInfo } from './PatchErrorModal';
 import { DiskScanModal } from './DiskScanModal';
+
+import Md5ProgressInline from './Md5ProgressInline';
 
 interface GameSettingsModalProps {
   game: Game;
@@ -46,11 +49,17 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const [deleteHoyoPass, setDeleteHoyoPass] = useState<boolean>(true);
   const [diskScanModalOpen, setDiskScanModalOpen] = useState(false);
   const [downloadModalOpen, setDownloadModalOpen] = useState(false);
+
+  const [md5FileName, setMd5FileName] = useState('');
+  const [md5InlineVisible, setMd5InlineVisible] = useState(false);
+  const [md5CurrentFileIndex, setMd5CurrentFileIndex] = useState(0);
+  const [md5TotalFiles, setMd5TotalFiles] = useState(0);
   const [downloadData, setDownloadData] = useState<any>(null);
   const [isCheckingDownload, setIsCheckingDownload] = useState(false);
   const [selectedDownloadFolder, setSelectedDownloadFolder] = useState<string>('');
   const [isCheckingFiles, setIsCheckingFiles] = useState(false);
   const [fileCheckProgress, setFileCheckProgress] = useState({ current: 0, total: 0 });
+  const [isDownloadingFiles, setIsDownloadingFiles] = useState(false);
   const [fileCheckResults, setFileCheckResults] = useState<{[key: string]: {exists: boolean, md5Match: boolean}}>({});
 
   // Get available versions dynamically from game engine data
@@ -650,55 +659,232 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   };
 
   const checkFilesInFolder = async (folderPath: string) => {
+    console.log(`[FileCheck] checkFilesInFolder started with folder: ${folderPath}`);
+    console.log(`[FileCheck] downloadData available:`, !!downloadData);
+    console.log(`[FileCheck] downloadData.file available:`, !!downloadData?.file);
+    console.log(`[FileCheck] Number of files to check:`, downloadData?.file?.length || 0);
+    
     if (!downloadData?.file) {
+      console.log(`[FileCheck] No download data or files available, exiting`);
       return;
     }
 
+    console.log(`[FileCheck] Setting isCheckingFiles to true`);
     setIsCheckingFiles(true);
+    console.log(`[FileCheck] Initializing progress: 0/${downloadData.file.length}`);
     setFileCheckProgress({ current: 0, total: downloadData.file.length });
     const results: {[key: string]: {exists: boolean, md5Match: boolean}} = {};
 
     try {
-        for (let i = 0; i < downloadData.file.length; i++) {
-          const file = downloadData.file[i];
-          const filePath = `${folderPath}\\${file.file}`;
-          
-          // Update progress
-          setFileCheckProgress({ current: i + 1, total: downloadData.file.length });
-        
-        try {
-          // Check if file exists
-          const exists = await invoke<boolean>('check_file_exists', { filePath });
-          
-          if (exists) {
-            // Check MD5 if file exists
-            try {
-               const fileMd5 = await invoke<string>('get_file_md5', { filePath: filePath });
-               console.log(`MD5 for ${file.file}: ${fileMd5} > ${file.md5}`);
-               const md5Match = fileMd5.toLowerCase() === file.md5.toLowerCase();
-               results[file.file] = { exists: true, md5Match };
-             } catch (md5Error) {
-               console.error(`Failed to get MD5 for ${file.file}:`, md5Error);
-               results[file.file] = { exists: true, md5Match: false };
-             }
-           } else {
-             results[file.file] = { exists: false, md5Match: false };
-           }
-         } catch (error) {
-           console.error(`Failed to check file ${file.file}:`, error);
-           results[file.file] = { exists: false, md5Match: false };
-        }
-        
-        // Add small delay to prevent UI blocking
-        await new Promise(resolve => setTimeout(resolve, 10));
-      }
+      const files = downloadData.file;
+      console.log(`[FileCheck] Files to process:`, files.map((f: { file: any; }) => f.file));
       
+      // Use requestIdleCallback for better UI responsiveness
+      const processFileWithIdleCallback = (index: number): Promise<void> => {
+        return new Promise((resolve) => {
+          const processFile = async () => {
+            console.log(`[FileCheck] processFile called with index: ${index}, total files: ${files.length}`);
+            
+            if (index >= files.length) {
+              console.log(`[FileCheck] Completed checking all ${files.length} files`);
+              resolve();
+              return;
+            }
+
+            const file = files[index];
+            const filePath = `${folderPath}\\${file.file}`;
+            
+            console.log(`[FileCheck] Processing file ${index + 1}/${files.length}: ${file.file}`);
+            console.log(`[FileCheck] Full file path: ${filePath}`);
+            console.log(`[FileCheck] Expected MD5: ${file.md5}`);
+            
+            try {
+              // Check if file exists
+              console.log(`[FileCheck] Checking if file exists...`);
+              const startExistsCheck = Date.now();
+              const exists = await invoke<boolean>('check_file_exists', { filePath });
+              const endExistsCheck = Date.now();
+              console.log(`[FileCheck] File exists check completed in ${endExistsCheck - startExistsCheck}ms, result: ${exists}`);
+              
+              if (exists) {
+                // Check MD5 if file exists
+                try {
+                  console.log(`[FileCheck] Starting MD5 calculation for ${file.file} in ${filePath}...`);
+                  const startMd5 = Date.now();
+                  
+                  // Show inline progress and start MD5 calculation
+                  setMd5FileName(file.file);
+                  setMd5CurrentFileIndex(index + 1);
+                  setMd5TotalFiles(files.length);
+                  setMd5InlineVisible(true);
+                  
+                  const fileMd5 = await invoke<string>('get_file_md5_chunked_with_progress', { 
+                    filePath: filePath,
+                    window: getCurrentWindow()
+                  });
+                  
+                  setMd5InlineVisible(false);
+                  
+                  const endMd5 = Date.now();
+                  console.log(`[FileCheck] MD5 calculation completed in ${endMd5 - startMd5}ms`);
+                  console.log(`[FileCheck] Calculated MD5: ${fileMd5}`);
+                  console.log(`[FileCheck] Expected MD5: ${file.md5}`);
+                  const md5Match = fileMd5.toLowerCase() === file.md5.toLowerCase();
+                  console.log(`[FileCheck] MD5 match result: ${md5Match}`);
+                  results[file.file] = { exists: true, md5Match };
+                } catch (md5Error) {
+                    console.error(`[FileCheck] MD5 calculation failed for ${file.file}:`, md5Error);
+                    console.error(`[FileCheck] MD5 error details:`, {
+                      message: md5Error instanceof Error ? md5Error.message : String(md5Error),
+                      stack: md5Error instanceof Error ? md5Error.stack : undefined
+                    });
+                    results[file.file] = { exists: true, md5Match: false };
+                  }
+              } else {
+                console.log(`[FileCheck] File does not exist: ${file.file}`);
+                results[file.file] = { exists: false, md5Match: false };
+              }
+            } catch (error) {
+              console.error(`[FileCheck] Error checking file ${file.file}:`, error);
+              console.error(`[FileCheck] Error details:`, {
+                message: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined
+              });
+              results[file.file] = { exists: false, md5Match: false };
+            }
+            
+            // Update progress
+            const newProgress = { current: index + 1, total: files.length };
+            console.log(`[FileCheck] Updating progress: ${newProgress.current}/${newProgress.total} (${((newProgress.current / newProgress.total) * 100).toFixed(1)}%)`);
+            setFileCheckProgress(newProgress);
+            
+            // Schedule next file processing with longer delay to ensure UI responsiveness
+            console.log(`[FileCheck] Scheduling next file processing (index ${index + 1})...`);
+            setTimeout(() => {
+              console.log(`[FileCheck] Timeout callback executing for next file (index ${index + 1})`);
+              processFileWithIdleCallback(index + 1).then(() => {
+                console.log(`[FileCheck] Next file processing completed for index ${index + 1}`);
+                resolve();
+              }).catch((err) => {
+                console.error(`[FileCheck] Error in next file processing:`, err);
+                resolve();
+              });
+            }, 100); // Increased delay to 100ms
+          };
+
+          // Use requestIdleCallback if available, otherwise fallback to setTimeout
+          if (typeof requestIdleCallback !== 'undefined') {
+            console.log(`[FileCheck] Using requestIdleCallback for file ${index}`);
+            requestIdleCallback(() => {
+              console.log(`[FileCheck] requestIdleCallback executed for file ${index}`);
+              processFile();
+            }, { timeout: 1000 });
+          } else {
+            console.log(`[FileCheck] Using setTimeout fallback for file ${index}`);
+            setTimeout(() => {
+              console.log(`[FileCheck] setTimeout executed for file ${index}`);
+              processFile();
+            }, 50);
+          }
+        });
+      };
+      
+      // Start processing files
+      console.log(`[FileCheck] Starting file processing from index 0`);
+      await processFileWithIdleCallback(0);
+      
+      console.log(`[FileCheck] File processing completed`);
+      console.log(`[FileCheck] Final results:`, results);
+      console.log(`[FileCheck] Results summary:`, {
+        totalFiles: Object.keys(results).length,
+        existingFiles: Object.values(results).filter(r => r.exists).length,
+        matchingFiles: Object.values(results).filter(r => r.exists && r.md5Match).length,
+        missingFiles: Object.values(results).filter(r => !r.exists).length,
+        mismatchedFiles: Object.values(results).filter(r => r.exists && !r.md5Match).length
+      });
       setFileCheckResults(results);
     } catch (error) {
-      console.error('Failed to check files:', error);
+      console.error('[FileCheck] Failed to check files:', error);
+      console.error('[FileCheck] Error details:', {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
       showNotification('Failed to check files in folder', 'error');
     } finally {
+      console.log(`[FileCheck] Setting isCheckingFiles to false`);
       setIsCheckingFiles(false);
+    }
+  };
+
+  const handleDownloadMissingFiles = async () => {
+    if (!downloadData?.file || !selectedDownloadFolder) {
+      showNotification('Please select a download folder first', 'error');
+      return;
+    }
+
+    // Identify files that need to be downloaded (missing or MD5 mismatch)
+    const filesToDownload = downloadData.file.filter((file: any) => {
+      const result = fileCheckResults[file.file];
+      return !result || !result.exists || !result.md5Match;
+    });
+
+    if (filesToDownload.length === 0) {
+      showNotification('All files are already valid. No downloads needed.', 'success');
+      return;
+    }
+
+    setIsDownloadingFiles(true);
+    let successCount = 0;
+    let errorCount = 0;
+
+    try {
+      showNotification(`Starting download of ${filesToDownload.length} files...`, 'success');
+      
+      for (const file of filesToDownload) {
+         try {
+           const filePath = `${selectedDownloadFolder}\\${file.file}`;
+           
+           // Validate URL before starting download
+           if (!file.url || !file.url.startsWith('http')) {
+             console.error(`Invalid URL for ${file.file}: ${file.url}`);
+             errorCount++;
+             continue;
+           }
+           
+           // Start download using the download.rs API
+           const downloadId = await invoke<string>('start_download', {
+             url: file.url,
+             filePath: filePath,
+             fileName: file.file
+           });
+           
+           console.log(`Started download for ${file.file} with ID: ${downloadId}`);
+           successCount++;
+           
+         } catch (error) {
+           console.error(`Failed to start download for ${file.file}:`, error);
+           errorCount++;
+         }
+       }
+      
+      if (successCount > 0) {
+        showNotification(`Successfully started ${successCount} downloads. Check Download Manager for progress.`, 'success');
+      }
+      
+      if (errorCount > 0) {
+        showNotification(`Failed to start ${errorCount} downloads. Check console for details.`, 'error');
+      }
+      
+      // Re-check files after a short delay to update the UI
+      setTimeout(() => {
+        checkFilesInFolder(selectedDownloadFolder);
+      }, 2000);
+      
+    } catch (error) {
+      console.error('Failed to download missing files:', error);
+      showNotification('Failed to start downloads', 'error');
+    } finally {
+      setIsDownloadingFiles(false);
     }
   };
 
@@ -1565,7 +1751,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                     
                     {/* Summary */}
                     <div className="bg-gray-800/50 rounded-lg p-3 mb-4">
-                      <div className="grid grid-cols-3 gap-4 text-sm">
+                      <div className="grid grid-cols-3 gap-4 text-sm mb-3">
                         <div>
                           <span className="text-gray-400">Total Files:</span>
                           <span className="text-white ml-2">{downloadData.file?.length || 0}</span>
@@ -1589,6 +1775,38 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                           </span>
                         </div>
                       </div>
+                      
+                      {/* Download Status Summary */}
+                      {Object.keys(fileCheckResults).length > 0 && (
+                        <div className="border-t border-gray-700/50 pt-3">
+                          <div className="grid grid-cols-4 gap-4 text-sm">
+                            <div>
+                              <span className="text-green-400">Valid:</span>
+                              <span className="text-white ml-2">
+                                {Object.values(fileCheckResults).filter(r => r.exists && r.md5Match).length}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-yellow-400">MD5 Mismatch:</span>
+                              <span className="text-white ml-2">
+                                {Object.values(fileCheckResults).filter(r => r.exists && !r.md5Match).length}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-red-400">Missing:</span>
+                              <span className="text-white ml-2">
+                                {Object.values(fileCheckResults).filter(r => !r.exists).length}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-purple-400">Need Download:</span>
+                              <span className="text-white ml-2">
+                                {Object.values(fileCheckResults).filter(r => !r.exists || !r.md5Match).length}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* File List Table */}
@@ -1676,6 +1894,26 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                     </div>
                   )}
                   
+                  {/* Inline MD5 Progress */}
+                  <Md5ProgressInline
+                    isVisible={md5InlineVisible}
+                    fileName={md5FileName}
+                    currentFileIndex={md5CurrentFileIndex}
+                    totalFiles={md5TotalFiles}
+                    onComplete={(hash) => {
+                      console.log('MD5 calculation completed:', hash);
+                      setMd5InlineVisible(false);
+                    }}
+                    onError={(error) => {
+                      console.error('MD5 calculation error:', error);
+                      setMd5InlineVisible(false);
+                    }}
+                    onCancel={() => {
+                      console.log('MD5 calculation cancelled');
+                      setMd5InlineVisible(false);
+                    }}
+                  />
+                  
                   <div className="flex space-x-3 mb-4">
                     <button
                       onClick={handleSelectDownloadFolder}
@@ -1695,12 +1933,34 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                       )}
                     </button>
                     
+                    {/* Download Missing Files Button */}
+                    {selectedDownloadFolder && Object.keys(fileCheckResults).length > 0 && (
+                      <button
+                        onClick={handleDownloadMissingFiles}
+                        disabled={isDownloadingFiles}
+                        className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isDownloadingFiles ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>Downloading...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Download className="w-4 h-4" />
+                            <span>Download Missing Files</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                    
                     <button
                       onClick={() => {
                         setDownloadModalOpen(false);
                         setDownloadData(null);
                         setSelectedDownloadFolder('');
                         setFileCheckResults({});
+                        setFileCheckProgress({ current: 0, total: 0 });
                         showNotification('Download cancelled');
                       }}
                       className="flex items-center space-x-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
@@ -1717,6 +1977,25 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
           </div>
         </div>
       )}
+
+
+
+      {/* Patch Error Modal */}
+      <PatchErrorModal
+        isOpen={patchErrorModalOpen}
+        onClose={() => setPatchErrorModalOpen(false)}
+        errorInfo={patchErrorInfo}
+        gameTitle={game.title}
+      />
+
+      {/* Disk Scan Modal */}
+      <DiskScanModal
+        isOpen={diskScanModalOpen}
+        onClose={() => setDiskScanModalOpen(false)}
+        onPathSelected={handleDiskScanPathSelected}
+        gameId={game.id}
+        channel={selectedChannel}
+      />
 
     </div>
   );

@@ -11,9 +11,8 @@ use serde::{Deserialize, Serialize};
 use tauri::command;
 use uuid::Uuid;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::io::{AsyncWriteExt, AsyncReadExt};
+use tokio::io::{AsyncWriteExt};
 use chrono::Utc;
-use sha2::{Sha256, Digest};
 use crate::settings::SETTINGS;
 use crate::system::get_yuukips_data_path;
 
@@ -104,7 +103,6 @@ pub struct DownloadState {
     pub download_directory: String,
     pub version: u32,
     pub timestamp: u64,
-    pub checksum: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -117,7 +115,6 @@ pub struct PartialDownloadInfo {
     pub last_modified: Option<String>,
     pub etag: Option<String>,
     pub resume_supported: bool,
-    pub checksum: Option<String>, // SHA256 checksum of downloaded portion
 }
 
 
@@ -244,23 +241,16 @@ impl DownloadManager {
     
 
     
-    fn calculate_state_checksum(state: &DownloadState) -> Result<String, Box<dyn std::error::Error>> {
-        let json = serde_json::to_string(state)?;
-        let mut hasher = Sha256::new();
-        hasher.update(json.as_bytes());
-        Ok(format!("{:x}", hasher.finalize()))
-    }
+
     
     fn create_download_state(&self) -> Result<DownloadState, Box<dyn std::error::Error>> {
-        let mut state = DownloadState {
+        let state = DownloadState {
             downloads: self.downloads.clone(),
             download_directory: self.download_directory.to_string_lossy().to_string(),
             version: self.state_version,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            checksum: String::new(),
         };
         
-        state.checksum = Self::calculate_state_checksum(&state)?;
         Ok(state)
     }
     
@@ -322,18 +312,8 @@ impl DownloadManager {
         }
         
         let json = fs::read_to_string(file_path)?;
-        let mut state: DownloadState = serde_json::from_str(&json)?;
+        let state: DownloadState = serde_json::from_str(&json)?;
         
-        // Verify checksum
-        let stored_checksum = state.checksum.clone();
-        state.checksum = String::new();
-        let calculated_checksum = Self::calculate_state_checksum(&state)?;
-        
-        if stored_checksum != calculated_checksum {
-            return Err("State file checksum verification failed".into());
-        }
-        
-        state.checksum = stored_checksum;
         Ok(state)
     }
     
@@ -366,7 +346,6 @@ impl DownloadManager {
                     last_modified: None, // Will be populated during download
                     etag: None, // Will be populated during download
                     resume_supported: true, // Assume true, will be verified during resume
-                    checksum: None, // Will be calculated when needed
                 };
                 
                 self.partial_downloads.insert(id.to_string(), partial_info);
@@ -374,27 +353,7 @@ impl DownloadManager {
         }
     }
     
-    /// Calculate SHA256 checksum of a file
-    async fn calculate_file_checksum(file_path: &str) -> Result<String, String> {
-        let mut file = tokio::fs::File::open(file_path).await
-            .map_err(|e| format!("Failed to open file for checksum: {}", e))?;
-        
-        let mut hasher = Sha256::new();
-        let mut buffer = vec![0u8; 8192]; // 8KB buffer
-        
-        loop {
-            let bytes_read = file.read(&mut buffer).await
-                .map_err(|e| format!("Failed to read file for checksum: {}", e))?;
-            
-            if bytes_read == 0 {
-                break;
-            }
-            
-            hasher.update(&buffer[..bytes_read]);
-        }
-        
-        Ok(format!("{:x}", hasher.finalize()))
-    }
+
     
     /// Verify file integrity and detect corruption
     async fn verify_file_integrity(file_path: &str, expected_size: u64) -> Result<bool, String> {
@@ -1594,27 +1553,7 @@ pub async fn verify_and_repair_download(download_id: String) -> Result<String, S
     }
 }
 
-/// Calculate and return the checksum of a download file
-#[command]
-pub async fn calculate_download_checksum(download_id: String) -> Result<String, String> {
-    let manager = DOWNLOAD_MANAGER.lock()
-        .map_err(|e| format!("Failed to lock download manager: {}", e))?;
-    
-    let download = manager.downloads.get(&download_id)
-        .ok_or_else(|| "Download not found".to_string())?
-        .clone();
-    
-    drop(manager);
-    
-    let file_path = &download.file_path;
-    
-    // Check if file exists
-    if !tokio::fs::metadata(file_path).await.is_ok() {
-        return Err("File does not exist".to_string());
-    }
-    
-    DownloadManager::calculate_file_checksum(file_path).await
-}
+
 
 #[command]
 pub async fn check_and_fix_stalled_downloads() -> Result<Vec<String>, String> {
@@ -1894,6 +1833,20 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                  log::info!("[Rust] Download already completed for ID: {}", download_id_clone2);
                  return Ok(());
              }
+             
+             // Additional check: if we have total_size and downloaded >= total_size, mark as complete
+             if total_size > 0 && downloaded >= total_size {
+                 log::info!("[Rust] Download size check: already at expected size ({} >= {}) for ID: {}", downloaded, total_size, download_id_clone2);
+                 
+                 // Mark download as completed and exit
+                 {
+                     let mut manager = DOWNLOAD_MANAGER.lock().unwrap();
+                     manager.set_download_status(&download_id_clone2, DownloadStatus::Completed, None);
+                 }
+                 
+                 log::info!("[Rust] Download marked as completed for ID: {}", download_id_clone2);
+                 return Ok(());
+             }
 
              if !should_continue {
                  log::info!("[Rust] Download was paused or cancelled for ID: {}", download_id_clone2);
@@ -2121,7 +2074,20 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                                     if valid_chunk_size == 0 {
                                         // Download is already complete, no more data needed
                                         log::info!("[Rust] Download already at expected size, no more data needed for ID: {}", download_id_clone2);
-                                        break;
+                                        
+                                        // Mark download as completed and exit
+                                        {
+                                            let mut manager = DOWNLOAD_MANAGER.lock().unwrap();
+                                            manager.set_download_status(&download_id_clone2, DownloadStatus::Completed, None);
+                                        }
+                                        
+                                        file.flush().await
+                                            .map_err(|e| format!("Failed to flush file: {}", e))?;
+                                        file.sync_all().await
+                                            .map_err(|e| format!("Failed to sync file: {}", e))?;
+                                        
+                                        log::info!("[Rust] Download completed successfully for ID: {}", download_id_clone2);
+                                        return Ok(());
                                     }
                                     
                                     let truncated_chunk = &chunk[..valid_chunk_size];
@@ -2132,8 +2098,21 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                                     
                                     downloaded += truncated_chunk.len() as u64;
                                     
-                                    log::info!("[Rust] Wrote final {} bytes, download should be complete for ID: {}", truncated_chunk.len(), download_id_clone2);
-                                    break;
+                                    log::info!("[Rust] Wrote final {} bytes, download completed for ID: {}", truncated_chunk.len(), download_id_clone2);
+                                    
+                                    // Mark download as completed and exit
+                                    {
+                                        let mut manager = DOWNLOAD_MANAGER.lock().unwrap();
+                                        manager.set_download_status(&download_id_clone2, DownloadStatus::Completed, None);
+                                    }
+                                    
+                                    file.flush().await
+                                        .map_err(|e| format!("Failed to flush file: {}", e))?;
+                                    file.sync_all().await
+                                        .map_err(|e| format!("Failed to sync file: {}", e))?;
+                                    
+                                    log::info!("[Rust] Download completed successfully for ID: {}", download_id_clone2);
+                                    return Ok(());
                                 }
                                 
                                 last_progress_time = std::time::Instant::now();
@@ -2311,6 +2290,25 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                                 break;
                             }
                         }
+                    }
+                    
+                    // Check if download is complete after chunk processing
+                    if total_size > 0 && downloaded >= total_size {
+                        log::info!("[Rust] Download completed after chunk processing: {} bytes for ID: {}", downloaded, download_id_clone2);
+                        
+                        // Mark download as completed and exit
+                        {
+                            let mut manager = DOWNLOAD_MANAGER.lock().unwrap();
+                            manager.set_download_status(&download_id_clone2, DownloadStatus::Completed, None);
+                        }
+                        
+                        file.flush().await
+                            .map_err(|e| format!("Failed to flush file: {}", e))?;
+                        file.sync_all().await
+                            .map_err(|e| format!("Failed to sync file: {}", e))?;
+                        
+                        log::info!("[Rust] Download completed successfully for ID: {}", download_id_clone2);
+                        return Ok(());
                     }
                     
                     // If we reach here and total_size is 0 or unknown, consider download complete

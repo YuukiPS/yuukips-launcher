@@ -1,0 +1,1 @@
+* Don't use println but use log

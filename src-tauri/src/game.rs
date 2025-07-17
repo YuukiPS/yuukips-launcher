@@ -1572,3 +1572,130 @@ pub fn get_file_md5(file_path: String) -> Result<String, String> {
     
     calculate_md5(path)
 }
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+// Global state for MD5 cancellation
+static MD5_CANCEL_FLAG: once_cell::sync::Lazy<Arc<AtomicBool>> = 
+    once_cell::sync::Lazy::new(|| Arc::new(AtomicBool::new(false)));
+
+#[derive(serde::Serialize, Clone)]
+pub struct Md5Progress {
+    pub file_path: String,
+    pub progress: f64,
+    pub bytes_processed: u64,
+    pub total_bytes: u64,
+    pub speed_mbps: f64,
+}
+
+#[tauri::command]
+pub async fn get_file_md5_chunked_with_progress(
+    file_path: String,
+    window: tauri::Window,
+) -> Result<String, String> {
+    use std::path::Path;
+    use crate::utils::calculate_md5_chunked_with_progress;
+    use tokio::task;
+    
+    log::info!("[MD5] get_file_md5_chunked_with_progress called for: {}", file_path);
+    
+    let path = Path::new(&file_path);
+    
+    if !path.exists() {
+        log::info!("[MD5] File does not exist: {}", file_path);
+        return Err(format!("File does not exist: {}", file_path));
+    }
+    
+    if !path.is_file() {
+        log::info!("[MD5] Path is not a file: {}", file_path);
+        return Err(format!("Path is not a file: {}", file_path));
+    }
+    
+    // Reset cancel flag
+    MD5_CANCEL_FLAG.store(false, Ordering::Relaxed);
+    
+    log::info!("[MD5] Spawning background task for MD5 calculation with progress: {}", file_path);
+    
+    // Clone the path for the spawned task
+    let path_buf = path.to_path_buf();
+    let file_path_clone = file_path.clone();
+    let cancel_flag = MD5_CANCEL_FLAG.clone();
+    
+    // Spawn the MD5 calculation in a separate task to prevent UI blocking
+    let result = task::spawn(async move {
+        log::info!("[MD5] Background task started for: {}", file_path_clone);
+        let result = calculate_md5_chunked_with_progress(&path_buf, window, cancel_flag).await;
+        log::info!("[MD5] Background task completed for: {}", file_path_clone);
+        result
+    }).await;
+    
+    match result {
+        Ok(md5_result) => {
+            match &md5_result {
+                Ok(hash) => log::info!("[MD5] Successfully calculated MD5 for {}: {}", file_path, hash),
+                Err(err) => log::info!("[MD5] Error calculating MD5 for {}: {}", file_path, err),
+            }
+            md5_result
+        },
+        Err(join_err) => {
+            log::info!("[MD5] Task join error for {}: {}", file_path, join_err);
+            Err(format!("MD5 calculation task failed: {}", join_err))
+        }
+    }
+}
+
+#[tauri::command]
+pub fn cancel_md5_calculation() -> Result<String, String> {
+    log::info!("[MD5] Cancel MD5 calculation requested");
+    MD5_CANCEL_FLAG.store(true, Ordering::Relaxed);
+    Ok("MD5 calculation cancellation requested".to_string())
+}
+
+#[tauri::command]
+pub async fn get_file_md5_chunked(file_path: String) -> Result<String, String> {
+    use std::path::Path;
+    use crate::utils::calculate_md5_chunked;
+    use tokio::task;
+    
+    log::info!("[MD5] get_file_md5_chunked called for: {}", file_path);
+    
+    let path = Path::new(&file_path);
+    
+    if !path.exists() {
+        log::info!("[MD5] File does not exist: {}", file_path);
+        return Err(format!("File does not exist: {}", file_path));
+    }
+    
+    if !path.is_file() {
+        log::info!("[MD5] Path is not a file: {}", file_path);
+        return Err(format!("Path is not a file: {}", file_path));
+    }
+    
+    log::info!("[MD5] Spawning background task for MD5 calculation: {}", file_path);
+    
+    // Clone the path for the spawned task
+    let path_buf = path.to_path_buf();
+    let file_path_clone = file_path.clone();
+    
+    // Spawn the MD5 calculation in a separate task to prevent UI blocking
+    let result = task::spawn(async move {
+        log::info!("[MD5] Background task started for: {}", file_path_clone);
+        let result = calculate_md5_chunked(&path_buf).await;
+        log::info!("[MD5] Background task completed for: {}", file_path_clone);
+        result
+    }).await;
+    
+    match result {
+        Ok(md5_result) => {
+            match &md5_result {
+                Ok(hash) => log::info!("[MD5] Successfully calculated MD5 for {}: {}", file_path, hash),
+                Err(err) => log::info!("[MD5] Error calculating MD5 for {}: {}", file_path, err),
+            }
+            md5_result
+        },
+        Err(join_err) => {
+            log::info!("[MD5] Task join error for {}: {}", file_path, join_err);
+            Err(format!("MD5 calculation task failed: {}", join_err))
+        }
+    }
+}

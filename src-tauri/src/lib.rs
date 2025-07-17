@@ -35,39 +35,39 @@ pub fn run() {
             let level_lower = level.to_lowercase();
             match level_lower.as_str() {
                 "error" => {
-                    println!("🚨 Error-only logging enabled via TAURI_LOG_LEVEL={}", level);
+                    log::info!("🚨 Error-only logging enabled via TAURI_LOG_LEVEL={}", level);
                     log::LevelFilter::Error
                 },
                 "warn" => {
-                    println!("⚠️ Warning+ logging enabled via TAURI_LOG_LEVEL={}", level);
+                    log::info!("⚠️ Warning+ logging enabled via TAURI_LOG_LEVEL={}", level);
                     log::LevelFilter::Warn
                 },
                 "info" => {
-                    println!("ℹ️ Info+ logging enabled via TAURI_LOG_LEVEL={}", level);
+                    log::info!("ℹ️ Info+ logging enabled via TAURI_LOG_LEVEL={}", level);
                     log::LevelFilter::Info
                 },
                 "debug" => {
-                    println!("🔍 Debug logging enabled via TAURI_LOG_LEVEL={}", level);
+                    log::info!("🔍 Debug logging enabled via TAURI_LOG_LEVEL={}", level);
                     log::LevelFilter::Debug
                 },
                 "trace" => {
-                    println!("🔬 Trace logging enabled via TAURI_LOG_LEVEL={}", level);
+                    log::info!("🔬 Trace logging enabled via TAURI_LOG_LEVEL={}", level);
                     log::LevelFilter::Trace
                 },
                 "off" => {
-                    println!("🔇 Logging disabled via TAURI_LOG_LEVEL={}", level);
+                    log::info!("🔇 Logging disabled via TAURI_LOG_LEVEL={}", level);
                     log::LevelFilter::Off
                 },
                 _ => {
-                    println!("⚠️ Unknown log level '{}', defaulting to Info", level);
-                    println!("   Valid levels: error, warn, info, debug, trace, off");
+                    log::info!("⚠️ Unknown log level '{}', defaulting to Info", level);
+                    log::info!("   Valid levels: error, warn, info, debug, trace, off");
                     log::LevelFilter::Info
                 }
             }
         },
         Err(_) => {
-            println!("ℹ️ Using default Info log level (set TAURI_LOG_LEVEL to change)");
-            println!("   Available npm scripts: tauri:dev:error, tauri:dev:warn, tauri:dev:info, tauri:dev:debug, tauri:dev:trace, tauri:dev:off");
+            log::info!("ℹ️ Using default Info log level (set TAURI_LOG_LEVEL to change)");
+            log::info!("   Available npm scripts: tauri:dev:error, tauri:dev:warn, tauri:dev:info, tauri:dev:debug, tauri:dev:trace, tauri:dev:off");
             log::LevelFilter::Info
         }
     };
@@ -196,6 +196,9 @@ pub fn run() {
             get_all_game_name_codes,
             get_game_md5,
             get_file_md5,
+            get_file_md5_chunked,
+            get_file_md5_chunked_with_progress,
+            cancel_md5_calculation,
             // Patch functions
             get_download_progress,
             clear_download_progress,

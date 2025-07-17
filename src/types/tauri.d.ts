@@ -1,3 +1,5 @@
+import { DownloadItem } from './index';
+
 // Tauri API type declarations
 declare global {
   interface Window {
@@ -125,6 +127,14 @@ export interface TauriCommands {
   set_max_simultaneous_downloads(maxDownloads: number): Promise<void>;
   // Stalled download detection and fixing
   check_and_fix_stalled_downloads(): Promise<string[]>;
+  // Download management commands
+  start_download(url: string, filePath: string, fileName?: string): Promise<string>;
+  pause_download(downloadId: string): Promise<void>;
+  resume_download(downloadId: string): Promise<void>;
+  cancel_download(downloadId: string): Promise<void>;
+  get_active_downloads(): Promise<DownloadItem[]>;
+  get_download_status(downloadId: string): Promise<DownloadItem | null>;
+  check_file_exists(filePath: string): Promise<boolean>;
 }
 
 export interface DriveInfo {
