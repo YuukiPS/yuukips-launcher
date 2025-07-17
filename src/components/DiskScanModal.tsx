@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, HardDrive, Search, CheckCircle, Loader2, AlertTriangle } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { open } from '@tauri-apps/plugin-dialog';
 import { DriveInfo, ScanProgress } from '../types/tauri';
 
 interface DiskScanModalProps {
@@ -204,6 +205,24 @@ export const DiskScanModal: React.FC<DiskScanModalProps> = ({
     onClose();
   };
 
+  const handleManualFolderSelect = async () => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: 'Select Game Installation Folder'
+      });
+      
+      if (selected && typeof selected === 'string') {
+        onPathSelected(selected);
+        onClose();
+      }
+    } catch (error) {
+      console.error('Failed to select folder:', error);
+      setError(`Failed to open folder dialog: ${error}`);
+    }
+  };
+
   const resetModal = () => {
     setScanState('selecting');
     setSelectedDrive('');
@@ -341,13 +360,21 @@ export const DiskScanModal: React.FC<DiskScanModalProps> = ({
               
               {foundPaths.length === 0 ? (
                 <div className="text-center py-8">
-                  <div className="text-gray-400 mb-2">No game installations found on this drive.</div>
-                  <button
-                    onClick={() => setScanState('selecting')}
-                    className="text-blue-400 hover:text-blue-300"
-                  >
-                    Try another drive
-                  </button>
+                  <div className="text-gray-400 mb-4">No game installations found on this drive.</div>
+                  <div className="flex flex-col gap-3 items-center">
+                    <button
+                      onClick={() => setScanState('selecting')}
+                      className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                    >
+                      Select Another Drive
+                    </button>
+                    <button
+                      onClick={handleManualFolderSelect}
+                      className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
+                    >
+                      Set Manual Folder
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-2">
