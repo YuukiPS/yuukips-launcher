@@ -1752,6 +1752,7 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
         let progress_timeout = std::time::Duration::from_secs(180); // 3 minutes for progress timeout
         let mut base_delay = std::time::Duration::from_secs(1); // Base delay for exponential backoff
         let mut success_count = 0u32; // Track successful chunk reads for connection stability
+        let mut disable_range_requests: Option<bool> = None; // Track range request setting across loop iterations
         
         // Check if file already exists (for resume functionality)
         if let Ok(metadata) = std::fs::metadata(&file_path_clone) {
@@ -1869,12 +1870,13 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
              
              // Create request - use range headers only if not disabled in settings
               let mut request = client.get(&url_clone);
-              let mut disable_range_requests = {
+              if disable_range_requests.is_none() {
                   let settings = SETTINGS.lock().unwrap();
-                  settings.disable_range_requests
-              };
+                  disable_range_requests = Some(settings.disable_range_requests);
+              }
+              let disable_range_requests_value = disable_range_requests.unwrap();
               
-              if disable_range_requests {
+              if disable_range_requests_value {
                  // Direct download mode - no range headers, always start from beginning
                   if downloaded > 0 {
                       log::warn!("[Rust] Range requests disabled - restarting download from beginning for ID {}", download_id_clone2);
@@ -1902,7 +1904,7 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                              
                              // Reset downloaded size and disable range requests for this attempt
                              downloaded = 0;
-                             disable_range_requests = true;
+                             disable_range_requests = Some(true);
                              
                              // Remove the partial file if it exists
                              if tokio::fs::metadata(&file_path_clone).await.is_ok() {
@@ -1967,7 +1969,7 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                      }
                     
                     // Open/create file for writing
-                     let mut file = if disable_range_requests || downloaded == 0 {
+                     let mut file = if disable_range_requests_value || downloaded == 0 {
                          // For direct downloads or fresh downloads, always create new file
                          tokio::fs::File::create(&file_path_clone).await
                              .map_err(|e| format!("Failed to create file: {}", e))?
@@ -2095,8 +2097,6 @@ async fn perform_download(download_id: String, url: String, file_path: String) -
                                     use tokio::io::AsyncWriteExt;
                                     file.write_all(truncated_chunk).await
                                         .map_err(|e| format!("Failed to write truncated chunk to file: {}", e))?;
-                                    
-                                    downloaded += truncated_chunk.len() as u64;
                                     
                                     log::info!("[Rust] Wrote final {} bytes, download completed for ID: {}", truncated_chunk.len(), download_id_clone2);
                                     
