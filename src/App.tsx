@@ -5,7 +5,8 @@ import { Sidebar } from './components/Sidebar';
 import { GameDetails } from './components/GameDetails';
 import { NewsPanel } from './components/NewsPanel';
 import { UpdateModal } from './components/UpdateModal';
-import { UpdateErrorModal } from './components/UpdateErrorModal';
+
+import { UpdateFailureModal } from './components/UpdateFailureModal';
 import ErrorBoundary from './components/ErrorBoundary';
 import { newsItems } from './data/news';
 import { socialLinks } from './data/socialLinks';
@@ -27,7 +28,7 @@ function App() {
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [updateCheckCompleted, setUpdateCheckCompleted] = useState(false);
   const [updateCheckError, setUpdateCheckError] = useState<string | null>(null);
-  const [showUpdateError, setShowUpdateError] = useState(false);
+  const [showUpdateFailure, setShowUpdateFailure] = useState(false);
   
   const handleGameSelect = (gameId: string | number) => {
     // Prevent game selection if any game is currently running
@@ -112,18 +113,15 @@ function App() {
         setUpdateInfo(updateInfo);
         setShowUpdateModal(true);
         setUpdateCheckError(null);
-        setShowUpdateError(false);
+        setShowUpdateFailure(false);
       } else {
         setUpdateCheckError(null);
-        setShowUpdateError(false);
+        setShowUpdateFailure(false);
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       setUpdateCheckError(errorMessage);
-      
-      if (showErrorToUser) {
-        setShowUpdateError(true);
-      }
+      setShowUpdateFailure(true);
     } finally {
       if (!showErrorToUser) {
         setUpdateCheckCompleted(true);
@@ -195,7 +193,7 @@ function App() {
       setUpdateInfo(forcedUpdateInfo);
       setShowUpdateModal(true);
       setUpdateCheckError(null);
-      setShowUpdateError(false);
+      setShowUpdateFailure(false);
     } catch (error) {
        console.error('❌ Force update check failed:', error);
        // Fallback to fake data if API call fails
@@ -211,13 +209,13 @@ function App() {
       setUpdateInfo(fallbackUpdateInfo);
       setShowUpdateModal(true);
       setUpdateCheckError(null);
-      setShowUpdateError(false);
+      setShowUpdateFailure(false);
     }
   }, []);
 
   // Retry update check function
   const handleRetryUpdateCheck = useCallback(async () => {
-    setShowUpdateError(false);
+    setShowUpdateFailure(false);
     setUpdateCheckError(null);
     await checkForUpdates(true); // Show errors to user on manual retry
   }, [checkForUpdates]);
@@ -390,13 +388,13 @@ function App() {
           />
         )}
         
-        {/* Update Error Modal */}
-        <UpdateErrorModal
-          isOpen={showUpdateError}
-          onClose={() => setShowUpdateError(false)}
-          onRetry={handleRetryUpdateCheck}
-          errorMessage={updateCheckError || 'Unknown error'}
-        />
+        {/* Update Failure Modal */}
+         <UpdateFailureModal
+           isOpen={showUpdateFailure}
+           onClose={() => setShowUpdateFailure(false)}
+           onRetry={handleRetryUpdateCheck}
+           errorMessage={updateCheckError || ''}
+         />
       </div>
     </div>
   );

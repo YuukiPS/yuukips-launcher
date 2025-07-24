@@ -95,6 +95,7 @@ export interface DownloadItem {
   endTime?: number;
   errorMessage?: string;
   userPaused?: boolean; // Track if pause was initiated by user
+  resumeSupported?: boolean; // Whether the download supports resuming
 }
 
 
@@ -115,4 +116,11 @@ export interface ActivityEntry {
   identifier?: string;
   status?: string;
   details?: string;
+}
+
+export interface FileExistenceInfo {
+  exists: boolean;
+  size: number;
+  can_resume: boolean;
+  is_complete: boolean;
 }

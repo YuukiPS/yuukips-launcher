@@ -1,5 +1,5 @@
 import { useContext } from 'react';
-import { DownloadSettingsContext, DownloadSettingsContextType } from '../contexts/DownloadSettingsContext';
+import { DownloadSettingsContext, DownloadSettingsContextType } from '../contexts/downloadSettingsContext';
 
 export const useDownloadSettingsContext = (): DownloadSettingsContextType => {
   const context = useContext(DownloadSettingsContext);

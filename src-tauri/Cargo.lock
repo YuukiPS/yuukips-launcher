@@ -6513,7 +6513,7 @@ dependencies = [
 
 [[package]]
 name = "yuukips-launcher"
-version = "2.0.4"
+version = "2.0.5"
 dependencies = [
  "async-trait",
  "chrono",

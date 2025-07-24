@@ -17,7 +17,7 @@ import {
   Settings,
   RefreshCw
 } from 'lucide-react';
-import { DownloadItem, DownloadStats, ActivityEntry } from '../types';
+import { DownloadItem, DownloadStats, ActivityEntry, FileExistenceInfo } from '../types';
 import { DownloadService } from '../services/downloadService';
 import { useDownloadSettingsContext } from '../hooks/useDownloadSettingsContext';
 import { invoke } from '@tauri-apps/api/core';
@@ -34,12 +34,12 @@ type FilterStatus = 'all' | 'downloading' | 'paused' | 'completed' | 'error' | '
 
 export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClose }) => {
   const { settings: globalSettings, updateSettings: updateGlobalSettings } = useDownloadSettingsContext();
-  
+
   // Debug: Log context values whenever they change
   useEffect(() => {
     console.log('🔍 DownloadManager: globalSettings changed:', globalSettings);
   }, [globalSettings]);
-  
+
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const [activities, setActivities] = useState<ActivityEntry[]>([]);
   const [stats, setStats] = useState<DownloadStats>({
@@ -69,7 +69,6 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
   const [tempSpeedLimit, setTempSpeedLimit] = useState(0);
   const [tempDivideSpeedEnabled, setTempDivideSpeedEnabled] = useState(false);
   const [tempMaxSimultaneousDownloads, setTempMaxSimultaneousDownloads] = useState(3);
-  const [tempDisableRangeRequests, setTempDisableRangeRequests] = useState(false);
 
   // Column width customization state
   const [columnWidths, setColumnWidths] = useState({
@@ -92,7 +91,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
         DownloadService.getDownloadStats(),
         loadActivities()
       ]);
-      
+
       setDownloads(activeDownloads);
       setStats(downloadStats);
       setActivities(activityEntries);
@@ -108,10 +107,10 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
       const initializeDownloads = async () => {
         await loadData();
       };
-      
+
       initializeDownloads();
       loadDefaultDownloadFolder();
-      
+
       // Set up polling for download updates
       const interval = setInterval(loadData, 1000);
       return () => clearInterval(interval);
@@ -125,13 +124,11 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
       setTempSpeedLimit(globalSettings.speedLimit);
       setTempDivideSpeedEnabled(globalSettings.divideSpeedEnabled);
       setTempMaxSimultaneousDownloads(globalSettings.maxSimultaneousDownloads);
-      setTempDisableRangeRequests(globalSettings.disableRangeRequests);
-      
+
       console.log('🔧 Temp settings initialized:', {
         tempSpeedLimit: globalSettings.speedLimit,
         tempDivideSpeedEnabled: globalSettings.divideSpeedEnabled,
         tempMaxSimultaneousDownloads: globalSettings.maxSimultaneousDownloads,
-        tempDisableRangeRequests: globalSettings.disableRangeRequests
       });
     }
   }, [showSettingsModal, globalSettings]); // Include globalSettings dependency
@@ -213,10 +210,10 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
     e.stopPropagation(); // Prevent sorting when resizing
     setIsResizing(true);
     setResizingColumn(columnKey);
-    
+
     const startX = e.clientX;
     const currentWidth = columnWidths[columnKey as keyof typeof columnWidths];
-    
+
     // Parse current width (handle both px and fr units)
     let startWidth: number;
     if (currentWidth.includes('fr')) {
@@ -224,11 +221,11 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
     } else {
       startWidth = parseInt(currentWidth.replace('px', ''));
     }
-    
+
     const handleMouseMove = (e: MouseEvent) => {
       const deltaX = e.clientX - startX;
       const newWidth = Math.max(50, startWidth + deltaX); // Minimum width of 50px
-      
+
       if (columnKey === 'fileName') {
         // For fileName, use fractional units to maintain flexibility
         const frValue = Math.max(0.5, newWidth / 100);
@@ -238,16 +235,120 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
         handleColumnResize(columnKey, `${newWidth}px`);
       }
     };
-    
+
     const handleMouseUp = () => {
       setIsResizing(false);
       setResizingColumn(null);
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-    
+
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const showFileExistsDialog = async (fileName: string, fileInfo: FileExistenceInfo): Promise<'continue' | 'refresh' | 'cancel'> => {
+    return new Promise((resolve) => {
+      const formatFileSize = (bytes: number): string => {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+      };
+
+      const dialog = document.createElement('div');
+      dialog.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+
+      const statusText = fileInfo.is_complete
+        ? 'File is already complete'
+        : fileInfo.can_resume
+          ? `Partial download found (${formatFileSize(fileInfo.size)})`
+          : 'File exists but cannot be resumed';
+
+      const statusColor = fileInfo.is_complete
+        ? 'text-green-600'
+        : fileInfo.can_resume
+          ? 'text-yellow-600'
+          : 'text-red-600';
+
+      dialog.innerHTML = `
+        <div class="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 shadow-xl border border-gray-700">
+          <div class="flex items-center mb-4">
+            <div class="w-12 h-12 rounded-full bg-yellow-900 flex items-center justify-center mr-4">
+              <svg class="w-6 h-6 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z"></path>
+              </svg>
+            </div>
+            <div>
+              <h3 class="text-lg font-semibold text-white">File Already Exists</h3>
+              <p class="text-sm text-gray-300">${fileName}</p>
+            </div>
+          </div>
+          
+          <div class="mb-6">
+            <p class="text-sm ${statusColor.replace('text-green-600', 'text-green-400').replace('text-yellow-600', 'text-yellow-400').replace('text-red-600', 'text-red-400')} font-medium mb-2">${statusText}</p>
+            <p class="text-sm text-gray-300">What would you like to do?</p>
+          </div>
+          
+          <div class="space-y-3">
+            <button id="continue-btn" class="w-full px-4 py-3 ${fileInfo.can_resume ? 'bg-blue-600 hover:bg-blue-700 border-blue-500' : 'bg-gray-500 hover:bg-gray-600 border-gray-400'} text-white rounded-lg transition-colors flex items-center justify-center space-x-2 border">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h1m4 0h1m-6 4h1m4 0h1m6-10V4a2 2 0 00-2-2H5a2 2 0 00-2 2v16l4-2 4 2 4-2 4 2V4z"></path>
+              </svg>
+              <span>${fileInfo.is_complete ? 'Continue Download (File Complete)' : fileInfo.can_resume ? 'Continue Download (Resume)' : 'Continue Download (Restart)'}</span>
+            </button>
+            
+            <button id="refresh-btn" class="w-full px-4 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors flex items-center justify-center space-x-2 border border-orange-500">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+              </svg>
+              <span>Fresh Download (Overwrite)</span>
+            </button>
+            
+            <button id="cancel-btn" class="w-full px-4 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors flex items-center justify-center space-x-2 border border-gray-500">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+              </svg>
+              <span>Cancel</span>
+            </button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(dialog);
+
+      const continueBtn = dialog.querySelector('#continue-btn');
+      const refreshBtn = dialog.querySelector('#refresh-btn');
+      const cancelBtn = dialog.querySelector('#cancel-btn');
+
+      const cleanup = () => {
+        document.body.removeChild(dialog);
+      };
+
+      continueBtn?.addEventListener('click', () => {
+        cleanup();
+        resolve('continue');
+      });
+
+      refreshBtn?.addEventListener('click', () => {
+        cleanup();
+        resolve('refresh');
+      });
+
+      cancelBtn?.addEventListener('click', () => {
+        cleanup();
+        resolve('cancel');
+      });
+
+      // Close on backdrop click
+      dialog.addEventListener('click', (e) => {
+        if (e.target === dialog) {
+          cleanup();
+          resolve('cancel');
+        }
+      });
+    });
   };
 
 
@@ -259,7 +360,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
       url: newDownloadUrl,
       folder: newDownloadFolder
     });
-    
+
     setUrlError('');
     setFolderError('');
 
@@ -290,22 +391,36 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
       const filePath = `${newDownloadFolder}\\${fileName}`;
       console.log('[DownloadManager] Extracted filename:', fileName, 'Full path:', filePath);
 
-      // Check if file already exists
-      console.log('[DownloadManager] Checking if file exists:', filePath);
-      const fileExists = await DownloadService.checkFileExists(filePath);
-      console.log('[DownloadManager] File exists check result:', fileExists);
-      
-      if (fileExists) {
-        const overwrite = await confirm(`File ${fileName} already exists. Do you want to overwrite it?`, {
-          title: 'File Already Exists',
-          kind: 'warning'
-        });
-        console.log('[DownloadManager] User overwrite decision:', overwrite);
-        if (!overwrite) {
-          console.log('[DownloadManager] User cancelled overwrite - aborting download');
+      // Check file existence and get detailed info
+      console.log('[DownloadManager] Checking file existence info:', filePath);
+      const fileInfo = await invoke<FileExistenceInfo>('check_file_existence_info', {
+        filePath,
+        url: newDownloadUrl
+      });
+      console.log('[DownloadManager] File existence info:', fileInfo);
+
+      if (fileInfo.exists) {
+        // Show three-option dialog
+        const action = await showFileExistsDialog(fileName, fileInfo);
+        console.log('[DownloadManager] User file exists decision:', action);
+
+        if (action === 'cancel') {
+          console.log('[DownloadManager] User cancelled - aborting download');
           setIsAddingDownload(false);
           return;
+        } else if (action === 'refresh') {
+          // Delete existing file for fresh download
+          try {
+            await invoke('delete_file', { filePaths: [filePath] });
+            console.log('[DownloadManager] Existing file deleted for fresh download');
+          } catch (error) {
+            console.error('[DownloadManager] Failed to delete existing file:', error);
+            setUrlError('Failed to delete existing file. Please try again.');
+            setIsAddingDownload(false);
+            return;
+          }
         }
+        // For 'continue' action, we proceed with the download (resume will be handled automatically)
       }
 
       // Start the actual download
@@ -320,14 +435,14 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
       setNewDownloadUrl('');
       setShowAddModal(false);
       console.log('[DownloadManager] Modal closed, download initiated successfully');
-      
+
       // Refresh data to show new download
       await loadData();
       console.log('[DownloadManager] Download data refreshed');
 
     } catch (error) {
       console.error('[DownloadManager] Failed to start download:', error);
-      
+
       // Extract meaningful error message
       let errorMessage = 'Failed to start download. Please try again.';
       if (error instanceof Error) {
@@ -339,7 +454,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
           errorMessage = `Download failed: ${error.message}`;
         }
       }
-      
+
       setUrlError(errorMessage);
       console.log('[DownloadManager] Error message set:', errorMessage);
     } finally {
@@ -355,7 +470,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
         multiple: false,
         defaultPath: newDownloadFolder
       });
-      
+
       if (selected && typeof selected === 'string') {
         setNewDownloadFolder(selected);
         // Update the default download directory
@@ -452,7 +567,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
         await DownloadService.resumeDownload(id);
         await addUserInteraction(`Resumed download: ${download.fileName || download.id}`);
       }
-      
+
       // Refresh data to show updated status
       await loadData();
     } catch (error) {
@@ -464,7 +579,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
     try {
       const download = downloads.find(d => d.id === id);
       const fileName = download?.fileName || 'Unknown file';
-      
+
       // Show confirmation dialog with delete warning
       const shouldCancel = await confirm(
         `Are you sure you want to cancel the download of "${fileName}"?\n\n⚠️ Warning: This will permanently delete the download progress and any partially downloaded file.`,
@@ -473,11 +588,11 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
           kind: 'warning'
         }
       );
-      
+
       if (!shouldCancel) {
         return; // User chose not to cancel
       }
-      
+
       await DownloadService.cancelAndDeleteDownload(id);
       await addUserInteraction(`Cancelled download: ${fileName}`);
       // Refresh data to show updated status
@@ -496,6 +611,33 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
       await loadData();
     } catch (error) {
       console.error('Failed to restart download:', error);
+    }
+  };
+
+  const handleDeleteCompleted = async (id: string) => {
+    try {
+      const download = downloads.find(d => d.id === id);
+      const fileName = download?.fileName || 'Unknown file';
+
+      // Show confirmation dialog
+      const shouldDelete = await confirm(
+        `Are you sure you want to delete "${fileName}"?\n\n⚠️ Warning: This will permanently delete both the download data and the downloaded file.`,
+        {
+          title: 'Delete Completed Download',
+          kind: 'warning'
+        }
+      );
+
+      if (!shouldDelete) {
+        return; // User chose not to delete
+      }
+
+      await DownloadService.cancelAndDeleteDownload(id);
+      await addUserInteraction(`Deleted completed download: ${fileName}`);
+      // Refresh data to show updated status
+      await loadData();
+    } catch (error) {
+      console.error('Failed to delete completed download:', error);
     }
   };
 
@@ -564,7 +706,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
     try {
       const downloadIds = Array.from(selectedDownloads);
       const count = downloadIds.length;
-      
+
       switch (action) {
         case 'pause':
           await DownloadService.bulkPauseDownloads(downloadIds);
@@ -583,17 +725,17 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
               kind: 'warning'
             }
           );
-          
+
           if (!shouldCancel) {
             return; // User chose not to cancel
           }
-          
+
           await DownloadService.bulkCancelAndDeleteDownloads(downloadIds);
           await addUserInteraction(`Bulk cancelled ${count} downloads`);
           break;
         }
       }
-      
+
       setSelectedDownloads(new Set());
       // Refresh data to show updated statuses
       await loadData();
@@ -607,16 +749,15 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
     const settingsToSave = {
       speedLimit: tempSpeedLimit,
       divideSpeedEnabled: tempDivideSpeedEnabled,
-      maxSimultaneousDownloads: tempMaxSimultaneousDownloads,
-      disableRangeRequests: tempDisableRangeRequests
+      maxSimultaneousDownloads: tempMaxSimultaneousDownloads
     };
     console.log('💾 User clicked Save Settings button. Saving:', settingsToSave);
-    
+
     try {
       await updateGlobalSettings(settingsToSave);
       console.log('✅ Settings saved successfully, closing modal');
       setShowSettingsModal(false);
-      await addUserInteraction(`Updated settings: speed limit ${tempSpeedLimit === 0 ? 'unlimited' : `${tempSpeedLimit} MB/s`}, divide speed ${tempDivideSpeedEnabled ? 'enabled' : 'disabled'}, max downloads ${tempMaxSimultaneousDownloads}, range requests ${tempDisableRangeRequests ? 'disabled' : 'enabled'}`);
+      await addUserInteraction(`Updated settings: speed limit ${tempSpeedLimit === 0 ? 'unlimited' : `${tempSpeedLimit} MB/s`}, divide speed ${tempDivideSpeedEnabled ? 'enabled' : 'disabled'}, max downloads ${tempMaxSimultaneousDownloads}`);
     } catch (error) {
       console.error('❌ Failed to save settings:', error);
     }
@@ -626,7 +767,6 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
     setTempSpeedLimit(globalSettings.speedLimit);
     setTempDivideSpeedEnabled(globalSettings.divideSpeedEnabled);
     setTempMaxSimultaneousDownloads(globalSettings.maxSimultaneousDownloads);
-    setTempDisableRangeRequests(globalSettings.disableRangeRequests);
     setShowSettingsModal(false);
   };
 
@@ -855,7 +995,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                     Reset Column Widths
                   </button>
                 </div>
-                <div className="grid gap-4 p-4 text-sm font-medium text-gray-300 relative" style={{gridTemplateColumns: getGridTemplateColumns()}}>
+                <div className="grid gap-4 p-4 text-sm font-medium text-gray-300 relative" style={{ gridTemplateColumns: getGridTemplateColumns() }}>
                   {/* Resizing indicator */}
                   {isResizing && resizingColumn && (
                     <div className="absolute top-0 left-0 right-0 bottom-0 bg-blue-500 bg-opacity-10 pointer-events-none" />
@@ -871,7 +1011,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                   <div className="flex items-center gap-2 cursor-pointer relative" onClick={() => handleSort('fileName')}>
                     File Name
                     <ArrowUpDown className="w-3 h-3" />
-                    <div 
+                    <div
                       className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 transition-colors"
                       onMouseDown={(e) => handleMouseDown(e, 'fileName')}
                       title="Drag to resize column"
@@ -880,7 +1020,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                   <div className="flex items-center gap-2 cursor-pointer relative" onClick={() => handleSort('size')}>
                     Size
                     <ArrowUpDown className="w-3 h-3" />
-                    <div 
+                    <div
                       className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 transition-colors"
                       onMouseDown={(e) => handleMouseDown(e, 'size')}
                       title="Drag to resize column"
@@ -889,7 +1029,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                   <div className="flex items-center gap-2 cursor-pointer relative" onClick={() => handleSort('progress')}>
                     Progress
                     <ArrowUpDown className="w-3 h-3" />
-                    <div 
+                    <div
                       className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 transition-colors"
                       onMouseDown={(e) => handleMouseDown(e, 'progress')}
                       title="Drag to resize column"
@@ -898,7 +1038,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                   <div className="flex items-center gap-2 cursor-pointer relative" onClick={() => handleSort('speed')}>
                     Speed
                     <ArrowUpDown className="w-3 h-3" />
-                    <div 
+                    <div
                       className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 transition-colors"
                       onMouseDown={(e) => handleMouseDown(e, 'speed')}
                       title="Drag to resize column"
@@ -907,7 +1047,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                   <div className="flex items-center gap-2 cursor-pointer relative" onClick={() => handleSort('status')}>
                     Status
                     <ArrowUpDown className="w-3 h-3" />
-                    <div 
+                    <div
                       className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 transition-colors"
                       onMouseDown={(e) => handleMouseDown(e, 'status')}
                       title="Drag to resize column"
@@ -916,7 +1056,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                   <div className="flex items-center gap-2 cursor-pointer relative" onClick={() => handleSort('startTime')}>
                     Started
                     <ArrowUpDown className="w-3 h-3" />
-                    <div 
+                    <div
                       className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-500 transition-colors"
                       onMouseDown={(e) => handleMouseDown(e, 'started')}
                       title="Drag to resize column"
@@ -938,7 +1078,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                   </div>
                 ) : (
                   filteredDownloads.map((download) => (
-                    <div key={download.id} className="grid gap-4 p-4 border-b border-gray-700 hover:bg-gray-750 transition-colors" style={{gridTemplateColumns: getGridTemplateColumns()}}>
+                    <div key={download.id} className="grid gap-4 p-4 border-b border-gray-700 hover:bg-gray-750 transition-colors" style={{ gridTemplateColumns: getGridTemplateColumns() }}>
                       <div className="flex items-center">
                         <input
                           type="checkbox"
@@ -1031,22 +1171,30 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                             <Play className="w-4 h-4" />
                           </button>
                         )}
-                        {(download.status === 'error' || download.status === 'cancelled') && (
+                        {(download.status === 'error' || download.status === 'cancelled' || download.status === 'completed') && (
                           <button
                             onClick={() => handleRestart(download.id)}
                             className="p-1 text-blue-400 hover:text-blue-300 transition-colors"
-                            title="Restart"
+                            title={download.status === 'completed' ? 'Download again (fresh download)' : 'Restart'}
                           >
                             <RotateCcw className="w-4 h-4" />
                           </button>
                         )}
-                        {download.status !== 'completed' && (
+                        {download.status !== 'completed' ? (
                           <button
                             onClick={() => handleCancel(download.id)}
                             className="p-1 text-red-400 hover:text-red-300 transition-colors"
                             title="Cancel"
                           >
                             <X className="w-4 h-4" />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleDeleteCompleted(download.id)}
+                            className="p-1 text-red-400 hover:text-red-300 transition-colors"
+                            title="Delete download data and file"
+                          >
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         )}
                         <button
@@ -1089,7 +1237,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                   </button>
                 </div>
               </div>
-              
+
               {/* Activity List */}
               <div className="flex-1 overflow-y-auto">
                 {activities.length === 0 ? (
@@ -1117,7 +1265,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                           default: return <Clock className="w-4 h-4 text-gray-500" />;
                         }
                       };
-                      
+
                       const getActivityColor = (actionType: string) => {
                         switch (actionType) {
                           case 'DownloadStarted': return 'border-l-blue-500';
@@ -1132,7 +1280,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                           default: return 'border-l-gray-500';
                         }
                       };
-                      
+
                       return (
                         <div key={activity.id} className={`bg-gray-700 rounded-lg p-4 mb-3 border-l-4 ${getActivityColor(activity.actionType)}`}>
                           <div className="flex items-start gap-3">
@@ -1337,7 +1485,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                     value={tempSpeedLimit}
                     onChange={(e) => {
                       const value = e.target.value;
-                      
+
                       if (value === '' || value === '.') {
                         setTempSpeedLimit(0);
                       } else {
@@ -1354,7 +1502,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                     Set to 0 for unlimited speed. Current: {globalSettings.speedLimit === 0 ? 'Unlimited' : `${globalSettings.speedLimit} MB/s`}
                   </p>
                 </div>
-                
+
                 <div>
                   <label className="flex items-center space-x-3 cursor-pointer">
                     <input
@@ -1377,7 +1525,7 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                     Current: {globalSettings.divideSpeedEnabled ? 'Enabled' : 'Disabled'}
                   </p>
                 </div>
-                
+
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">
                     Max Simultaneous Downloads
@@ -1399,29 +1547,8 @@ export const DownloadManager: React.FC<DownloadManagerProps> = ({ isOpen, onClos
                     Maximum number of downloads that can run simultaneously (1-10). Current: {globalSettings.maxSimultaneousDownloads}
                   </p>
                 </div>
-                
-                <div>
-                  <label className="flex items-center space-x-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={tempDisableRangeRequests}
-                      onChange={(e) => setTempDisableRangeRequests(e.target.checked)}
-                      className="w-5 h-5 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
-                    />
-                    <div>
-                      <span className="text-sm font-medium text-gray-300">
-                        Disable Range Requests (Direct Download)
-                      </span>
-                      <p className="text-gray-400 text-xs mt-1">
-                        When enabled, downloads will always start from the beginning without using HTTP Range headers.
-                        This can help resolve file corruption issues but prevents resuming interrupted downloads.
-                      </p>
-                    </div>
-                  </label>
-                  <p className="text-gray-400 text-sm mt-2">
-                    Current: {globalSettings.disableRangeRequests ? 'Disabled (Direct Download)' : 'Enabled (Resumable)'}
-                  </p>
-                </div>
+
+
               </div>
             </div>
 

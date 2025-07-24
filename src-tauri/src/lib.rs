@@ -120,6 +120,8 @@ pub fn run() {
             // URL validation functions removed
             download::get_file_size_from_url,
             download::check_file_exists,
+            download::delete_file,
+            download::check_file_existence_info,
             download::get_available_disk_space,
             download::get_activities,
             download::clear_activities,
@@ -137,6 +139,7 @@ pub fn run() {
             download::get_max_simultaneous_downloads,
             download::set_max_simultaneous_downloads,
             download::check_and_fix_stalled_downloads,
+            download::get_download_resume_support,
             // Settings functions (new simple JSON persistence)
             settings::get_app_speed_limit,
             settings::set_app_speed_limit,
@@ -144,8 +147,6 @@ pub fn run() {
             settings::set_app_divide_speed_enabled,
             settings::get_app_max_simultaneous_downloads,
             settings::set_app_max_simultaneous_downloads,
-            settings::get_app_disable_range_requests,
-            settings::set_app_disable_range_requests,
             settings::get_all_app_settings,
             // Proxy functions
             proxy::get_proxy_addr,

@@ -46,6 +46,13 @@ export interface PartialDownloadInfo {
   checksum: string;
 }
 
+export interface FileExistenceInfo {
+  exists: boolean;
+  size: number;
+  can_resume: boolean;
+  is_complete: boolean;
+}
+
 // Tauri command types
 export interface TauriCommands {
   start_proxy(): Promise<string>;
@@ -135,6 +142,9 @@ export interface TauriCommands {
   get_active_downloads(): Promise<DownloadItem[]>;
   get_download_status(downloadId: string): Promise<DownloadItem | null>;
   check_file_exists(filePath: string): Promise<boolean>;
+  delete_file(filePaths: string[]): Promise<void>;
+  check_file_existence_info(filePath: string, url: string): Promise<FileExistenceInfo>;
+  get_download_resume_support(downloadId: string): Promise<boolean>;
 }
 
 export interface DriveInfo {
