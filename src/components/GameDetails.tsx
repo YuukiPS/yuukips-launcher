@@ -7,7 +7,7 @@ import { PatchErrorInfo, PatchErrorModal } from './PatchErrorModal';
 import { PatchMessageModal, shouldIgnoreMessage } from './PatchMessageModal';
 import { invoke } from '@tauri-apps/api/core';
 import { confirm } from '@tauri-apps/plugin-dialog';
-import { GameSettingsModal } from './gamesettingsmodal';
+import { GameSettingsModal } from './gamesettingsmodal.tsx';
 // Removed startProxyWithSSLCheck import - proxy is now managed by backend after patching
 
 interface GameDetailsProps {
