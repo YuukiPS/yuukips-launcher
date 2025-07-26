@@ -59,6 +59,8 @@ export class UpdateService {
       // Get current version from package.json
       const currentVersion = await invoke('get_current_version') as string;
       
+      console.log('🔍 Checking for updates...');
+      
       // Fetch latest release from GitHub API
       const release = await invoke('fetch_latest_release', {
         url: this.GITHUB_API_URL
@@ -67,7 +69,10 @@ export class UpdateService {
       const latestVersion = release.tag_name.replace(/^v/, ''); // Remove 'v' prefix if present
       const isUpdateAvailable = this.compareVersions(currentVersion, latestVersion) < 0;
       
+      console.log(`📋 Current version: ${currentVersion}, Latest version: ${latestVersion}`);
+      
       if (!isUpdateAvailable && !force) {
+        console.log('✅ No update available');
         return {
           available: false,
           currentVersion,
@@ -78,6 +83,8 @@ export class UpdateService {
       // Find the appropriate asset for the current platform
       const asset = this.findPlatformAsset(release.assets);
       
+      console.log('🎯 Update available!');
+      
       return {
         available: true,
         currentVersion,
@@ -87,8 +94,34 @@ export class UpdateService {
         assetSize: asset?.size
       };
     } catch (error) {
-      console.error('Failed to check for updates:', error);
-      throw new Error(`Update check failed: ${error}`);
+      console.error('❌ Failed to check for updates:', error);
+      
+      // Provide more helpful error messages
+       const errorMessage = String(error);
+       if (errorMessage.includes('Windows TLS Error') || errorMessage.includes('token supplied to the function is invalid')) {
+         throw new Error(
+           'Update check failed due to Windows certificate validation issues. ' +
+           'This is usually caused by outdated Windows certificates or system time issues. ' +
+           'Try: 1) Update Windows, 2) Check your system time, 3) Run as administrator. ' +
+           'You can manually download updates from: https://github.com/YuukiPS/yuukips-launcher/releases'
+         );
+       } else if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
+         throw new Error(
+           'Update check failed due to GitHub API rate limiting. ' +
+           'This happens when too many requests are made to GitHub. ' +
+           'Please try again later or manually download updates from: https://github.com/YuukiPS/yuukips-launcher/releases'
+         );
+       } else if (errorMessage.includes('timed out')) {
+         throw new Error(
+           'Update check timed out. Please check your internet connection. ' +
+           'You can manually download updates from: https://github.com/YuukiPS/yuukips-launcher/releases'
+         );
+       } else {
+         throw new Error(
+           `Update check failed: ${error}. ` +
+           'You can manually download updates from: https://github.com/YuukiPS/yuukips-launcher/releases'
+         );
+       }
     }
   }
   

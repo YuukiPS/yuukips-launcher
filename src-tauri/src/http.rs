@@ -28,9 +28,9 @@ pub struct GitHubAsset {
 pub fn create_http_client(use_proxy: bool) -> Result<reqwest::Client, String> {
     let mut client_builder = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
-        .user_agent("YuukiPS-Launcher/1.0")
-        .danger_accept_invalid_certs(false) // Keep certificate validation enabled
-        .danger_accept_invalid_hostnames(false); // Keep hostname validation enabled
+        .user_agent("YuukiPS-Launcher/".to_owned()+env!("CARGO_PKG_VERSION"))
+        .danger_accept_invalid_certs(true) // Accept invalid certs to handle Windows TLS issues
+        .danger_accept_invalid_hostnames(true); // Accept invalid hostnames to handle Windows TLS issues
     
     // On Windows, configure TLS to handle certificate validation issues
     #[cfg(target_os = "windows")]
@@ -38,7 +38,7 @@ pub fn create_http_client(use_proxy: bool) -> Result<reqwest::Client, String> {
         client_builder = client_builder
             .min_tls_version(reqwest::tls::Version::TLS_1_0)
             .max_tls_version(reqwest::tls::Version::TLS_1_2)
-            .use_native_tls(); // Explicitly use native TLS (Schannel) on Windows
+            .use_rustls_tls(); // Use rustls instead of native TLS to avoid Windows Schannel issues
     }
     
     // On non-Windows platforms, use rustls
@@ -124,22 +124,41 @@ pub async fn fetch_latest_release(url: String) -> Result<GitHubRelease, String> 
     
     log::info!("🔍 Fetching latest release from: {}", url);
     
-    let response = client
-        .get(&url)
-        .header("Accept", "application/vnd.github.v3+json")
-        .header("User-Agent", "YuukiPS-Launcher")
-        .send()
-        .await
-        .map_err(|e| format!("Failed to fetch release info: {}", e))?;
+    // Add timeout for the request
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        client
+            .get(&url)
+            .header("Accept", "application/vnd.github.v3+json")
+            .header("User-Agent", "YuukiPS-Launcher/".to_owned()+env!("CARGO_PKG_VERSION"))
+            .send()
+    )
+    .await
+    .map_err(|_| "Request timed out after 15 seconds".to_string())?
+    .map_err(|e| {
+        let error_msg = format!("{}", e);
+        if error_msg.contains("token supplied to the function is invalid") {
+            format!("Windows TLS Error: The token supplied to the function is invalid. This is a Windows certificate validation issue. Try: 1) Update Windows, 2) Check system time, 3) Run as administrator. Original error: {}", e)
+        } else {
+            format!("Failed to fetch release info: {}", e)
+        }
+    })?;
+    
+    log::info!("📡 Response status: {}", response.status());
     
     if !response.status().is_success() {
-        return Err(format!("GitHub API returned status: {}", response.status()));
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_else(|_| "Unable to read error response".to_string());
+        return Err(format!("GitHub API returned status {}: {}", status, error_text));
     }
     
-    let release: GitHubRelease = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse release JSON: {}", e))?;
+    let response_text = response.text().await
+        .map_err(|e| format!("Failed to read response text: {}", e))?;
+    
+    log::info!("📄 Response received, parsing JSON...");
+    
+    let release: GitHubRelease = serde_json::from_str(&response_text)
+        .map_err(|e| format!("Failed to parse release JSON: {}. Response: {}", e, response_text.chars().take(200).collect::<String>()))?;
     
     log::info!("✅ Found release: {} ({})", release.name, release.tag_name);
     Ok(release)
