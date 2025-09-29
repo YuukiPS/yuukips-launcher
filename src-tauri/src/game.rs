@@ -1358,7 +1358,7 @@ pub async fn scan_drive_for_games(
     #[cfg(target_os = "windows")]
     {
         use std::fs;
-        use std::path::{Path, PathBuf};
+        use std::path::PathBuf;
         use std::sync::{Arc, Mutex};
         use tokio::time::{sleep, Duration};
         
@@ -1375,91 +1375,93 @@ pub async fn scan_drive_for_games(
         };
         
         // Async recursive function to scan directories
-        async fn scan_directory(
-            dir: &Path,
-            exe_name: &str,
+        fn scan_directory(
+            dir: PathBuf,
+            exe_name: String,
             found_paths: Arc<Mutex<Vec<String>>>,
             files_scanned: Arc<Mutex<u32>>,
             directories_scanned: Arc<Mutex<u32>>,
-            window: &tauri::Window,
+            window: tauri::Window,
             max_depth: usize,
             current_depth: usize,
-        ) {
-            if current_depth >= max_depth {
-                return;
-            }
-            
-            // Update directory count
-            {
-                let mut dir_count = directories_scanned.lock().unwrap();
-                *dir_count += 1;
-            }
-            
-            if let Ok(entries) = fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    
-                    if path.is_file() {
-                        // Update file count
-                        {
-                            let mut file_count = files_scanned.lock().unwrap();
-                            *file_count += 1;
-                        }
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+            Box::pin(async move {
+                if current_depth >= max_depth {
+                    return;
+                }
+                
+                // Update directory count
+                {
+                    let mut dir_count = directories_scanned.lock().unwrap();
+                    *dir_count += 1;
+                }
+                
+                if let Ok(entries) = fs::read_dir(&dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
                         
-                        if let Some(file_name) = path.file_name() {
-                            if file_name.to_string_lossy().eq_ignore_ascii_case(exe_name) {
-                                if let Some(parent) = path.parent() {
-                                    let parent_path = parent.to_string_lossy().to_string();
-                                    {
-                                        let mut paths = found_paths.lock().unwrap();
-                                        paths.push(parent_path);
+                        if path.is_file() {
+                            // Update file count
+                            {
+                                let mut file_count = files_scanned.lock().unwrap();
+                                *file_count += 1;
+                            }
+                            
+                            if let Some(file_name) = path.file_name() {
+                                if file_name.to_string_lossy().eq_ignore_ascii_case(&exe_name) {
+                                    if let Some(parent) = path.parent() {
+                                        let parent_path = parent.to_string_lossy().to_string();
+                                        {
+                                            let mut paths = found_paths.lock().unwrap();
+                                            paths.push(parent_path);
+                                        }
                                     }
                                 }
                             }
-                        }
-                    } else if path.is_dir() {
-                        // Skip system directories and hidden directories
-                        if let Some(dir_name) = path.file_name() {
-                            let dir_name_str = dir_name.to_string_lossy();
-                            if !dir_name_str.starts_with('.') &&
-                               !dir_name_str.eq_ignore_ascii_case("windows") &&
-                               !dir_name_str.eq_ignore_ascii_case("system volume information") &&
-                               !dir_name_str.eq_ignore_ascii_case("$recycle.bin") &&
-                               !dir_name_str.eq_ignore_ascii_case("program files") &&
-                               !dir_name_str.eq_ignore_ascii_case("program files (x86)") {
-                                
-                                // Emit progress update every 10 directories
-                                let dir_count = *directories_scanned.lock().unwrap();
-                                if dir_count % 10 == 0 {
-                                    let progress = ScanProgress {
-                                        current_path: path.to_string_lossy().to_string(),
-                                        files_scanned: *files_scanned.lock().unwrap(),
-                                        directories_scanned: dir_count,
-                                        found_paths: found_paths.lock().unwrap().clone(),
-                                    };
-                                    let _ = window.emit("scan-progress", &progress);
+                        } else if path.is_dir() {
+                            // Skip system directories and hidden directories
+                            if let Some(dir_name) = path.file_name() {
+                                let dir_name_str = dir_name.to_string_lossy();
+                                if !dir_name_str.starts_with('.') &&
+                                   !dir_name_str.eq_ignore_ascii_case("windows") &&
+                                   !dir_name_str.eq_ignore_ascii_case("system volume information") &&
+                                   !dir_name_str.eq_ignore_ascii_case("$recycle.bin") &&
+                                   !dir_name_str.eq_ignore_ascii_case("program files") &&
+                                   !dir_name_str.eq_ignore_ascii_case("program files (x86)") {
+                                    
+                                    // Emit progress update every 10 directories
+                                    let dir_count = *directories_scanned.lock().unwrap();
+                                    if dir_count % 10 == 0 {
+                                        let progress = ScanProgress {
+                                            current_path: path.to_string_lossy().to_string(),
+                                            files_scanned: *files_scanned.lock().unwrap(),
+                                            directories_scanned: dir_count,
+                                            found_paths: found_paths.lock().unwrap().clone(),
+                                        };
+                                        let _ = window.emit("scan-progress", &progress);
+                                    }
+                                    
+                                    scan_directory(
+                                        path, 
+                                        exe_name.clone(), 
+                                        found_paths.clone(), 
+                                        files_scanned.clone(),
+                                        directories_scanned.clone(),
+                                        window.clone(), 
+                                        max_depth, 
+                                        current_depth + 1
+                                    ).await;
                                 }
-                                
-                                Box::pin(scan_directory(
-                                    &path, 
-                                    exe_name, 
-                                    found_paths.clone(), 
-                                    files_scanned.clone(),
-                                    directories_scanned.clone(),
-                                    window, 
-                                    max_depth, 
-                                    current_depth + 1
-                                )).await;
                             }
                         }
-                    }
-                    
-                    // Small delay to prevent blocking
-                    if *files_scanned.lock().unwrap() % 100 == 0 {
-                        sleep(Duration::from_millis(1)).await;
+                        
+                        // Small delay to prevent blocking
+                        if *files_scanned.lock().unwrap() % 100 == 0 {
+                            sleep(Duration::from_millis(1)).await;
+                        }
                     }
                 }
-            }
+            })
         }
         
         let drive_path_buf = PathBuf::from(&drive_path);
@@ -1474,12 +1476,12 @@ pub async fn scan_drive_for_games(
         let _ = window.emit("scan-progress", &initial_progress);
         
         scan_directory(
-            &drive_path_buf, 
-            &exe_name, 
+            drive_path_buf, 
+            exe_name, 
             found_paths.clone(),
             files_scanned.clone(),
             directories_scanned.clone(),
-            &window,
+            window.clone(),
             6, // Max depth of 6
             0
         ).await;
