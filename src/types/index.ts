@@ -22,6 +22,7 @@ export interface Game {
   icon: string;
   engine: GameEngine[];
   subtitle?: string;
+  serverUrl?: string; // default server for this game
   //version?: string;
   backgroundUrl?: string;
   status?: 'available' | 'updating' | 'installing';
@@ -98,8 +99,6 @@ export interface DownloadItem {
   userPaused?: boolean; // Track if pause was initiated by user
   resumeSupported?: boolean; // Whether the download supports resuming
 }
-
-
 
 export interface DownloadStats {
   total_downloads: number;

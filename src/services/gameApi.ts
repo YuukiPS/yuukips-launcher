@@ -92,7 +92,6 @@ export class GameApiService {
       // Transform API data to include legacy fields for compatibility
       return pcSupportedGames.map(game => ({
         ...game,
-  
         backgroundUrl: game.image,
         subtitle: game.keyword.split(',')[0].trim(),
         version: game.engine[0]?.version || '?.?.?',
@@ -100,7 +99,8 @@ export class GameApiService {
         developer: 'Private Server',
         genre: 'Game',
         rating: 4.5,
-        size: 'Unknown'
+        size: 'Unknown',
+        serverUrl: game.serverUrl || 'https://ps.yuuki.me'
       }));
     } catch (error) {
       console.error('Failed to fetch games:', error);

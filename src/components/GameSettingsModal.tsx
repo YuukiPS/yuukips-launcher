@@ -1379,6 +1379,25 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                 <div className="bg-gray-800/50 rounded-lg p-4">
                   <h4 className="text-white font-semibold mb-3">Private Server Address</h4>
                   <div className="space-y-4">
+                    {game.serverUrl && (
+                      (() => {
+                        const current = proxyAddress.replace(':443', '');
+                        const required = game.serverUrl.replace(':443', '');
+                        return current !== required ? (
+                          <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 flex items-center justify-between">
+                            <div className="text-yellow-400 text-sm">
+                              Recommended server for this game: <span className="text-white">{required}</span>
+                            </div>
+                            <button
+                              onClick={() => handleSelectServer(required)}
+                              className="px-3 py-2 bg-yellow-500 text-black text-sm rounded hover:bg-yellow-600 transition-colors"
+                            >
+                              Set Recommended
+                            </button>
+                          </div>
+                        ) : null;
+                      })()
+                    )}
                     {/* Current Server Status */}
                     <div className="flex items-center space-x-2 p-3 bg-gray-700/50 rounded-lg">
                       <div className="w-2 h-2 bg-green-400 rounded-full"></div>

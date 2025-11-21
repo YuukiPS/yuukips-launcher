@@ -5,6 +5,7 @@ import { EngineSelectionModal } from './EngineSelectionModal';
 import { SSLCertificateModal } from './SSLCertificateModal';
 import { PatchErrorInfo, PatchErrorModal } from './PatchErrorModal';
 import { PatchMessageModal, shouldIgnoreMessage } from './PatchMessageModal';
+import { ProxyMessageModal, shouldIgnoreProxyMessage } from './ProxyMessageModal';
 import { invoke } from '@tauri-apps/api/core';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { GameSettingsModal } from './GameSettingsModal';
@@ -33,8 +34,12 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
   const [isInstalled, setIsInstalled] = useState(false);
   const [pendingLaunch, setPendingLaunch] = useState<{ engine?: GameEngine; version?: string; channel?: number } | null>(null);
   const [pendingPatchLaunch, setPendingPatchLaunch] = useState<{ engine?: GameEngine; version?: string; channel?: number } | null>(null);
+  const [pendingProxyLaunch, setPendingProxyLaunch] = useState<{ engine?: GameEngine; version?: string; channel?: number } | null>(null);
   const [gameProcessId, setGameProcessId] = useState<number | null>(null);
   const [monitorInterval, setMonitorInterval] = useState<NodeJS.Timeout | null>(null);
+  const [showProxyMessage, setShowProxyMessage] = useState(false);
+  const [proxyMessage, setProxyMessage] = useState('');
+  const [recommendedServer, setRecommendedServer] = useState('');
 
   const getGameFolderPath = useCallback((version: string, channel: number): string => {
     const storageKey = `${STORAGE_KEY_PREFIX}${game.id}${STORAGE_KEY_SUFFIX}`;
@@ -272,6 +277,30 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
         return;
       }
 
+      // Check server URL mismatch and show proxy recommendation modal
+      try {
+        if (game.serverUrl) {
+          const currentProxyAddr = await invoke('get_proxy_addr');
+          if (typeof currentProxyAddr === 'string') {
+            const normalizedCurrent = currentProxyAddr.replace(':443', '');
+            const normalizedRequired = game.serverUrl.replace(':443', '');
+            if (normalizedCurrent !== normalizedRequired) {
+              const message = `This game requires server: ${normalizedRequired} \nCurrent proxy server: ${normalizedCurrent}`;
+              if (!shouldIgnoreProxyMessage(message)) {
+                setPendingProxyLaunch({ engine, version, channel });
+                setRecommendedServer(normalizedRequired);
+                setProxyMessage(message);
+                setShowProxyMessage(true);
+                setIsLaunching(false);
+                return;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Server URL check failed:', e);
+      }
+
       // Check for patch messages
       const patchCheckResult = await invoke('check_patch_message', {
         gameId: game.id,
@@ -314,7 +343,49 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
       // Continue with launch even if SSL check fails
       await launchGameWithEngine(engine, version, channel);
     }
-  }, [launchGameWithEngine, validateGameFolderPath, game.id]);
+  }, [launchGameWithEngine, validateGameFolderPath, game.id, game.serverUrl]);
+
+  const onProxySetAndContinue = useCallback(async () => {
+    try {
+      if (pendingProxyLaunch && recommendedServer) {
+        const addrWithPort = recommendedServer.includes(':') ? recommendedServer : `${recommendedServer}:443`;
+        await invoke('set_proxy_addr', { addr: addrWithPort });
+        const { engine, version, channel } = pendingProxyLaunch;
+        setShowProxyMessage(false);
+        setPendingProxyLaunch(null);
+        if (engine && version && channel !== undefined) {
+          setIsLaunching(true);
+          await handleEngineLaunch(engine, version, channel);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to set proxy address:', error);
+      setShowProxyMessage(false);
+      setPendingProxyLaunch(null);
+    }
+  }, [pendingProxyLaunch, recommendedServer, handleEngineLaunch]);
+
+  const onProxyContinueWithoutSetting = useCallback(async () => {
+    try {
+      if (pendingProxyLaunch) {
+        const { engine, version, channel } = pendingProxyLaunch;
+        setShowProxyMessage(false);
+        setPendingProxyLaunch(null);
+        if (engine && version && channel !== undefined) {
+          setIsLaunching(true);
+          await handleEngineLaunch(engine, version, channel);
+        }
+      }
+    } catch (error) {
+      console.error('Error continuing without setting proxy:', error);
+    }
+  }, [pendingProxyLaunch, handleEngineLaunch]);
+
+  const onProxyMessageClose = useCallback(() => {
+    setShowProxyMessage(false);
+    setPendingProxyLaunch(null);
+    setIsLaunching(false);
+  }, []);
 
   // Unified function to resume launch with SSL check
   const resumeLaunchWithSSLCheck = useCallback(async (engine: GameEngine, version: string, channel: number) => {
@@ -556,6 +627,17 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
         onContinue={onPatchMessageContinue}
         onClose={onPatchMessageClose}
       />
+      {showProxyMessage && (
+        <ProxyMessageModal
+          isOpen={showProxyMessage}
+          onClose={onProxyMessageClose}
+          onSetAndContinue={onProxySetAndContinue}
+          onContinueWithoutSetting={onProxyContinueWithoutSetting}
+          message={proxyMessage}
+          gameTitle={game.title}
+          recommendedServer={recommendedServer}
+        />
+      )}
     </>
   );
 };
