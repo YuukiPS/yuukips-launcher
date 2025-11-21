@@ -77,6 +77,7 @@ static PROXY_LOGS: Lazy<Mutex<VecDeque<ProxyLogEntry>>> = Lazy::new(|| Mutex::ne
 // Global default domain list for proxy interception
 static DEFAULT_PROXY_DOMAINS: Lazy<Mutex<Vec<String>>> = Lazy::new(|| {
     Mutex::new(vec![
+        // HoyoVerse
         "hoyoverse.com".to_string(),
         "mihoyo.com".to_string(),
         "yuanshen.com".to_string(),
@@ -86,6 +87,9 @@ static DEFAULT_PROXY_DOMAINS: Lazy<Mutex<Vec<String>>> = Lazy::new(|| {
         "honkaiimpact3.com".to_string(),
         "zenlesszonezero.com".to_string(),
         "yuanshen.com:12401".to_string(),
+        // Yostar
+        "yostarplat.com".to_string(),
+        ".stellasora.global".to_string(),
     ])
 });
 

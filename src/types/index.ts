@@ -52,7 +52,8 @@ export enum TypeGame {
 	None = 0,
 	GenshinImpact = 1,
 	StarRail = 2,
-	BlueArchive = 3
+	BlueArchive = 3,
+  StellaSora = 4
 }
 
 export enum GameEngineType {

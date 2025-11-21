@@ -353,6 +353,7 @@ pub fn get_game_name(game_id: &Number) -> Result<&'static str, String> {
         Some(1) => Ok("Genshin Impact"),
         Some(2) => Ok("Honkai: Star Rail"),
         Some(3) => Ok("Blue Archive"),
+        Some(4) => Ok("Stella Sora"),
         _ => Err(format!("Unsupported game ID: {}", game_id)),
     }
 }

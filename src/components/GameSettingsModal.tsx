@@ -49,6 +49,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const [deleteHoyoPass, setDeleteHoyoPass] = useState<boolean>(true);
   const [diskScanModalOpen, setDiskScanModalOpen] = useState(false);
   const [downloadModalOpen, setDownloadModalOpen] = useState(false);
+  const [relocateOptionsOpen, setRelocateOptionsOpen] = useState(false);
 
   const [md5FileName, setMd5FileName] = useState('');
   const [md5InlineVisible, setMd5InlineVisible] = useState(false);
@@ -534,8 +535,27 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   };
 
   const handleRelocate = async () => {
-    // Directly open disk scan modal for automatic game detection
-    setDiskScanModalOpen(true);
+    // Open selection modal to choose auto scan or manual folder
+    setRelocateOptionsOpen(true);
+  };
+
+  const handleManualSetFolder = async () => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: 'Select Game Installation Folder'
+      });
+
+      if (selected && typeof selected === 'string') {
+        await handleDiskScanPathSelected(selected);
+      }
+    } catch (error) {
+      console.error('Failed to select folder:', error);
+      showNotification('Failed to open folder dialog', 'error');
+    } finally {
+      setRelocateOptionsOpen(false);
+    }
   };
 
   const handleAutoDetect = async () => {
@@ -1166,7 +1186,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                           ? 'bg-gray-600 text-gray-500 cursor-not-allowed'
                           : 'bg-blue-600 text-white hover:bg-blue-700'
                           }`}
-                        title="Auto detect game installation from HoyoPlay registry or scan drives"
+                        title="Auto detect game installation from registry"
                       >
                         {isValidating ? (
                           <>
@@ -1701,6 +1721,45 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
         gameId={game.id}
         channel={selectedChannel}
       />
+
+      {/* Relocate Options Modal */}
+      {relocateOptionsOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-lg w-full max-w-md overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-gray-700">
+              <h3 className="text-white font-semibold">Set Directory</h3>
+              <button
+                onClick={() => setRelocateOptionsOpen(false)}
+                className="text-gray-400 hover:text-white"
+                disabled={isGameRunning || isValidating}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <p className="text-gray-300 text-sm">Choose how you want to set the game directory for {selectedVersion} ({getChannelName(selectedChannel)}).</p>
+              <div className="grid grid-cols-1 gap-3">
+                <button
+                  onClick={() => { setDiskScanModalOpen(true); setRelocateOptionsOpen(false); }}
+                  disabled={isGameRunning || isValidating}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${isGameRunning || isValidating ? 'bg-gray-600 text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                >
+                  <Search className="w-4 h-4" />
+                  <span>Auto Scan Disk</span>
+                </button>
+                <button
+                  onClick={handleManualSetFolder}
+                  disabled={isGameRunning || isValidating}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${isGameRunning || isValidating ? 'bg-gray-600 text-gray-500 cursor-not-allowed' : 'bg-purple-600 text-white hover:bg-purple-700'}`}
+                >
+                  <FolderOpen className="w-4 h-4" />
+                  <span>Manual Set Folder</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Download Game Modal */}
       {downloadModalOpen && downloadData && (

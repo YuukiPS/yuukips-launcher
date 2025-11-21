@@ -1177,6 +1177,7 @@ static GAME_EXECUTABLES: &[(u64, u64, &str)] = &[
     (2, 1, "StarRail.exe"),
     (2, 2, "StarRail.exe"),
     (3, 1, "BlueArchive.exe"),
+    (4, 1, "StellaSora.exe"),
 ];
 
 /// Get game executable names based on game_id and channel_id
@@ -1208,6 +1209,7 @@ pub fn get_game_folder(game_id: Number, channel_id: Number) -> Result<String, St
         (Some(2), Some(1)) => Ok("StarRail_Data".to_string()),
         (Some(2), Some(2)) => Ok("StarRail_Data".to_string()),
         (Some(3), Some(1)) => Ok("BlueArchive_Data".to_string()),
+        (Some(4), Some(1)) => Ok("StellaSora_EN".to_string()),
         _ => Err(format!(
             "Unsupported game ID: {} with channel ID: {}",
             game_id, channel_id
