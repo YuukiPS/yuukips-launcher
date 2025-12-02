@@ -1,7 +1,7 @@
 # Update Notif
 On startup, check for launcher updates by following these steps:
 
-1. After disabling Windows proxy, fetch the latest release information from the GitHub API endpoint: https://github.com/YuukiPS/yuukips-launcher/releases
+1. After disabling Windows proxy, fetch the latest release information from the GitHub API endpoint: https://git.yuuki.me/YuukiTeam/YuukiPS_Launcher_PC/releases
 
 2. Compare the fetched version number with the current version in package.json
 

@@ -58,13 +58,25 @@ export const ProxyMessageModal: React.FC<ProxyMessageModalProps> = ({
     }
   };
 
+  const persistIgnoreForDay = () => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+    const ignoreData = {
+      message,
+      recommendedServer,
+      expiresAt: tomorrow.getTime()
+    };
+    localStorage.setItem(IGNORE_STORAGE_KEY, JSON.stringify(ignoreData));
+  };
+
   const handleContinueWithSetting = () => {
     persistIgnoreIfNeeded();
     onSetAndContinue();
   };
 
   const handleContinueWithoutSetting = () => {
-    persistIgnoreIfNeeded();
+    persistIgnoreForDay();
     onContinueWithoutSetting();
   };
 
@@ -139,7 +151,7 @@ export const ProxyMessageModal: React.FC<ProxyMessageModalProps> = ({
   );
 };
 
-export const shouldIgnoreProxyMessage = (message: string): boolean => {
+export const shouldIgnoreProxyMessage = (requiredServer: string): boolean => {
   try {
     const stored = localStorage.getItem(IGNORE_STORAGE_KEY);
     if (!stored) return false;
@@ -149,7 +161,7 @@ export const shouldIgnoreProxyMessage = (message: string): boolean => {
       localStorage.removeItem(IGNORE_STORAGE_KEY);
       return false;
     }
-    return ignoreData.message === message;
+    return ignoreData.recommendedServer === requiredServer;
   } catch {
     localStorage.removeItem(IGNORE_STORAGE_KEY);
     return false;

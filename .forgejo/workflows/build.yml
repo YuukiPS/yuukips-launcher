@@ -1,0 +1,270 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  FORGEJO_URL: https://git.yuuki.me
+
+jobs:
+  create-tag:
+    runs-on: windows
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check prerequisites
+        shell: cmd
+        run: |
+          echo Checking prerequisites...
+          git --version
+          node --version
+          npm --version
+          rustc --version
+          cargo --version
+
+      - name: Get version from package.json
+        id: get-version
+        shell: cmd
+        run: |
+          for /f "tokens=*" %%i in ('node -p "require('./package.json').version"') do set VERSION=%%i
+          echo Version: v%VERSION%
+          echo version=%VERSION%>> %GITHUB_OUTPUT%
+
+      - name: Check if tag exists and create
+        shell: cmd
+        run: |
+          for /f "tokens=*" %%i in ('node -p "require('./package.json').version"') do set VERSION=%%i
+          for /f "tokens=*" %%i in ('git rev-parse --abbrev-ref HEAD') do set BRANCH=%%i
+          
+          if not "%BRANCH%"=="main" if not "%BRANCH%"=="master" (
+            echo Skipping tag: branch %BRANCH%
+            exit /b 0
+          )
+          
+          git rev-parse "v%VERSION%" >nul 2>&1
+          if %ERRORLEVEL%==0 (
+            echo Skipping tag: v%VERSION% already exists
+            exit /b 0
+          )
+          
+          git config user.name "forgejo-actions"
+          git config user.email "actions@git.yuuki.me"
+          git tag -a "v%VERSION%" -m "Release v%VERSION%"
+          git push origin "v%VERSION%"
+          echo Created and pushed tag v%VERSION%
+
+  build:
+    needs: create-tag
+    runs-on: windows
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check prerequisites
+        shell: cmd
+        run: |
+          echo Checking prerequisites...
+          git --version
+          node --version
+          npm --version
+          rustc --version
+          cargo --version
+
+      - name: Install frontend dependencies
+        shell: cmd
+        run: npm ci
+
+      - name: Get version
+        id: version
+        shell: cmd
+        run: |
+          for /f "tokens=*" %%i in ('node -p "require('./package.json').version"') do set VERSION=%%i
+          echo version=%VERSION%>> %GITHUB_OUTPUT%
+
+      - name: Build Tauri app
+        shell: cmd
+        run: npm run tauri build
+
+      - name: Rename portable exe with version
+        shell: cmd
+        run: |
+          for /f "tokens=*" %%i in ('node -p "require('./package.json').version"') do set VERSION=%%i
+          
+          if exist "src-tauri\target\release\yuukips-launcher.exe" (
+            copy "src-tauri\target\release\yuukips-launcher.exe" "YuukiPS_%VERSION%_x64-portable.exe"
+            echo Created: YuukiPS_%VERSION%_x64-portable.exe
+          )
+
+      - name: Verify NSIS
+        shell: cmd
+        run: makensis.exe /VERSION
+
+      - name: Build NSIS installer
+        shell: cmd
+        run: |
+          for /f "tokens=*" %%i in ('node -p "require('./package.json').version"') do set VERSION=%%i
+          
+          echo === Setup build directory ===
+          mkdir C:\nsis_build 2>nul
+          
+          echo === Copy required files ===
+          copy "src-tauri\target\release\yuukips-launcher.exe" C:\nsis_build\
+          copy "src-tauri\icons\icon.ico" C:\nsis_build\
+          
+          echo === Create installer.nsi ===
+          (
+            echo Unicode true
+            echo !include "MUI2.nsh"
+            echo.
+            echo Name "YuukiPS Launcher"
+            echo OutFile "YuukiPS_%VERSION%_x64-setup.exe"
+            echo InstallDir "$PROGRAMFILES64\YuukiPS"
+            echo RequestExecutionLevel admin
+            echo.
+            echo !define MUI_ICON "icon.ico"
+            echo !define MUI_UNICON "icon.ico"
+            echo.
+            echo !insertmacro MUI_PAGE_WELCOME
+            echo !insertmacro MUI_PAGE_DIRECTORY
+            echo !insertmacro MUI_PAGE_INSTFILES
+            echo !insertmacro MUI_PAGE_FINISH
+            echo.
+            echo !insertmacro MUI_UNPAGE_CONFIRM
+            echo !insertmacro MUI_UNPAGE_INSTFILES
+            echo.
+            echo !insertmacro MUI_LANGUAGE "English"
+            echo.
+            echo Section "Install"
+            echo   SetOutPath "$INSTDIR"
+            echo   File "yuukips-launcher.exe"
+            echo.
+            echo   WriteUninstaller "$INSTDIR\uninstall.exe"
+            echo.
+            echo   CreateDirectory "$SMPROGRAMS\YuukiPS"
+            echo   CreateShortcut "$SMPROGRAMS\YuukiPS\YuukiPS Launcher.lnk" "$INSTDIR\yuukips-launcher.exe"
+            echo   CreateShortcut "$SMPROGRAMS\YuukiPS\Uninstall.lnk" "$INSTDIR\uninstall.exe"
+            echo   CreateShortcut "$DESKTOP\YuukiPS Launcher.lnk" "$INSTDIR\yuukips-launcher.exe"
+            echo.
+            echo   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YuukiPS" "DisplayName" "YuukiPS Launcher"
+            echo   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YuukiPS" "UninstallString" "$INSTDIR\uninstall.exe"
+            echo   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YuukiPS" "DisplayVersion" "%VERSION%"
+            echo   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YuukiPS" "Publisher" "YuukiPS"
+            echo SectionEnd
+            echo.
+            echo Section "Uninstall"
+            echo   Delete "$INSTDIR\yuukips-launcher.exe"
+            echo   Delete "$INSTDIR\uninstall.exe"
+            echo   RMDir "$INSTDIR"
+            echo.
+            echo   Delete "$SMPROGRAMS\YuukiPS\YuukiPS Launcher.lnk"
+            echo   Delete "$SMPROGRAMS\YuukiPS\Uninstall.lnk"
+            echo   RMDir "$SMPROGRAMS\YuukiPS"
+            echo   Delete "$DESKTOP\YuukiPS Launcher.lnk"
+            echo.
+            echo   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\YuukiPS"
+            echo SectionEnd
+          ) > C:\nsis_build\installer.nsi
+          
+          echo === Build directory contents ===
+          dir C:\nsis_build
+          
+          echo === Run NSIS ===
+          cd /d C:\nsis_build
+          makensis.exe /V4 installer.nsi
+          
+          echo === Copy result back ===
+          copy /Y "YuukiPS_%VERSION%_x64-setup.exe" "%GITHUB_WORKSPACE%\"
+          
+          echo === Final artifacts ===
+          dir /b "%GITHUB_WORKSPACE%\YuukiPS_*.exe"
+
+      - name: Upload portable exe
+        uses: actions/upload-artifact@v3
+        with:
+          name: portable-exe
+          path: YuukiPS_*_x64-portable.exe
+
+      - name: Upload NSIS installer
+        uses: actions/upload-artifact@v3
+        with:
+          name: installer
+          path: YuukiPS_*_x64-setup.exe
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    runs-on: windows
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch all tags
+        shell: cmd
+        run: git fetch --tags --force
+
+      - name: Generate release notes
+        shell: cmd
+        run: |
+          for /f "tokens=*" %%i in ('node -p "require('./package.json').version"') do set VERSION=%%i
+          
+          echo ## What's Changed> release_notes.md
+          echo.>> release_notes.md
+          git log --pretty=format:"- %%s" --reverse -20 >> release_notes.md
+          echo.>> release_notes.md
+          echo.>> release_notes.md
+          echo ## Downloads>> release_notes.md
+          echo - **Portable EXE**: Just download and run, no installation needed>> release_notes.md
+          echo - **Setup EXE**: Traditional installer with shortcuts and uninstaller>> release_notes.md
+
+      - name: Download portable exe
+        uses: actions/download-artifact@v3
+        with:
+          name: portable-exe
+          path: artifacts
+
+      - name: Download installer
+        uses: actions/download-artifact@v3
+        with:
+          name: installer
+          path: artifacts
+
+      - name: List artifacts
+        shell: cmd
+        run: |
+          echo === Available artifacts ===
+          dir /s /b artifacts\*.exe 2>nul
+
+      - name: Create Forgejo release and upload assets
+        shell: cmd
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+        run: |
+          for /f "tokens=*" %%i in ('node -p "require('./package.json').version"') do set VERSION=%%i
+          set TAG_NAME=v%VERSION%
+          set TITLE=YuukiPS Launcher %VERSION%
+          
+          REM Get repo slug
+          for /f "tokens=*" %%i in ('git remote get-url origin') do set REPO_URL=%%i
+          
+          REM Check if tag exists
+          git rev-parse %TAG_NAME% >nul 2>&1
+          if %ERRORLEVEL% neq 0 (
+            echo No tag %TAG_NAME% found, skipping release
+            exit /b 0
+          )
+          
+          echo Tag %TAG_NAME% found, creating release...
+          
+          REM Use node script for API calls (more reliable than curl on Windows)
+          node -e "const fs=require('fs');const https=require('https');const http=require('http');const body=fs.readFileSync('release_notes.md','utf8');const url=new URL(process.env.FORGEJO_URL);const repoUrl=process.env.REPO_URL||'';const slug=repoUrl.replace(/^.*:\/\/[^\/]+\//,'').replace(/\.git$/,'').replace(/^.*:/,'');console.log('Repo:',slug);const tag='v'+require('./package.json').version;const client=url.protocol==='https:'?https:http;const checkReq=client.request({hostname:url.hostname,port:url.port||443,path:'/api/v1/repos/'+slug+'/releases/tags/'+tag,method:'GET',headers:{'Authorization':'token '+process.env.FORGEJO_TOKEN}},res=>{let d='';res.on('data',c=>d+=c);res.on('end',()=>{if(res.statusCode===200){const r=JSON.parse(d);console.log('Release exists:',r.id);uploadAssets(r.id);}else{createRelease();}});});checkReq.on('error',e=>console.error(e));checkReq.end();function createRelease(){const data=JSON.stringify({tag_name:tag,name:'YuukiPS Launcher '+require('./package.json').version,body:body,draft:false,prerelease:false});const req=client.request({hostname:url.hostname,port:url.port||443,path:'/api/v1/repos/'+slug+'/releases',method:'POST',headers:{'Authorization':'token '+process.env.FORGEJO_TOKEN,'Content-Type':'application/json','Content-Length':Buffer.byteLength(data)}},res=>{let d='';res.on('data',c=>d+=c);res.on('end',()=>{if(res.statusCode>=200&&res.statusCode<300){const r=JSON.parse(d);console.log('Created release:',r.id);uploadAssets(r.id);}else{console.error('Failed:',res.statusCode,d);}});});req.on('error',e=>console.error(e));req.write(data);req.end();}function uploadAssets(rid){const files=fs.readdirSync('artifacts').filter(f=>f.endsWith('.exe'));files.forEach(f=>{const fpath='artifacts/'+f;const fdata=fs.readFileSync(fpath);console.log('Uploading:',f);const req=client.request({hostname:url.hostname,port:url.port||443,path:'/api/v1/repos/'+slug+'/releases/'+rid+'/assets?name='+encodeURIComponent(f),method:'POST',headers:{'Authorization':'token '+process.env.FORGEJO_TOKEN,'Content-Type':'application/octet-stream','Content-Length':fdata.length}},res=>{let d='';res.on('data',c=>d+=c);res.on('end',()=>{if(res.statusCode>=200&&res.statusCode<300){console.log('Uploaded:',f);}else{console.error('Failed:',f,res.statusCode);}});});req.on('error',e=>console.error(e));req.write(fdata);req.end();});}" 2>&1
+          
+          echo Release complete!

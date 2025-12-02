@@ -286,7 +286,7 @@ export const GameDetails: React.FC<GameDetailsProps> = ({ game, onGameUpdate, on
             const normalizedRequired = game.serverUrl.replace(':443', '');
             if (normalizedCurrent !== normalizedRequired) {
               const message = `This game requires server: ${normalizedRequired} \nCurrent proxy server: ${normalizedCurrent}`;
-              if (!shouldIgnoreProxyMessage(message)) {
+              if (!shouldIgnoreProxyMessage(normalizedRequired)) {
                 setPendingProxyLaunch({ engine, version, channel });
                 setRecommendedServer(normalizedRequired);
                 setProxyMessage(message);

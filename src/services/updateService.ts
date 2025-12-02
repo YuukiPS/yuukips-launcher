@@ -103,23 +103,23 @@ export class UpdateService {
            'Update check failed due to Windows certificate validation issues. ' +
            'This is usually caused by outdated Windows certificates or system time issues. ' +
            'Try: 1) Update Windows, 2) Check your system time, 3) Run as administrator. ' +
-           'You can manually download updates from: https://github.com/YuukiPS/yuukips-launcher/releases'
+           'You can manually download updates from: https://git.yuuki.me/YuukiTeam/YuukiPS_Launcher_PC/releases'
          );
        } else if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
          throw new Error(
            'Update check failed due to GitHub API rate limiting. ' +
            'This happens when too many requests are made to GitHub. ' +
-           'Please try again later or manually download updates from: https://github.com/YuukiPS/yuukips-launcher/releases'
+           'Please try again later or manually download updates from: https://git.yuuki.me/YuukiTeam/YuukiPS_Launcher_PC/releases'
          );
        } else if (errorMessage.includes('timed out')) {
          throw new Error(
            'Update check timed out. Please check your internet connection. ' +
-           'You can manually download updates from: https://github.com/YuukiPS/yuukips-launcher/releases'
+           'You can manually download updates from: https://git.yuuki.me/YuukiTeam/YuukiPS_Launcher_PC/releases'
          );
        } else {
          throw new Error(
            `Update check failed: ${error}. ` +
-           'You can manually download updates from: https://github.com/YuukiPS/yuukips-launcher/releases'
+           'You can manually download updates from: https://git.yuuki.me/YuukiTeam/YuukiPS_Launcher_PC/releases'
          );
        }
     }

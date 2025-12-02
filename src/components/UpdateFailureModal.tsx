@@ -21,11 +21,11 @@ export const UpdateFailureModal: React.FC<UpdateFailureModalProps> = ({
   const handleExitAndOpenReleases = async () => {
     try {
       // Open the GitHub releases page
-      await openUrl('https://github.com/YuukiPS/yuukips-launcher/releases');
+      await openUrl('https://git.yuuki.me/YuukiTeam/YuukiPS_Launcher_PC/releases');
     } catch (error) {
       console.error('Failed to open releases page:', error);
       // Fallback for web or if Tauri is not available
-      window.open('https://github.com/YuukiPS/yuukips-launcher/releases', '_blank');
+      window.open('https://git.yuuki.me/YuukiTeam/YuukiPS_Launcher_PC/releases', '_blank');
     }
     
     try {
@@ -73,7 +73,7 @@ export const UpdateFailureModal: React.FC<UpdateFailureModalProps> = ({
           <div className="bg-blue-900/30 border border-blue-600/30 rounded-lg p-4">
             <p className="text-blue-300 text-sm">
               <strong>Please download the latest launcher at:</strong><br />
-              <span className="font-mono text-blue-200">https://github.com/YuukiPS/yuukips-launcher/releases</span>
+              <span className="font-mono text-blue-200">https://git.yuuki.me/YuukiTeam/YuukiPS_Launcher_PC/releases</span>
             </p>
             <p className="text-blue-400 text-xs mt-2">
               If you can't access the link, it will open automatically when you click "Exit & Download".

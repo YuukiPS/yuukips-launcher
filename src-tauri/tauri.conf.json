@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "YuukiPS",
-  "version": "2.0.8",
+  "version": "2.0.15",
   "identifier": "com.yuukips.launcher",
   "build": {
     "frontendDist": "../dist",
@@ -11,7 +11,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "app"
+    ],
+    "useLocalToolsDir": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
