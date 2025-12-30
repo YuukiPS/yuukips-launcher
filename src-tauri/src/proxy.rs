@@ -68,8 +68,7 @@ static SERVER: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("https://ps.yuuki.m
 // Global proxy state
 static PROXY_STATE: Lazy<Mutex<Option<ProxyHandle>>> = Lazy::new(|| Mutex::new(None));
 
-// Global proxy port storage
-static PROXY_PORT: Lazy<Mutex<u16>> = Lazy::new(|| Mutex::new(8080));
+
 
 // Global proxy logs storage
 static PROXY_LOGS: Lazy<Mutex<VecDeque<ProxyLogEntry>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
@@ -590,21 +589,22 @@ pub fn set_proxy_addr(addr: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn get_proxy_port() -> Result<u16, String> {
-    PROXY_PORT
+    let settings = crate::settings::SETTINGS
         .lock()
-        .map(|port| *port)
-        .map_err(|e| format!("Failed to get proxy port: {}", e))
+        .map_err(|e| format!("Failed to lock settings: {}", e))?;
+    Ok(settings.proxy_port)
 }
 
 #[tauri::command]
 pub fn set_proxy_port(port: u16) -> Result<String, String> {
-    PROXY_PORT
+    let mut settings = crate::settings::SETTINGS
         .lock()
-        .map(|mut proxy_port| {
-            *proxy_port = port;
-            format!("Proxy port set to: {}", port)
-        })
-        .map_err(|e| format!("Failed to set proxy port: {}", e))
+        .map_err(|e| format!("Failed to lock settings: {}", e))?;
+    
+    settings.proxy_port = port;
+    settings.save().map_err(|e| format!("Failed to save settings: {}", e))?;
+    
+    Ok(format!("Proxy port set to: {}", port))
 }
 
 #[tauri::command]
@@ -722,10 +722,10 @@ pub fn start_proxy() -> Result<String, String> {
         .to_string_lossy()
         .to_string();
 
-    let proxy_port = match PROXY_PORT.lock() {
-        Ok(port) => *port,
+    let proxy_port = match crate::settings::SETTINGS.lock() {
+        Ok(settings) => settings.proxy_port,
         Err(e) => {
-            return Err(format!("Failed to lock PROXY_PORT: {}", e));
+            return Err(format!("Failed to lock settings: {}", e));
         }
     };
     runtime.spawn(create_proxy_internal(proxy_port, cert_path, shutdown_rx));
@@ -820,10 +820,10 @@ pub struct ProxyStatus {
 #[tauri::command]
 pub fn get_proxy_status_with_domains() -> Result<ProxyStatus, String> {
     let is_running = is_proxy_running();
-    let port = match PROXY_PORT.lock() {
-        Ok(port) => *port,
+    let port = match crate::settings::SETTINGS.lock() {
+        Ok(settings) => settings.proxy_port,
         Err(e) => {
-            return Err(format!("Failed to lock PROXY_PORT: {}", e));
+            return Err(format!("Failed to lock settings: {}", e));
         }
     };
     let active_domains = match USER_PROXY_DOMAINS.lock() {

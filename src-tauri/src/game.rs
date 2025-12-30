@@ -600,6 +600,7 @@ pub fn start_game_monitor(
         let mut game_started = false;
         let mut startup_checks = 0;
         const MAX_STARTUP_CHECKS: u32 = 30; // 30 seconds max wait for game to start
+        let mut game_session_start_time: Option<std::time::Instant> = None;
 
         log::info!(
             "🔍 Started monitoring game {} - waiting for game to start",
@@ -640,6 +641,7 @@ pub fn start_game_monitor(
                                 "🎮 Game {} detected as running - starting active monitoring",
                                 game_id_clone
                             );
+                            game_session_start_time = Some(std::time::Instant::now());
 
                             // Start proxy if needed
                             let should_start_proxy =
@@ -723,6 +725,21 @@ pub fn start_game_monitor(
                     consecutive_errors = 0; // Reset error counter on success
 
                     if !is_running {
+                        // Calculate and save playtime
+                        if let Some(start_time) = game_session_start_time {
+                            let session_duration = start_time.elapsed().as_secs();
+                            if let Some(game_id_u64) = game_id_clone.as_u64() {
+                                if let Ok(mut settings) = crate::settings::SETTINGS.lock() {
+                                    let current_time = settings.game_playtime.entry(game_id_u64).or_insert(0);
+                                    *current_time += session_duration;
+                                    let new_total = *current_time;
+                                    let _ = settings.save();
+                                    log::info!("💾 Updated playtime for game {}: +{}s (Total: {}s)", game_id_clone, session_duration, new_total);
+                                }
+                            }
+                        }
+                        game_session_start_time = None;
+
                         // Game has stopped - handle cleanup in separate thread to avoid blocking
                         if let Ok(monitor_state) = GAME_MONITOR_STATE.lock() {
                             if let Some(handle) = monitor_state.as_ref() {

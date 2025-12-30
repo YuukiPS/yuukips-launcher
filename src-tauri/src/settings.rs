@@ -9,6 +9,9 @@ pub struct AppSettings {
     pub speed_limit_mbps: f64,
     pub divide_speed_enabled: bool,
     pub max_simultaneous_downloads: u32,
+    pub proxy_port: u16,
+    #[serde(default)]
+    pub game_playtime: std::collections::HashMap<u64, u64>,
 }
 
 impl Default for AppSettings {
@@ -17,6 +20,8 @@ impl Default for AppSettings {
             speed_limit_mbps: 0.0,
             divide_speed_enabled: false,
             max_simultaneous_downloads: 3,
+            proxy_port: 8080,
+            game_playtime: std::collections::HashMap::new(),
         }
     }
 }
@@ -74,10 +79,11 @@ impl AppSettings {
         fs::write(&file_path, json)?;
 
         log::info!(
-            "Settings saved successfully: speed_limit={}, divide_speed={}, max_downloads={}",
+            "Settings saved successfully: speed_limit={}, divide_speed={}, max_downloads={}, proxy_port={}",
             self.speed_limit_mbps,
             self.divide_speed_enabled,
-            self.max_simultaneous_downloads
+            self.max_simultaneous_downloads,
+            self.proxy_port
         );
 
         Ok(())

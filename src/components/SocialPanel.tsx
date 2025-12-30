@@ -1,6 +1,15 @@
-import React from 'react';
-import { MessageCircle, Twitter, Youtube, Tv, ExternalLink, X } from 'lucide-react';
-import { SocialLink } from '../types';
+import React from "react";
+import {
+  MessageCircle,
+  Twitter,
+  Youtube,
+  Tv,
+  ExternalLink,
+  X,
+} from "lucide-react";
+import { SocialLink } from "../types";
+import { DiscordIcon } from "./DiscordIcon";
+import { TelegramIcon } from "./TelegramIcon";
 
 interface SocialPanelProps {
   links: SocialLink[];
@@ -8,16 +17,24 @@ interface SocialPanelProps {
   onClose: () => void;
 }
 
-export const SocialPanel: React.FC<SocialPanelProps> = ({ links, isOpen, onClose }) => {
+export const SocialPanel: React.FC<SocialPanelProps> = ({
+  links,
+  isOpen,
+  onClose,
+}) => {
   const getIcon = (iconName: string) => {
     switch (iconName) {
-      case 'MessageCircle':
+      case "MessageCircle":
         return <MessageCircle className="w-5 h-5" />;
-      case 'Twitter':
+      case "Discord":
+        return <DiscordIcon className="w-5 h-5" />;
+      case "Telegram":
+        return <TelegramIcon className="w-5 h-5" />;
+      case "Twitter":
         return <Twitter className="w-5 h-5" />;
-      case 'Youtube':
+      case "Youtube":
         return <Youtube className="w-5 h-5" />;
-      case 'Tv':
+      case "Tv":
         return <Tv className="w-5 h-5" />;
       default:
         return <ExternalLink className="w-5 h-5" />;
@@ -26,21 +43,23 @@ export const SocialPanel: React.FC<SocialPanelProps> = ({ links, isOpen, onClose
 
   const getPlatformColor = (platform: string) => {
     switch (platform.toLowerCase()) {
-      case 'discord':
-        return 'hover:bg-indigo-600 hover:shadow-indigo-500/25 bg-indigo-600/20';
-      case 'twitter':
-        return 'hover:bg-blue-500 hover:shadow-blue-500/25 bg-blue-500/20';
-      case 'youtube':
-        return 'hover:bg-red-600 hover:shadow-red-500/25 bg-red-600/20';
-      case 'twitch':
-        return 'hover:bg-purple-600 hover:shadow-purple-500/25 bg-purple-600/20';
+      case "discord":
+        return "hover:bg-indigo-600 hover:shadow-indigo-500/25 bg-indigo-600/20";
+      case "twitter":
+        return "hover:bg-blue-500 hover:shadow-blue-500/25 bg-blue-500/20";
+      case "youtube":
+        return "hover:bg-red-600 hover:shadow-red-500/25 bg-red-600/20";
+      case "twitch":
+        return "hover:bg-purple-600 hover:shadow-purple-500/25 bg-purple-600/20";
       default:
-        return 'hover:bg-gray-600 hover:shadow-gray-500/25 bg-gray-600/20';
+        return "hover:bg-gray-600 hover:shadow-gray-500/25 bg-gray-600/20";
     }
   };
 
   const handleClick = (url: string, platform: string) => {
-    alert(`This is a web demo. In the desktop version, this would open ${platform}.`);
+    alert(
+      `This is a web demo. In the desktop version, this would open ${platform}.`
+    );
   };
 
   if (!isOpen) return null;
@@ -59,23 +78,25 @@ export const SocialPanel: React.FC<SocialPanelProps> = ({ links, isOpen, onClose
           <X className="w-4 h-4" />
         </button>
       </div>
-      
+
       <div className="p-4">
         <div className="grid grid-cols-2 gap-3 mb-4">
           {links.map((link) => (
             <button
               key={link.platform}
               onClick={() => handleClick(link.url, link.platform)}
-              className={`flex items-center space-x-3 p-3 rounded-lg transition-all duration-200 hover:transform hover:scale-105 ${getPlatformColor(link.platform)}`}
+              className={`flex items-center space-x-3 p-3 rounded-lg transition-all duration-200 hover:transform hover:scale-105 ${getPlatformColor(
+                link.platform
+              )}`}
             >
-              <div className="text-white">
-                {getIcon(link.icon)}
-              </div>
-              <span className="text-white font-medium text-sm">{link.platform}</span>
+              <div className="text-white">{getIcon(link.icon)}</div>
+              <span className="text-white font-medium text-sm">
+                {link.platform}
+              </span>
             </button>
           ))}
         </div>
-        
+
         <div className="p-3 bg-gray-800/50 rounded-lg">
           <p className="text-gray-400 text-xs text-center">
             Join our community for updates, events, and exclusive content!
