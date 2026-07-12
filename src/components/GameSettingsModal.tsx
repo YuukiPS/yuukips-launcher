@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, Folder, RotateCcw, HardDrive, Calendar, Clock, Check, Trash2, Plus, RefreshCw, Trash, Search, Download, FolderOpen, Loader2, CheckCircle, AlertTriangle } from 'lucide-react';
+import { X, Folder, RotateCcw, HardDrive, Calendar, Clock, Check, Trash2, Plus, RefreshCw, Trash, Search, Download, FolderOpen, Loader2, CheckCircle, AlertTriangle, Maximize2, Minimize2 } from 'lucide-react';
 import { Game } from '../types';
 import { GameApiService } from '../services/gameApi';
 import { invoke } from '@tauri-apps/api/core';
@@ -37,6 +37,7 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   const [newServerInput, setNewServerInput] = useState('');
   const [proxyLogs, setProxyLogs] = useState<Array<{ timestamp: string, original_url: string, redirected_url: string }>>([]);
   const [autoRefreshLogs, setAutoRefreshLogs] = useState(false);
+  const [isProxyLogsFullscreen, setIsProxyLogsFullscreen] = useState(false);
   const [isProxyRunning, setIsProxyRunning] = useState(false);
   const [proxyStatusLoading, setProxyStatusLoading] = useState(false);
   const [proxyDomains, setProxyDomains] = useState<string[]>([]);
@@ -1563,65 +1564,150 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
                 </div>
 
                 {/* Proxy Logs */}
-                <div className="bg-gray-800/50 rounded-lg p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-white font-semibold">Proxy Logs</h4>
-                    <div className="flex items-center space-x-2">
-                      <label className="flex items-center space-x-2 text-sm text-gray-300">
-                        <input
-                          type="checkbox"
-                          checked={autoRefreshLogs}
-                          onChange={(e) => setAutoRefreshLogs(e.target.checked)}
-                          className="text-purple-600 focus:ring-purple-500"
-                        />
-                        <span>Auto-refresh</span>
-                      </label>
-                      <button
-                        onClick={fetchProxyLogs}
-                        className="flex items-center space-x-1 px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors"
-                      >
-                        <RefreshCw className="w-3 h-3" />
-                        <span>Refresh</span>
-                      </button>
-                      <button
-                        onClick={handleClearProxyLogs}
-                        className="flex items-center space-x-1 px-2 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700 transition-colors"
-                      >
-                        <Trash className="w-3 h-3" />
-                        <span>Clear</span>
-                      </button>
+                {isProxyLogsFullscreen ? (
+                  <div className="fixed inset-0 z-50 bg-gray-900 flex flex-col p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-white font-semibold">Proxy Logs</h4>
+                      <div className="flex items-center space-x-2">
+                        <label className="flex items-center space-x-2 text-sm text-gray-300">
+                          <input
+                            type="checkbox"
+                            checked={autoRefreshLogs}
+                            onChange={(e) => setAutoRefreshLogs(e.target.checked)}
+                            className="text-purple-600 focus:ring-purple-500"
+                          />
+                          <span>Auto-refresh</span>
+                        </label>
+                        <button
+                          onClick={fetchProxyLogs}
+                          className="flex items-center space-x-1 px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          <span>Refresh</span>
+                        </button>
+                        <button
+                          onClick={handleClearProxyLogs}
+                          className="flex items-center space-x-1 px-2 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700 transition-colors"
+                        >
+                          <Trash className="w-3 h-3" />
+                          <span>Clear</span>
+                        </button>
+                        <button
+                          onClick={() => setIsProxyLogsFullscreen(false)}
+                          className="flex items-center space-x-1 px-2 py-1 bg-gray-700 text-white text-xs rounded hover:bg-gray-600 transition-colors"
+                          title="Exit fullscreen (Minimize)"
+                        >
+                          <Minimize2 className="w-3 h-3" />
+                          <span>Min</span>
+                        </button>
+                        <button
+                          onClick={() => setIsProxyLogsFullscreen(false)}
+                          className="flex items-center justify-center p-1 bg-gray-700 text-white rounded hover:bg-gray-600 transition-colors"
+                          title="Close"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="bg-gray-900/50 rounded-lg p-3 max-h-64 overflow-y-auto">
-                    {proxyLogs.length === 0 ? (
-                      <div className="text-center text-gray-400 py-4">
-                        <p>No proxy logs available</p>
-                        <p className="text-xs mt-1">Logs will appear here when proxy redirections occur</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {proxyLogs.slice().reverse().map((log, index) => (
-                          <div key={index} className="flex items-center space-x-3 p-2 bg-gray-800/50 rounded text-xs font-mono">
-                            <span className="text-blue-400 font-medium min-w-[60px]">{log.timestamp}</span>
-                            <span className="text-gray-300">-</span>
-                            <span className="text-yellow-400 flex-1 truncate" title={log.original_url}>
-                              {log.original_url}
-                            </span>
-                            <span className="text-gray-300">to</span>
-                            <span className="text-green-400 flex-1 truncate" title={log.redirected_url}>
-                              {log.redirected_url}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3 flex-1 overflow-y-auto">
+                      {proxyLogs.length === 0 ? (
+                        <div className="text-center text-gray-400 py-4">
+                          <p>No proxy logs available</p>
+                          <p className="text-xs mt-1">Logs will appear here when proxy redirections occur</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {proxyLogs.slice().reverse().map((log, index) => (
+                            <div key={index} className="flex items-center space-x-3 p-2 bg-gray-800/50 rounded text-xs font-mono">
+                              <span className="text-blue-400 font-medium min-w-[60px]">{log.timestamp}</span>
+                              <span className="text-gray-300">-</span>
+                              <span className="text-yellow-400 flex-1 truncate" title={log.original_url}>
+                                {log.original_url}
+                              </span>
+                              <span className="text-gray-300">to</span>
+                              <span className="text-green-400 flex-1 truncate" title={log.redirected_url}>
+                                {log.redirected_url}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
 
-                  <p className="text-gray-400 text-xs mt-2">
-                    Shows real-time proxy redirections. Latest entries appear at the top.
-                  </p>
-                </div>
+                    <p className="text-gray-400 text-xs mt-2">
+                      Shows real-time proxy redirections. Latest entries appear at the top.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="bg-gray-800/50 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-white font-semibold">Proxy Logs</h4>
+                      <div className="flex items-center space-x-2">
+                        <label className="flex items-center space-x-2 text-sm text-gray-300">
+                          <input
+                            type="checkbox"
+                            checked={autoRefreshLogs}
+                            onChange={(e) => setAutoRefreshLogs(e.target.checked)}
+                            className="text-purple-600 focus:ring-purple-500"
+                          />
+                          <span>Auto-refresh</span>
+                        </label>
+                        <button
+                          onClick={fetchProxyLogs}
+                          className="flex items-center space-x-1 px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition-colors"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          <span>Refresh</span>
+                        </button>
+                        <button
+                          onClick={handleClearProxyLogs}
+                          className="flex items-center space-x-1 px-2 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700 transition-colors"
+                        >
+                          <Trash className="w-3 h-3" />
+                          <span>Clear</span>
+                        </button>
+                        <button
+                          onClick={() => setIsProxyLogsFullscreen(true)}
+                          className="flex items-center space-x-1 px-2 py-1 bg-gray-700 text-white text-xs rounded hover:bg-gray-600 transition-colors"
+                          title="Fullscreen"
+                        >
+                          <Maximize2 className="w-3 h-3" />
+                          <span>Full</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-900/50 rounded-lg p-3 max-h-64 overflow-y-auto">
+                      {proxyLogs.length === 0 ? (
+                        <div className="text-center text-gray-400 py-4">
+                          <p>No proxy logs available</p>
+                          <p className="text-xs mt-1">Logs will appear here when proxy redirections occur</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {proxyLogs.slice().reverse().map((log, index) => (
+                            <div key={index} className="flex items-center space-x-3 p-2 bg-gray-800/50 rounded text-xs font-mono">
+                              <span className="text-blue-400 font-medium min-w-[60px]">{log.timestamp}</span>
+                              <span className="text-gray-300">-</span>
+                              <span className="text-yellow-400 flex-1 truncate" title={log.original_url}>
+                                {log.original_url}
+                              </span>
+                              <span className="text-gray-300">to</span>
+                              <span className="text-green-400 flex-1 truncate" title={log.redirected_url}>
+                                {log.redirected_url}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <p className="text-gray-400 text-xs mt-2">
+                      Shows real-time proxy redirections. Latest entries appear at the top.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
