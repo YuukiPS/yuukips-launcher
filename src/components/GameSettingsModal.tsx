@@ -80,19 +80,26 @@ export const GameSettingsModal: React.FC<GameSettingsModalProps> = ({
   // Load available channels when version changes
   useEffect(() => {
     if (selectedVersion && game.engine && game.engine.length > 0) {
-      // Get the first engine for the selected version to determine available channels
-      const engineForVersion = game.engine.find(() =>
-        GameApiService.getAvailableVersionsForPlatform(game, 1).includes(selectedVersion)
-      );
+      // Multiple engines may support the same (version, platform) with different channel
+      // lists, so union the channels across every supporting engine rather than picking one.
+      const supportingEngines = GameApiService.getEnginesForVersion(game, selectedVersion, 1);
 
-      if (engineForVersion) {
-        const channels = GameApiService.getAvailableChannelsForEngineVersion(engineForVersion, selectedVersion, 1);
+      if (supportingEngines.length > 0) {
+        const channels = [...new Set(
+          supportingEngines.flatMap((engine) =>
+            GameApiService.getAvailableChannelsForEngineVersion(engine, selectedVersion, 1)
+          )
+        )];
         setAvailableChannels(channels);
 
         // Set default channel when version changes
         if (channels.length > 0) {
           setSelectedChannel(channels[0]);
         }
+      } else {
+        // No engine supports this version, so clear channel state to avoid stale values
+        setAvailableChannels([]);
+        setSelectedChannel(0);
       }
     }
   }, [selectedVersion, game]); // Removed selectedChannel to prevent infinite loop
