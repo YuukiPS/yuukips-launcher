@@ -153,63 +153,65 @@ impl HttpHandler for ProxyHandler {
         _ctx: &HttpContext,
         mut req: Request<Body>,
     ) -> RequestOrResponse {
+        let method = req.method().clone();
         let uri = req.uri().to_string();
 
         if should_intercept_uri(&uri) {
-            // Handle CONNECTs
-            if req.method().as_str() == "CONNECT" {
-                let builder = Response::builder()
-                    .header("DecryptEndpoint", "Created")
-                    .status(StatusCode::OK);
-                let res = builder.body(()).unwrap();
-
-                // Respond to CONNECT
-                *res.body()
-            } else {
-                let uri_path_and_query = match req.uri().path_and_query() {
-                    Some(pq) => pq.as_str(),
-                    _none => {
-                        log::error!("⚠️ Failed to get path and query from URI");
-                        let error_response = Response::builder()
-                             .status(StatusCode::BAD_REQUEST)
-                             .body(Body::empty())
-                             .unwrap();
-                         return error_response.into();
-                    }
-                };
-                let original_uri = req.uri().to_string();
-                // Create new URI.
-                let server_addr = match SERVER.lock() {
-                    Ok(addr) => addr.clone(),
-                    Err(e) => {
-                        log::error!("⚠️ Failed to lock SERVER: {}", e);
-                        let error_response = Response::builder()
-                             .status(StatusCode::INTERNAL_SERVER_ERROR)
-                             .body(Body::empty())
-                             .unwrap();
-                         return error_response.into();
-                    }
-                };
-                let new_uri = match Uri::from_str(
-                    format!("{}{}", server_addr, uri_path_and_query).as_str(),
-                ) {
-                    Ok(uri) => uri,
-                    Err(e) => {
-                        log::error!("⚠️ Failed to create new URI: {}", e);
-                        let error_response = Response::builder()
-                             .status(StatusCode::BAD_REQUEST)
-                             .body(Body::empty())
-                             .unwrap();
-                         return error_response.into();
-                    }
-                };
-
-                // Log the proxy redirection
-                log_proxy_redirection(original_uri, new_uri.to_string());
-
-                // Set request URI to the new one.
-                *req.uri_mut() = new_uri;
+            if method.as_str() == "CONNECT" {
+                log::info!("[proxy] CONNECT {}", uri);
+                return req.into();
             }
+
+            let uri_path_and_query = match req.uri().path_and_query() {
+                Some(pq) => pq.as_str(),
+                None => {
+                    log::error!("[proxy] Failed to get path and query from URI: {}", uri);
+                    let error_response = Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(Body::empty())
+                        .unwrap();
+                    return error_response.into();
+                }
+            };
+
+            let original_uri = uri.clone();
+
+            let server_addr = match SERVER.lock() {
+                Ok(addr) => addr.clone(),
+                Err(e) => {
+                    log::error!("[proxy] Failed to lock SERVER: {}", e);
+                    let error_response = Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Body::empty())
+                        .unwrap();
+                    return error_response.into();
+                }
+            };
+
+            let new_uri = match Uri::from_str(
+                format!("{}{}", server_addr, uri_path_and_query).as_str(),
+            ) {
+                Ok(uri) => uri,
+                Err(e) => {
+                    log::error!("[proxy] Failed to create new URI: {}", e);
+                    let error_response = Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(Body::empty())
+                        .unwrap();
+                    return error_response.into();
+                }
+            };
+
+            log::info!(
+                "[proxy] {} {} -> {}",
+                method,
+                original_uri,
+                new_uri
+            );
+
+            log_proxy_redirection(original_uri, new_uri.to_string());
+
+            *req.uri_mut() = new_uri;
         }
 
         req.into()
@@ -220,6 +222,7 @@ impl HttpHandler for ProxyHandler {
         _context: &HttpContext,
         response: Response<Body>,
     ) -> Response<Body> {
+        log::info!("[proxy] response status={}", response.status());
         response
     }
 
