@@ -100,7 +100,7 @@ export class GameApiService {
         genre: 'Game',
         rating: 4.5,
         size: 'Unknown',
-        serverUrl: game.serverUrl || 'https://ps.yuuki.me'
+        serverUrl: game.serverUrl || 'https://login.yuuki.me'
       }));
     } catch (error) {
       console.error('Failed to fetch games:', error);

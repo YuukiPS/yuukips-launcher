@@ -63,7 +63,7 @@ impl Config {
 }
 
 // Global ver for getting server address.
-static SERVER: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("https://ps.yuuki.me".to_string()));
+static SERVER: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new("https://login.yuuki.me".to_string()));
 
 // Global proxy state
 static PROXY_STATE: Lazy<Mutex<Option<ProxyHandle>>> = Lazy::new(|| Mutex::new(None));
