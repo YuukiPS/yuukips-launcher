@@ -8,7 +8,7 @@ Comprehensive list of all external endpoints and domains used in YuukiPS Launche
 
 | Domain | Purpose |
 |--------|---------|
-| `ps.yuuki.me` | Main API server (game data, patches, downloads, updates) |
+| `ps.yuuki.me` | Gate |
 | `login.yuuki.me` | Game authentication proxy target |
 | `git.yuuki.me` | Git repository (Gitea) for source code & releases |
 | `discord.yuuki.me` | Discord community invite link |
